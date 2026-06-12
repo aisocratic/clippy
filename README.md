@@ -5,6 +5,14 @@ and bounces at you when one of them needs you.
 
 > *"Hey! Claude needs your permission in “my-app”."*
 
+| Watching, all busy | Needs your permission | Claude finished |
+|---|---|---|
+| ![working](shots/3-claude-working.png) | ![permission](shots/4-needs-permission.png) | ![finished](shots/6-finished-your-turn.png) |
+
+*(Real captures of the app driven by simulated hook events — regenerate with
+`xvfb-run npx electron scripts/demo-screenshots.js`. On your Mac the dark
+backdrop is transparent: just Clippy floating over your windows.)*
+
 You kick off a long Claude Code task, switch to Slack, and twenty minutes later
 discover it's been sitting at a permission prompt the whole time. Clippy fixes
 that: a floating, draggable paperclip (always on top, on every Space) that
