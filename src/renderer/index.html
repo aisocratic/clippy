@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'" />
+  <link rel="stylesheet" href="clippy.css" />
+</head>
+<body>
+  <div id="stage">
+    <div id="bubble" class="hidden">
+      <div id="bubble-text"></div>
+      <div id="bubble-actions">
+        <button id="btn-ok">Got it</button>
+        <button id="btn-snooze">Snooze 5m</button>
+      </div>
+    </div>
+
+    <div id="clippy" title="Drag me around. Click me when I have news!">
+      <svg viewBox="0 0 120 170" width="140" height="198" aria-label="Clippy">
+        <!-- paperclip wire -->
+        <path
+          id="wire"
+          d="M38 64
+             C38 40 46 26 60 26
+             C74 26 82 40 82 64
+             L82 122
+             C82 142 73 154 60 154
+             C47 154 38 142 38 122
+             L38 84
+             C38 70 44 62 53 62
+             C62 62 68 70 68 84
+             L68 118"
+          fill="none" stroke="#9aa3ad" stroke-width="9" stroke-linecap="round"
+        />
+        <!-- eyebrows -->
+        <g id="brows">
+          <path d="M36 36 q10 -8 20 -3" fill="none" stroke="#444" stroke-width="4" stroke-linecap="round"/>
+          <path d="M64 33 q10 -5 20 3" fill="none" stroke="#444" stroke-width="4" stroke-linecap="round"/>
+        </g>
+        <!-- eyes -->
+        <g id="eyes">
+          <g class="eye">
+            <ellipse cx="46" cy="52" rx="12" ry="15" fill="#fff" stroke="#444" stroke-width="2.5"/>
+            <circle class="pupil" cx="48" cy="55" r="4.5" fill="#222"/>
+          </g>
+          <g class="eye">
+            <ellipse cx="74" cy="52" rx="12" ry="15" fill="#fff" stroke="#444" stroke-width="2.5"/>
+            <circle class="pupil" cx="76" cy="55" r="4.5" fill="#222"/>
+          </g>
+        </g>
+      </svg>
+      <div id="badge" class="hidden">0</div>
+    </div>
+
+    <div id="statusline">waiting for sessions…</div>
+    <div id="controls">
+      <button id="btn-hide" title="Hide (Clippy keeps running in the menu bar)">hide</button>
+    </div>
+  </div>
+  <script src="clippy.js"></script>
+</body>
+</html>

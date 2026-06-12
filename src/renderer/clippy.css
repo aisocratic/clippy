@@ -1,0 +1,161 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  user-select: none;
+}
+
+html,
+body {
+  background: transparent;
+  overflow: hidden;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+#stage {
+  position: relative;
+  width: 280px;
+  height: 360px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  padding-bottom: 8px;
+}
+
+/* ---------- Clippy ---------- */
+
+#clippy {
+  position: relative;
+  -webkit-app-region: drag; /* drag the window by grabbing Clippy */
+  cursor: grab;
+  animation: bob 3.2s ease-in-out infinite;
+  filter: drop-shadow(0 6px 10px rgba(0, 0, 0, 0.35));
+}
+
+@keyframes bob {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-6px); }
+}
+
+#clippy.excited {
+  animation: bounce 0.55s ease-in-out infinite;
+}
+
+@keyframes bounce {
+  0%, 100% { transform: translateY(0) rotate(-3deg); }
+  50% { transform: translateY(-18px) rotate(3deg); }
+}
+
+#clippy.excited #brows {
+  transform: translateY(-4px);
+}
+
+#brows,
+.eye,
+.pupil {
+  transition: transform 0.15s ease;
+}
+
+.eye.blink {
+  transform: scaleY(0.08);
+  transform-origin: center 52px;
+}
+
+#badge {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 5px;
+  border-radius: 11px;
+  background: #e0413d;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  -webkit-app-region: no-drag;
+}
+
+/* ---------- Speech bubble ---------- */
+
+#bubble {
+  -webkit-app-region: no-drag;
+  width: 252px;
+  background: #fffef5;
+  border: 2px solid #444;
+  border-radius: 12px;
+  padding: 10px 12px;
+  margin-bottom: 14px;
+  position: relative;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+#bubble::after {
+  content: '';
+  position: absolute;
+  bottom: -12px;
+  left: 50%;
+  margin-left: -8px;
+  border-width: 12px 8px 0 8px;
+  border-style: solid;
+  border-color: #444 transparent transparent transparent;
+}
+
+#bubble-text {
+  font-size: 13.5px;
+  line-height: 1.4;
+  color: #222;
+}
+
+#bubble-actions {
+  margin-top: 8px;
+  display: flex;
+  gap: 6px;
+}
+
+button {
+  -webkit-app-region: no-drag;
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: 6px;
+  border: 1.5px solid #444;
+  background: #fff;
+  cursor: pointer;
+}
+
+button:hover {
+  background: #ffe9a8;
+}
+
+/* ---------- Status line & controls ---------- */
+
+#statusline {
+  margin-top: 10px;
+  font-size: 11px;
+  color: #f4f4f4;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+}
+
+#controls {
+  margin-top: 4px;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+#stage:hover #controls {
+  opacity: 1;
+}
+
+#controls button {
+  font-size: 10px;
+  padding: 1px 8px;
+  opacity: 0.85;
+}
+
+.hidden {
+  display: none !important;
+}

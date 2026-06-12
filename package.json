@@ -1,0 +1,17 @@
+{
+  "name": "clippy-for-claude",
+  "version": "0.1.0",
+  "description": "A Clippy for your MacBook that watches your Claude Code sessions and nags you when they need input",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test",
+    "hooks:install": "node bin/clippy-hooks.js install",
+    "hooks:uninstall": "node bin/clippy-hooks.js uninstall",
+    "hooks:status": "node bin/clippy-hooks.js status"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^33.0.0"
+  }
+}
