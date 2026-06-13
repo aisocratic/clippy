@@ -7,6 +7,49 @@
 </head>
 <body>
   <div id="stage">
+    <div id="card" class="hidden">
+      <div id="card-head">
+        <span id="card-session"></span>
+        <span id="card-queue" class="hidden"></span>
+      </div>
+      <div id="card-title"></div>
+      <pre id="card-detail" class="hidden"></pre>
+      <div id="card-options" class="hidden"></div>
+      <textarea id="card-input" rows="2" spellcheck="false"></textarea>
+      <div id="card-actions">
+        <button id="btn-allow" class="good">Allow</button>
+        <button id="btn-deny" class="bad">Deny</button>
+        <button id="btn-pass" class="dim">To terminal</button>
+        <button id="btn-good" class="good">Looks good</button>
+        <button id="btn-feedback" class="bad">Send feedback</button>
+        <button id="btn-submit" class="good">Submit answer</button>
+        <button id="btn-dismiss" class="dim">Dismiss</button>
+      </div>
+      <div id="card-countdown"><div id="card-countdown-fill"></div></div>
+    </div>
+
+    <div id="drive" class="hidden">
+      <div id="drive-head">
+        <span id="drive-title">📎 Clippy-driven session</span>
+        <button id="drive-stop" class="dim">stop</button>
+      </div>
+      <div id="drive-transcript"></div>
+      <div id="drive-activity" class="hidden"></div>
+      <div id="drive-input-row">
+        <textarea id="drive-input" rows="2" spellcheck="false" placeholder="Type a prompt for Claude…"></textarea>
+        <button id="drive-send" class="good">Send</button>
+      </div>
+    </div>
+
+    <div id="qcard" class="hidden">
+      <div id="qcard-head"><span id="qcard-session"></span><span id="qcard-tag">asking you</span></div>
+      <div id="qcard-title"></div>
+      <pre id="qcard-detail" class="hidden"></pre>
+      <div id="qcard-actions">
+        <button id="btn-qok" class="dim">Answer in terminal ✓</button>
+      </div>
+    </div>
+
     <div id="bubble" class="hidden">
       <div id="bubble-text"></div>
       <div id="bubble-actions">
@@ -52,7 +95,12 @@
       <div id="badge" class="hidden">0</div>
     </div>
 
+    <div id="activity" class="hidden"></div>
     <div id="statusline">waiting for sessions…</div>
+    <div id="toggles">
+      <button id="toggle-approvals" title="Answer permission requests from Clippy instead of the terminal">approvals</button>
+      <button id="toggle-review" title="Offer a review box when Claude finishes a turn">review</button>
+    </div>
     <div id="controls">
       <button id="btn-hide" title="Hide (Clippy keeps running in the menu bar)">hide</button>
     </div>

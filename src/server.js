@@ -12,8 +12,14 @@ const MAX_BODY = 1024 * 1024; // 1 MB
  *
  * Binds to 127.0.0.1 only — this never listens on the network.
  *
+ * `onEvent` may return (a promise of) a JSON-serializable object; it becomes
+ * the response body, which interactive hooks echo to stdout as their decision.
+ * Returning nothing sends {"ok":true}. The promise may resolve much later
+ * (e.g. after the user clicks a button) — the response is held open until
+ * then. `ctx.onClose(fn)` fires if the hook's curl gives up first.
+ *
  * @param {object} opts
- * @param {(eventName: string, kind: string|null, payload: object) => void} opts.onEvent
+ * @param {(eventName: string, kind: string|null, payload: object, ctx: {onClose: (fn: () => void) => void}) => (object|void|Promise<object|void>)} opts.onEvent
  * @param {() => object} [opts.getStatus]  Returns JSON for GET /status
  * @param {number} [opts.port]
  * @param {string} [opts.host]
@@ -56,13 +62,36 @@ function createHookServer({ onEvent, getStatus, port = 43117, host = '127.0.0.1'
       } catch {
         // Hook payloads should always be JSON, but never punish the sender.
       }
+
+      const closeHandlers = [];
+      const ctx = { onClose: (fn) => closeHandlers.push(fn) };
+      res.on('close', () => {
+        for (const fn of closeHandlers) {
+          try {
+            fn();
+          } catch {}
+        }
+      });
+
+      let result;
       try {
-        onEvent(eventName, kind, payload);
+        result = onEvent(eventName, kind, payload, ctx);
       } catch (err) {
         console.error('clippy: error handling hook event', eventName, err);
       }
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end('{"ok":true}');
+
+      Promise.resolve(result)
+        .catch((err) => {
+          console.error('clippy: error handling hook event', eventName, err);
+          return undefined;
+        })
+        .then((reply) => {
+          if (res.writableEnded || res.destroyed) return; // curl already gave up
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          // No reply object -> plain ack. Interactive hooks treat the body as
+          // their stdout decision; "{}" / {"ok":true} both mean "no decision".
+          res.end(reply && typeof reply === 'object' ? JSON.stringify(reply) : '{"ok":true}');
+        });
     });
   });
 

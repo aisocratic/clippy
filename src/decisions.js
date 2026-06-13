@@ -1,0 +1,231 @@
+'use strict';
+
+const path = require('node:path');
+
+/**
+ * Holds hook requests that want an interactive answer from the user
+ * (PreToolUse approvals, Stop reviews) and resolves them with a decision,
+ * a timeout, or a cancellation. Pure logic — no Electron, fully testable.
+ *
+ * Every ask() resolves eventually; a held hook must never stall Claude Code
+ * past the curl/hook timeout, so callers give us a holdMs and we guarantee
+ * resolution by then (extensions are capped at hardCapMs from creation).
+ */
+
+let nextId = 1;
+
+class DecisionBroker {
+  constructor({ hardCapMs = 110_000 } = {}) {
+    this.hardCapMs = hardCapMs;
+    this.pending = new Map(); // id -> entry
+  }
+
+  /**
+   * Register a request awaiting a user decision.
+   * @param {object} meta  { event, sessionId, ... } anything the UI needs
+   * @param {number} holdMs  how long to wait before auto-resolving
+   * @returns {{ id: string, expiresAt: number, promise: Promise<{action: string, message: string, timedOut: boolean}> }}
+   */
+  ask(meta, holdMs) {
+    const id = `d${nextId++}`;
+    const createdAt = Date.now();
+    const entry = {
+      id,
+      meta,
+      createdAt,
+      expiresAt: createdAt + holdMs,
+      resolve: null,
+      timer: null,
+    };
+    const promise = new Promise((resolve) => {
+      entry.resolve = resolve;
+    });
+    entry.timer = setTimeout(() => this._finish(entry, 'timeout', '', true), holdMs);
+    this.pending.set(id, entry);
+    return { id, expiresAt: entry.expiresAt, promise };
+  }
+
+  /** User made a choice. Returns false if the request is gone (already resolved). */
+  resolve(id, action, message = '') {
+    const entry = this.pending.get(id);
+    if (!entry) return false;
+    this._finish(entry, action, message, false);
+    return true;
+  }
+
+  /**
+   * User is interacting (typing a reason); push the deadline out, but never
+   * past hardCapMs after creation. Returns the new expiresAt, or null.
+   */
+  extend(id, extraMs = 30_000) {
+    const entry = this.pending.get(id);
+    if (!entry) return null;
+    const cap = entry.createdAt + this.hardCapMs;
+    const next = Math.min(Date.now() + extraMs, cap);
+    if (next <= entry.expiresAt) return entry.expiresAt;
+    entry.expiresAt = next;
+    clearTimeout(entry.timer);
+    entry.timer = setTimeout(
+      () => this._finish(entry, 'timeout', '', true),
+      next - Date.now()
+    );
+    return next;
+  }
+
+  /** Drop every pending request for a session (e.g. the session ended). */
+  cancelBySession(sessionId) {
+    for (const entry of [...this.pending.values()]) {
+      if (entry.meta.sessionId === sessionId) {
+        this._finish(entry, 'cancel', '', false);
+      }
+    }
+  }
+
+  list() {
+    return [...this.pending.values()].map((e) => ({
+      id: e.id,
+      meta: e.meta,
+      expiresAt: e.expiresAt,
+    }));
+  }
+
+  _finish(entry, action, message, timedOut) {
+    if (!this.pending.has(entry.id)) return;
+    this.pending.delete(entry.id);
+    clearTimeout(entry.timer);
+    entry.resolve({ action, message, timedOut });
+  }
+}
+
+/**
+ * Translate a user decision into the JSON Claude Code expects on the hook's
+ * stdout. `{}` means "no opinion" — Claude Code falls through to its normal
+ * permission flow (allowlist, then terminal prompt), so it is always safe.
+ */
+function toHookResponse(event, action, message = '') {
+  if (event === 'PermissionRequest') {
+    if (action === 'allow') {
+      return {
+        hookSpecificOutput: {
+          hookEventName: 'PermissionRequest',
+          decision: { behavior: 'allow' },
+        },
+      };
+    }
+    if (action === 'deny') {
+      return {
+        hookSpecificOutput: {
+          hookEventName: 'PermissionRequest',
+          decision: {
+            behavior: 'deny',
+            message: message || 'Denied by the user via Clippy.',
+          },
+        },
+      };
+    }
+    return {}; // pass / timeout / cancel -> normal terminal prompt
+  }
+
+  if (event === 'Stop') {
+    if (action === 'feedback' && message.trim()) {
+      return { decision: 'block', reason: message.trim() };
+    }
+    return {}; // ok / timeout / cancel -> let Claude stop
+  }
+
+  return {};
+}
+
+/** One-line-ish human summary of a tool call for the approval card. */
+function describeToolCall(toolName, toolInput = {}) {
+  const clip = (s, n = 700) =>
+    String(s ?? '').length > n ? `${String(s).slice(0, n)}…` : String(s ?? '');
+
+  switch (toolName) {
+    case 'Bash':
+      return {
+        title: toolInput.description ? `Run: ${clip(toolInput.description, 80)}` : 'Run a shell command',
+        detail: `$ ${clip(toolInput.command)}`,
+      };
+    case 'Write':
+      return {
+        title: 'Write a file',
+        detail: `${toolInput.file_path || '?'}\n\n${clip(toolInput.content, 400)}`,
+      };
+    case 'Edit':
+      return {
+        title: 'Edit a file',
+        detail:
+          `${toolInput.file_path || '?'}\n\n` +
+          `- ${clip(toolInput.old_string, 250)}\n+ ${clip(toolInput.new_string, 250)}`,
+      };
+    case 'MultiEdit': {
+      const n = Array.isArray(toolInput.edits) ? toolInput.edits.length : '?';
+      return { title: 'Edit a file', detail: `${toolInput.file_path || '?'} (${n} edits)` };
+    }
+    case 'NotebookEdit':
+      return { title: 'Edit a notebook', detail: `${toolInput.notebook_path || '?'}` };
+    case 'ExitPlanMode':
+      return {
+        title: '📋 Review the plan',
+        detail: clip(toolInput.plan, 4000) || '(no plan text)',
+      };
+    case 'AskUserQuestion': {
+      const qs = Array.isArray(toolInput.questions) ? toolInput.questions : [];
+      const first = qs[0] || {};
+      const detail = qs
+        .map((q) => {
+          const opts = (q.options || [])
+            .map((o) => `  • ${o.label}${o.description ? ` — ${clip(o.description, 80)}` : ''}`)
+            .join('\n');
+          return `${q.question}\n${opts}`;
+        })
+        .join('\n\n');
+      return { title: first.question ? clip(first.question, 90) : 'Claude is asking a question', detail };
+    }
+    default:
+      return { title: `Use tool: ${toolName}`, detail: clip(JSON.stringify(toolInput, null, 1), 400) };
+  }
+}
+
+/**
+ * Terse, present-tense one-liner for the ambient activity line —
+ * "Running: npm test", "Editing src/server.js". Shorter and more verb-forward
+ * than describeToolCall (which titles the full approval card).
+ */
+function activityLabel(toolName, toolInput = {}) {
+  const clip = (s, n = 60) =>
+    String(s ?? '').length > n ? `${String(s).slice(0, n)}…` : String(s ?? '');
+  const base = (p) => (p ? path.basename(String(p)) : '?');
+
+  switch (toolName) {
+    case 'Bash':
+      return `Running: ${clip(toolInput.description || toolInput.command)}`;
+    case 'Write':
+      return `Writing ${base(toolInput.file_path)}`;
+    case 'Edit':
+    case 'MultiEdit':
+      return `Editing ${base(toolInput.file_path)}`;
+    case 'NotebookEdit':
+      return `Editing ${base(toolInput.notebook_path)}`;
+    case 'WebFetch': {
+      let host = toolInput.url || '';
+      try {
+        host = new URL(toolInput.url).host;
+      } catch {}
+      return `Fetching ${clip(host, 40)}`;
+    }
+    case 'WebSearch':
+      return `Searching: ${clip(toolInput.query, 40)}`;
+    case 'Task':
+      return `Delegating: ${clip(toolInput.description || toolInput.subagent_type || 'subagent', 40)}`;
+    case 'ExitPlanMode':
+      return 'Presenting a plan';
+    case 'AskUserQuestion':
+      return 'Asking you a question';
+    default:
+      return /^mcp__/.test(toolName) ? `Using ${toolName.replace(/^mcp__/, '')}` : `Using ${toolName}`;
+  }
+}
+
+module.exports = { DecisionBroker, toHookResponse, describeToolCall, activityLabel };

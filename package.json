@@ -5,6 +5,7 @@
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
+    "mock-session": "node scripts/mock-session.js",
     "test": "node --test",
     "hooks:install": "node bin/clippy-hooks.js install",
     "hooks:uninstall": "node bin/clippy-hooks.js uninstall",
@@ -13,5 +14,8 @@
   "license": "MIT",
   "devDependencies": {
     "electron": "^33.0.0"
+  },
+  "optionalDependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.1.0"
   }
 }

@@ -57,6 +57,52 @@ test('tolerates empty and malformed bodies', async () => {
   assert.deepEqual(seen[1].payload, {});
 });
 
+test('async handlers hold the response and their result becomes the body', async () => {
+  let release;
+  const decided = new Promise((r) => (release = r));
+  await withServer(
+    (event, kind, payload, ctx) => {
+      assert.equal(typeof ctx.onClose, 'function');
+      if (event === 'PermissionRequest') return decided;
+      return undefined;
+    },
+    async (base) => {
+      const held = fetch(`${base}/hook/PermissionRequest`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: 's1', tool_name: 'Bash' }),
+      });
+
+      // a fire-and-forget event is still answered immediately while the
+      // interactive one is held open
+      const ack = await fetch(`${base}/hook/SessionStart`, { method: 'POST', body: '{}' });
+      assert.deepEqual(await ack.json(), { ok: true });
+
+      release({
+        hookSpecificOutput: {
+          hookEventName: 'PermissionRequest',
+          decision: { behavior: 'allow' },
+        },
+      });
+      const res = await held;
+      assert.equal(res.status, 200);
+      const body = await res.json();
+      assert.equal(body.hookSpecificOutput.decision.behavior, 'allow');
+    }
+  );
+});
+
+test('a rejecting handler still answers the hook', async () => {
+  await withServer(
+    () => Promise.reject(new Error('boom')),
+    async (base) => {
+      const res = await fetch(`${base}/hook/Stop`, { method: 'POST', body: '{}' });
+      assert.equal(res.status, 200);
+      assert.deepEqual(await res.json(), { ok: true });
+    }
+  );
+});
+
 test('serves /status and 404s everything else', async () => {
   await withServer(
     () => {},

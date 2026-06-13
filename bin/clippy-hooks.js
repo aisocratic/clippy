@@ -19,20 +19,50 @@ const path = require('node:path');
 const MARKER = '#claude-clippy';
 const DEFAULT_PORT = 43117;
 
-// Which hook events we subscribe to. `matcher` becomes both the Claude Code
-// hook matcher and the ?kind= query param so the app knows why it fired.
+// How long an interactive ("decide") hook may wait for the user to answer in
+// the Clippy UI. The app resolves every held request well before this; the
+// hook `timeout` below gives curl a little headroom on top.
+const DECIDE_CURL_MAX_S = 115;
+const DECIDE_HOOK_TIMEOUT_S = 120;
+
+// Tools worth surfacing in the live activity line. Read/Grep/Glob/LS/TodoWrite
+// are deliberately excluded so they never fire the PreToolUse hook (no curl
+// round-trip, no latency on the noisy read-only tools). This string is a
+// Claude Code matcher: `A|B` matches either tool, `mcp__.*` matches MCP tools.
+const MEANINGFUL_TOOLS =
+  'Bash|Edit|Write|MultiEdit|NotebookEdit|WebFetch|WebSearch|Task|ExitPlanMode|AskUserQuestion|mcp__.*';
+
+// Which hook events we subscribe to. For Notification hooks, `matcher` doubles
+// as the ?kind= query param so the app knows why it fired; for tool hooks
+// (Pre/PostToolUse, PermissionRequest) `matcher` is a Claude Code tool-name
+// filter only. `mode: 'decide'` marks interactive hooks: their HTTP response
+// body is echoed to stdout, which Claude Code parses as the hook's decision
+// (approve/deny a permission request, or send Claude back to work with review
+// feedback). Everything else is fire-and-forget.
 const SPECS = [
   { event: 'Notification', matcher: 'permission_prompt' },
   { event: 'Notification', matcher: 'idle_prompt' },
-  { event: 'Stop' },
+  { event: 'PermissionRequest', mode: 'decide' },
+  { event: 'Stop', mode: 'decide' },
+  { event: 'PreToolUse', matcher: MEANINGFUL_TOOLS },
+  { event: 'PostToolUse', matcher: MEANINGFUL_TOOLS },
   { event: 'UserPromptSubmit' },
   { event: 'SessionStart' },
   { event: 'SessionEnd' },
 ];
 
 function hookCommand(spec, port) {
-  const kind = spec.matcher ? `?kind=${spec.matcher}` : '';
+  const kind = spec.event === 'Notification' && spec.matcher ? `?kind=${spec.matcher}` : '';
   const url = `http://127.0.0.1:${port}/hook/${spec.event}${kind}`;
+  if (spec.mode === 'decide') {
+    // Interactive: stdout (the app's JSON response) is the hook decision.
+    // --connect-timeout 1: if the Clippy app isn't running, fail in <1s with
+    // no output, which Claude Code treats as "no decision" — zero impact.
+    return (
+      `curl -s --connect-timeout 1 -m ${DECIDE_CURL_MAX_S} -X POST '${url}' ` +
+      `-H 'Content-Type: application/json' --data-binary @- 2>/dev/null || true ${MARKER}`
+    );
+  }
   // -m 2: never stall Claude Code; `|| true`: never report an error if the
   // Clippy app isn't running. The trailing marker comment lets us find and
   // remove our own entries later.
@@ -76,7 +106,11 @@ function installHooks(settings, port = DEFAULT_PORT) {
       groups.push(group);
     }
     group.hooks = group.hooks || [];
-    group.hooks.push({ type: 'command', command: hookCommand(spec, port), timeout: 5 });
+    group.hooks.push({
+      type: 'command',
+      command: hookCommand(spec, port),
+      timeout: spec.mode === 'decide' ? DECIDE_HOOK_TIMEOUT_S : 5,
+    });
   }
   return settings;
 }
@@ -161,4 +195,12 @@ function main() {
 
 if (require.main === module) main();
 
-module.exports = { installHooks, uninstallHooks, listInstalled, hookCommand, SPECS, MARKER };
+module.exports = {
+  installHooks,
+  uninstallHooks,
+  listInstalled,
+  hookCommand,
+  SPECS,
+  MARKER,
+  MEANINGFUL_TOOLS,
+};

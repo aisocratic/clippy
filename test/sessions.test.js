@@ -59,6 +59,65 @@ test('tracks multiple sessions independently', () => {
   assert.equal(alpha.status, 'working');
 });
 
+test('PreToolUse/PostToolUse drive the activity line (meaningful tools only)', () => {
+  const t = new SessionTracker();
+  t.handle('SessionStart', null, payload('s1'));
+
+  const pre = t.handle('PreToolUse', null, {
+    ...payload('s1'),
+    tool_name: 'Bash',
+    tool_input: { command: 'npm test', description: 'Run tests' },
+  });
+  assert.equal(pre.kind, 'activity');
+  assert.equal(pre.activity.tool, 'Bash');
+  assert.equal(pre.activity.state, 'start');
+  assert.match(pre.activity.label, /Run tests/);
+  assert.equal(t.list()[0].activity.label, pre.activity.label);
+
+  const ok = t.handle('PostToolUse', null, {
+    ...payload('s1'),
+    tool_name: 'Bash',
+    tool_input: { command: 'npm test' },
+    success: true,
+  });
+  assert.equal(ok.activity.state, 'done');
+  assert.equal(ok.activity.ok, true);
+
+  const fail = t.handle('PostToolUse', null, {
+    ...payload('s1'),
+    tool_name: 'Bash',
+    tool_input: { command: 'npm test' },
+    success: false,
+  });
+  assert.equal(fail.activity.ok, false);
+  assert.match(fail.message, /failed/);
+
+  // UserPromptSubmit resets the activity; SessionStart clears it.
+  assert.equal(t.handle('UserPromptSubmit', null, payload('s1')).activity.label, 'Working…');
+});
+
+test('setActivity updates a tracked session', () => {
+  const t = new SessionTracker();
+  t.handle('SessionStart', null, payload('s1'));
+  t.setActivity('s1', { tool: 'Edit', label: 'Editing x.js', state: 'start', ok: true });
+  assert.equal(t.list()[0].activity.label, 'Editing x.js');
+});
+
+test('PermissionRequest marks the session as needing permission', () => {
+  const t = new SessionTracker();
+  t.handle('SessionStart', null, payload('s1'));
+
+  const r = t.handle('PermissionRequest', null, payload('s1'));
+  assert.equal(r.kind, 'approval');
+  assert.equal(r.urgency, 'urgent');
+  assert.match(r.message, /my-app/);
+  assert.deepEqual(t.counts(), { total: 1, waiting: 1 });
+
+  t.setStatus('s1', 'working');
+  assert.equal(t.list()[0].status, 'working');
+  assert.deepEqual(t.counts(), { total: 1, waiting: 0 });
+});
+
 test('handles missing cwd and unknown events gracefully', () => {
   const t = new SessionTracker();
   const r = t.handle('Notification', null, { session_id: 'deadbeefcafe' });

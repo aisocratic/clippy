@@ -14,8 +14,8 @@ body {
 
 #stage {
   position: relative;
-  width: 280px;
-  height: 360px;
+  width: 100vw;
+  height: 100vh;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -131,6 +131,337 @@ button:hover {
   background: #ffe9a8;
 }
 
+/* ---------- Interactive card (approvals & reviews) ---------- */
+
+#card {
+  -webkit-app-region: no-drag;
+  width: 300px;
+  background: #fffef5;
+  border: 2px solid #444;
+  border-radius: 12px;
+  padding: 10px 12px 8px;
+  margin-bottom: 14px;
+  position: relative;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+#card::after {
+  content: '';
+  position: absolute;
+  bottom: -12px;
+  left: 50%;
+  margin-left: -8px;
+  border-width: 12px 8px 0 8px;
+  border-style: solid;
+  border-color: #444 transparent transparent transparent;
+}
+
+#card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 11px;
+  font-weight: 700;
+  color: #6b6b5e;
+  margin-bottom: 4px;
+}
+
+#card-queue {
+  font-weight: 400;
+  color: #a05a2c;
+}
+
+#card-title {
+  font-size: 13.5px;
+  font-weight: 600;
+  line-height: 1.35;
+  color: #222;
+}
+
+#card-detail {
+  margin-top: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.45;
+  color: #333;
+  background: #f3f2e7;
+  border: 1px solid #ddd9c4;
+  border-radius: 6px;
+  padding: 6px 8px;
+  max-height: 110px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  user-select: text;
+}
+
+#card-input {
+  width: 100%;
+  margin-top: 8px;
+  font-family: inherit;
+  font-size: 12px;
+  padding: 5px 7px;
+  border: 1.5px solid #999;
+  border-radius: 6px;
+  background: #fff;
+  resize: none;
+  -webkit-app-region: no-drag;
+}
+
+#card-input:focus {
+  outline: none;
+  border-color: #444;
+}
+
+#card-actions {
+  margin-top: 8px;
+  display: flex;
+  gap: 6px;
+}
+
+#card-actions button.good {
+  background: #e4f6dc;
+  border-color: #3c7a2e;
+}
+
+#card-actions button.bad {
+  background: #fbe3e0;
+  border-color: #a33;
+}
+
+#card-actions button.dim {
+  opacity: 0.75;
+}
+
+/* Answerable question options (Drive mode) */
+#card-options {
+  margin-top: 6px;
+  max-height: 200px;
+  overflow: auto;
+}
+
+.opt-group {
+  margin-bottom: 8px;
+}
+
+.opt-question {
+  font-size: 12px;
+  font-weight: 600;
+  color: #333;
+  margin-bottom: 4px;
+}
+
+button.opt {
+  display: block;
+  width: 100%;
+  text-align: left;
+  margin-bottom: 4px;
+  font-size: 12px;
+  padding: 5px 8px;
+}
+
+button.opt.chosen {
+  background: #2f6b22;
+  color: #fff;
+  border-color: #2f6b22;
+}
+
+#card-countdown {
+  margin-top: 8px;
+  height: 3px;
+  border-radius: 2px;
+  background: #e8e5d2;
+  overflow: hidden;
+}
+
+/* ---------- Drive mode panel ---------- */
+
+#drive {
+  -webkit-app-region: no-drag;
+  width: 300px;
+  background: #1f2733;
+  border: 2px solid #3a4555;
+  border-radius: 12px;
+  padding: 8px 10px;
+  margin-bottom: 14px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  color: #e8eaed;
+}
+
+#drive-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 11.5px;
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+
+#drive-head button {
+  font-size: 10px;
+  padding: 1px 8px;
+  background: #333c49;
+  color: #cdd3db;
+  border-color: #4a5666;
+}
+
+#drive-transcript {
+  max-height: 220px;
+  overflow: auto;
+  font-size: 12px;
+  line-height: 1.4;
+  background: #161c25;
+  border-radius: 6px;
+  padding: 6px 8px;
+  user-select: text;
+}
+
+.drive-line {
+  margin-bottom: 5px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.drive-line.user {
+  color: #8fd3ff;
+}
+
+.drive-line.assistant {
+  color: #e8eaed;
+}
+
+.drive-line.system {
+  color: #9aa3ad;
+  font-style: italic;
+}
+
+#drive-activity {
+  margin-top: 4px;
+  font-size: 10.5px;
+  color: #c9a227;
+}
+
+#drive-input-row {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+#drive-input {
+  flex: 1;
+  font-family: inherit;
+  font-size: 12px;
+  padding: 5px 7px;
+  border: 1.5px solid #4a5666;
+  border-radius: 6px;
+  background: #161c25;
+  color: #e8eaed;
+  resize: none;
+  -webkit-app-region: no-drag;
+}
+
+#drive-input:focus {
+  outline: none;
+  border-color: #8fd3ff;
+}
+
+#card-countdown-fill {
+  height: 100%;
+  width: 100%;
+  background: #c9a227;
+  transition: width 0.2s linear;
+}
+
+/* ---------- Read-only question card (AskUserQuestion surfacing) ---------- */
+
+#qcard {
+  -webkit-app-region: no-drag;
+  width: 300px;
+  background: #fff8ec;
+  border: 2px solid #c98a2e;
+  border-radius: 12px;
+  padding: 10px 12px 8px;
+  margin-bottom: 14px;
+  position: relative;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+#qcard::after {
+  content: '';
+  position: absolute;
+  bottom: -12px;
+  left: 50%;
+  margin-left: -8px;
+  border-width: 12px 8px 0 8px;
+  border-style: solid;
+  border-color: #c98a2e transparent transparent transparent;
+}
+
+#qcard-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 11px;
+  font-weight: 700;
+  color: #6b6b5e;
+  margin-bottom: 4px;
+}
+
+#qcard-tag {
+  font-weight: 700;
+  color: #a05a2c;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 9.5px;
+}
+
+#qcard-title {
+  font-size: 13.5px;
+  font-weight: 600;
+  line-height: 1.35;
+  color: #222;
+}
+
+#qcard-detail {
+  margin-top: 6px;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: #333;
+  background: #fdf3df;
+  border: 1px solid #e8d3a6;
+  border-radius: 6px;
+  padding: 6px 8px;
+  max-height: 130px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  user-select: text;
+}
+
+#qcard-actions {
+  margin-top: 8px;
+  display: flex;
+  gap: 6px;
+}
+
+/* ---------- Ambient activity line ---------- */
+
+#activity {
+  margin-top: 8px;
+  max-width: 280px;
+  font-size: 11px;
+  color: #eaeaea;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.85);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#activity.failed {
+  color: #ff9b8a;
+  font-weight: 600;
+}
+
 /* ---------- Status line & controls ---------- */
 
 #statusline {
@@ -138,6 +469,33 @@ button:hover {
   font-size: 11px;
   color: #f4f4f4;
   text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+}
+
+#toggles {
+  margin-top: 5px;
+  display: flex;
+  gap: 6px;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+#stage:hover #toggles {
+  opacity: 1;
+}
+
+#toggles button {
+  font-size: 10px;
+  padding: 1px 8px;
+  border-radius: 9px;
+  background: #555;
+  color: #ddd;
+  border-color: #777;
+}
+
+#toggles button.on {
+  background: #2f6b22;
+  color: #fff;
+  border-color: #9c9;
 }
 
 #controls {

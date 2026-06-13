@@ -1,6 +1,7 @@
 'use strict';
 
 const path = require('node:path');
+const { activityLabel } = require('./decisions');
 
 // Session statuses
 const WORKING = 'working';
@@ -25,7 +26,7 @@ class SessionTracker {
     const id = payload.session_id || 'unknown';
     let s = this.sessions.get(id);
     if (!s) {
-      s = { sessionId: id, cwd: payload.cwd || '', status: IDLE, updatedAt: 0 };
+      s = { sessionId: id, cwd: payload.cwd || '', status: IDLE, activity: null, updatedAt: 0 };
       this.sessions.set(id, s);
     }
     if (payload.cwd) s.cwd = payload.cwd;
@@ -42,6 +43,7 @@ class SessionTracker {
       name: s.name,
       cwd: s.cwd,
       status: s.status,
+      activity: s.activity,
       message,
     };
   }
@@ -58,6 +60,7 @@ class SessionTracker {
     switch (eventName) {
       case 'SessionStart':
         s.status = IDLE;
+        s.activity = null;
         return this._reaction('info', 'low', s, `Now watching “${s.name}”.`);
 
       case 'SessionEnd':
@@ -66,7 +69,40 @@ class SessionTracker {
 
       case 'UserPromptSubmit':
         s.status = WORKING;
+        s.activity = { tool: null, label: 'Working…', state: 'start', ok: true };
         return this._reaction('clear', 'low', s, '');
+
+      case 'PreToolUse': {
+        // Ambient: what Claude is about to do. The matcher already filters to
+        // meaningful tools, so every PreToolUse here is worth showing.
+        const tool = payload.tool_name || 'tool';
+        s.status = WORKING;
+        s.activity = { tool, label: activityLabel(tool, payload.tool_input), state: 'start', ok: true };
+        return this._reaction('activity', 'low', s, '');
+      }
+
+      case 'PostToolUse': {
+        const tool = payload.tool_name || 'tool';
+        const ok = payload.success !== false; // absent -> assume success
+        s.status = WORKING;
+        s.activity = {
+          tool,
+          label: activityLabel(tool, payload.tool_input),
+          state: 'done',
+          ok,
+        };
+        return this._reaction('activity', 'low', s, ok ? '' : `${tool} failed in “${s.name}”.`);
+      }
+
+      case 'PermissionRequest':
+        // Held open by the decision broker — the user can answer from Clippy.
+        s.status = NEEDS_PERMISSION;
+        return this._reaction(
+          'approval',
+          'urgent',
+          s,
+          `Claude wants to do something in “${s.name}” — approve it?`
+        );
 
       case 'Stop':
         s.status = WAITING;
@@ -105,6 +141,24 @@ class SessionTracker {
 
       default:
         return null;
+    }
+  }
+
+  /** Adjust a session's status after an interactive decision resolves. */
+  setStatus(sessionId, status) {
+    const s = this.sessions.get(sessionId);
+    if (s) {
+      s.status = status;
+      s.updatedAt = Date.now();
+    }
+  }
+
+  /** Set the live activity for a session (used by Drive mode's SDK stream). */
+  setActivity(sessionId, activity) {
+    const s = this.sessions.get(sessionId);
+    if (s) {
+      s.activity = activity;
+      s.updatedAt = Date.now();
     }
   }
 
