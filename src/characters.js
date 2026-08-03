@@ -22,7 +22,17 @@ const { hash } = require('./identity');
  * and shows whatever it has for it; anything missing falls back to `excited`
  * and then `idle`, so a pack that only ships two animations still works.
  */
-const POSES = ['idle', 'excited', 'walk', 'point', 'sleep', 'cheer'];
+const POSES = [
+  'idle', // quiet, nothing to do
+  'think', // Claude is working
+  'excited', // this session wants you
+  'stress', // a tool failed, or the context window is filling up
+  'walk', // on the move — played while walking to a prompt
+  'point', // standing at the prompt, pointing at the line
+  'sleep', // the turn is over, nothing left to do
+  'cheer', // a turn finished cleanly
+  'wave', // hello — this session just started
+];
 
 const CHARACTERS = [
   { id: 'clip', label: '📎 Clippy', poses: POSES, perColour: true },

@@ -7,9 +7,9 @@ const { toHookResponse } = require('./decisions');
  *
  * The settings window renders this, so what it shows can't drift from what the
  * app does: each entry names the hook that triggers it, the switch that turns
- * it off, and — for the interactive ones — the exact JSON each button hands
- * back, straight from `toHookResponse`. If a button's meaning changes, this
- * page changes with it.
+ * it off, the pose the buddy strikes while it's happening, and — for the
+ * interactive ones — the exact JSON each button hands back, straight from
+ * `toHookResponse`. If a button's meaning changes, this page changes with it.
  */
 
 const json = (event, action, message, toolInput) =>
@@ -20,6 +20,8 @@ const ASK = { questions: [{ question: 'Which store?', options: [{ label: 'Redis'
 const ACTIONS = [
   {
     id: 'approval',
+    pose: 'excited',
+    scenario: 'approval-bash',
     icon: '🛂',
     title: 'Approve or deny a tool call',
     hook: 'PermissionRequest',
@@ -43,6 +45,8 @@ const ACTIONS = [
   },
   {
     id: 'plan',
+    pose: 'excited',
+    scenario: 'approval-plan',
     icon: '📋',
     title: 'Approve or revise a plan',
     hook: 'PermissionRequest (ExitPlanMode)',
@@ -60,6 +64,8 @@ const ACTIONS = [
   },
   {
     id: 'question',
+    pose: 'excited',
+    scenario: 'answer-one',
     icon: '❓',
     title: "Answer Claude's question",
     hook: 'PreToolUse (AskUserQuestion)',
@@ -81,6 +87,8 @@ const ACTIONS = [
   },
   {
     id: 'review',
+    pose: 'excited',
+    scenario: 'review',
     icon: '✅',
     title: 'Review a finished turn',
     hook: 'Stop',
@@ -97,7 +105,20 @@ const ACTIONS = [
     ],
   },
   {
+    id: 'trouble',
+    pose: 'stress',
+    scenario: 'activity-failed',
+    icon: '😰',
+    title: 'Show when things are going wrong',
+    hook: 'PostToolUseFailure',
+    when: 'A tool fails, or this session has used more than 30% of its context window.',
+    shows: 'The buddy sweats and shivers until it settles — and the activity line turns red.',
+    passive: true,
+  },
+  {
     id: 'activity',
+    pose: 'think',
+    scenario: 'activity-stream',
     icon: '⚙',
     title: 'Show what Claude is doing',
     hook: 'PreToolUse / PostToolUse',
@@ -108,6 +129,8 @@ const ACTIONS = [
   },
   {
     id: 'nudge',
+    pose: 'excited',
+    scenario: 'attention-urgent',
     icon: '🔴',
     title: "Nudge when a session needs you",
     hook: 'Notification',
@@ -118,6 +141,8 @@ const ACTIONS = [
   },
   {
     id: 'point',
+    pose: 'point',
+    scenario: 'story',
     icon: '👇',
     title: 'Walk to the prompt and point at it',
     setting: 'autoPerch',
@@ -128,6 +153,8 @@ const ACTIONS = [
   },
   {
     id: 'perch',
+    pose: 'idle',
+    scenario: 'story',
     icon: '📌',
     title: "Sit on the session's own window",
     setting: 'autoPerch',
@@ -138,6 +165,8 @@ const ACTIONS = [
   },
   {
     id: 'usage',
+    pose: 'idle',
+    scenario: 'story',
     icon: '📊',
     title: 'Report context and spend',
     when: "You ask for it — click the buddy, then Stats & token usage.",
@@ -147,6 +176,8 @@ const ACTIONS = [
   },
   {
     id: 'drive',
+    pose: 'think',
+    scenario: 'drive',
     icon: '🕹',
     title: 'Run a session of its own',
     when: 'You start a Clippy-driven session from the menu bar (needs the Agent SDK).',

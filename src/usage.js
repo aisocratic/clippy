@@ -57,6 +57,7 @@ function contextOf(usage = {}) {
  */
 function parseTranscript(text, { sinceMs = 0 } = {}) {
   const totals = emptyTotals();
+  const byModel = new Map(); // model id -> totals, for "where did it all go?"
   let model = '';
   let context = 0;
   let biggest = 0;
@@ -80,7 +81,11 @@ function parseTranscript(text, { sinceMs = 0 } = {}) {
 
     addUsage(totals, usage);
     turns++;
-    if (message.model) model = message.model;
+    if (message.model) {
+      model = message.model;
+      if (!byModel.has(model)) byModel.set(model, emptyTotals());
+      addUsage(byModel.get(model), usage);
+    }
     biggest = Math.max(biggest, contextOf(usage));
     // The newest message is the live context; sidechains (subagents) run their
     // own smaller contexts, so they must not shrink the number we report.
@@ -97,7 +102,7 @@ function parseTranscript(text, { sinceMs = 0 } = {}) {
     contextLimitFor(model),
     biggest > DEFAULT_CONTEXT ? LONG_CONTEXT : 0
   );
-  return { model, context, contextLimit, totals, turns, lastAt };
+  return { model, context, contextLimit, totals, turns, lastAt, byModel: Object.fromEntries(byModel) };
 }
 
 /** Read and summarize a single session's transcript. */
@@ -150,6 +155,7 @@ async function recentTranscripts(projectsDir, sinceMs) {
 async function usageSince(projectsDir, sinceMs) {
   const files = await recentTranscripts(projectsDir, sinceMs);
   const totals = emptyTotals();
+  const byModel = {};
   let sessions = 0;
   let bytes = 0;
   let truncated = files.length > MAX_FILES;
@@ -169,6 +175,10 @@ async function usageSince(projectsDir, sinceMs) {
     const summary = parseTranscript(text, { sinceMs });
     if (summary.turns === 0) continue;
     sessions++;
+    for (const [model, modelTotals] of Object.entries(summary.byModel)) {
+      const into = (byModel[model] ||= emptyTotals());
+      for (const key of Object.keys(into)) into[key] += modelTotals[key];
+    }
     addUsage(totals, {
       input_tokens: summary.totals.input,
       output_tokens: summary.totals.output,
@@ -176,7 +186,7 @@ async function usageSince(projectsDir, sinceMs) {
       cache_creation_input_tokens: summary.totals.cacheCreate,
     });
   }
-  return { totals, sessions, truncated };
+  return { totals, sessions, truncated, byModel };
 }
 
 /** Local midnight / start of the last 7 days, as epoch ms. */

@@ -32,6 +32,8 @@ const WALK_MS = 900;
 const POINT_MS = 5000;
 const POINT_EXTRA_H = 30;
 let walkTimers = [];
+let spriteTimers = []; // the workbench animations, cleared on every re-render
+let previewPose = 'idle';
 
 let data = { scenarios: [], usage: {}, palette: [], characters: [], sizes: [] };
 // Mirrors main's settings, including the rosters the renderer builds its menu
@@ -105,7 +107,7 @@ function stopPlayback() {
 /** kind -> the Claude Code hook that would have produced this card. */
 const HOOK_FOR = { approval: 'PermissionRequest', review: 'Stop', answer: 'PreToolUse' };
 
-function play(scenario, button) {
+function playScenario(scenario, button) {
   stopPlayback();
   button?.classList.add('playing');
   const refs = new Map(); // ref name -> requestId, so a later step can close it
@@ -436,6 +438,8 @@ async function boot() {
     }
   };
   fillSelect(document.getElementById('set-character'), data.characters, (c) => c.label);
+  renderSprites();
+  renderActions();
   fillSelect(document.getElementById('set-size'), data.sizes, (s) => `${s.id} (${s.buddy}px)`);
   syncSettingInputs();
 
@@ -472,12 +476,12 @@ async function boot() {
       small.textContent = s.hint;
       btn.appendChild(small);
     }
-    btn.addEventListener('click', () => play(s, btn));
+    btn.addEventListener('click', () => playScenario(s, btn));
     box.appendChild(btn);
     // The show run is the headline act, so the big play button above the stage
     // starts it too.
     if (s.showRun) {
-      document.getElementById('btn-showrun').addEventListener('click', () => play(s, btn));
+      document.getElementById('btn-showrun').addEventListener('click', () => playScenario(s, btn));
     }
   }
 
@@ -505,6 +509,10 @@ for (const key of ['character', 'size']) {
   document.getElementById(`set-${key}`).addEventListener('change', (e) => {
     settings = { ...settings, [key]: e.target.value };
     send('settings', settings);
+    if (key === 'character') {
+      renderSprites();
+      renderActions();
+    }
   });
 }
 
@@ -523,6 +531,165 @@ for (const btn of document.querySelectorAll('[data-poke]')) {
 }
 
 document.getElementById('btn-walk').addEventListener('click', walkToPrompt);
+
+/* ---------------- Workbench: every sprite, every action ---------------- */
+
+const POSE_LABEL = {
+  idle: 'idle',
+  think: 'thinking',
+  excited: 'needs you',
+  stress: 'stressed',
+  walk: 'walking',
+  point: 'pointing',
+  sleep: 'asleep',
+  cheer: 'cheering',
+  wave: 'hello',
+};
+
+/** One animation, playing: a GIF for the drawn buddies, a stepped sheet for packs. */
+function poseArt(character, poseName, height = 44) {
+  if (!character.sheet) {
+    const img = document.createElement('img');
+    const colour = (document.getElementById('opt-color').value || '#9aa3ad').replace('#', '');
+    img.src = `/renderer/assets/themes/${character.id}/${
+      character.perColour ? `${colour}-` : ''
+    }${poseName}.gif`;
+    img.alt = '';
+    img.style.height = `${height}px`;
+    return img;
+  }
+
+  const pose = character.sheet.poses[poseName];
+  if (!pose) return document.createElement('span');
+  const { frameWidth, frameHeight, columns, rows, fps } = character.sheet;
+  const scale = height / frameHeight;
+  const w = Math.round(frameWidth * scale);
+  const h = Math.round(frameHeight * scale);
+
+  const el = document.createElement('div');
+  el.className = 'sheet';
+  el.style.cssText = `width:${w}px;height:${h}px;background-repeat:no-repeat;background-image:url("/renderer/${pose.file}");background-size:${w * columns}px ${h * rows}px`;
+  let frame = 0;
+  const step = () => {
+    el.style.backgroundPosition = `-${frame * w}px -${(pose.row || 0) * h}px`;
+    frame = (frame + 1) % pose.frames;
+  };
+  step();
+  if (pose.frames > 1) spriteTimers.push(setInterval(step, Math.round(1000 / (fps || 6))));
+  return el;
+}
+
+const posesOf = (c) => (c.sheet ? Object.keys(c.sheet.poses) : c.poses || ['idle', 'excited']);
+
+function renderSprites() {
+  const host = document.getElementById('sprite-sheet');
+  spriteTimers.forEach(clearInterval);
+  spriteTimers = [];
+  host.replaceChildren();
+
+  for (const character of data.characters) {
+    const row = document.createElement('div');
+    row.className = 'sprite-row';
+
+    const who = document.createElement('div');
+    who.className = 'sprite-who';
+    const name = document.createElement('div');
+    name.className = 'sprite-name';
+    name.textContent = character.label;
+    const origin = document.createElement('div');
+    origin.className = 'sprite-origin';
+    origin.textContent = character.sheet
+      ? `${character.sheet.frameWidth}×${character.sheet.frameHeight} sheet`
+      : 'drawn in code';
+    who.append(name, origin);
+
+    const poses = document.createElement('div');
+    poses.className = 'sprite-poses';
+    for (const poseName of posesOf(character)) {
+      const cell = document.createElement('button');
+      cell.className = `sprite-pose${
+        character.id === settings.character && poseName === previewPose ? ' on' : ''
+      }`;
+      cell.title = `Show ${character.label} ${POSE_LABEL[poseName] || poseName} on the stage`;
+      const art = document.createElement('div');
+      art.className = 'sprite-art';
+      art.appendChild(poseArt(character, poseName));
+      const label = document.createElement('div');
+      label.className = 'sprite-label';
+      label.textContent = POSE_LABEL[poseName] || poseName;
+      cell.append(art, label);
+      cell.addEventListener('click', () => showOnStage(character.id, poseName));
+      poses.appendChild(cell);
+    }
+
+    row.append(who, poses);
+    host.appendChild(row);
+  }
+}
+
+/** Put a character on the stage holding a pose, so it can be looked at. */
+function showOnStage(character, poseName) {
+  previewPose = poseName;
+  if (settings.character !== character) {
+    settings = { ...settings, character };
+    syncSettingInputs();
+    send('settings', settings);
+  }
+  send('event', { kind: 'pose', name: poseName });
+  log('out', 'pose', `${character} · ${POSE_LABEL[poseName] || poseName}`);
+  renderSprites();
+}
+
+function renderActions() {
+  const host = document.getElementById('action-grid');
+  host.replaceChildren();
+
+  for (const action of data.actions || []) {
+    const card = document.createElement('div');
+    card.className = 'action-card';
+
+    const pose = document.createElement('div');
+    pose.className = 'action-pose';
+    const character = data.characters.find((c) => c.id === settings.character) || data.characters[0];
+    if (character) pose.appendChild(poseArt(character, action.pose, 40));
+    const poseLabel = document.createElement('div');
+    poseLabel.className = 'sprite-label';
+    poseLabel.textContent = POSE_LABEL[action.pose] || action.pose;
+    pose.appendChild(poseLabel);
+
+    const body = document.createElement('div');
+    body.className = 'action-body';
+    const name = document.createElement('div');
+    name.className = 'action-name';
+    name.textContent = `${action.icon} ${action.title}`;
+    const when = document.createElement('div');
+    when.className = 'action-when';
+    when.textContent = action.when;
+    const meta = document.createElement('div');
+    meta.className = 'action-meta';
+    if (action.hook) {
+      const chip = document.createElement('span');
+      chip.className = 'chip';
+      chip.textContent = action.hook;
+      meta.appendChild(chip);
+    }
+    const scenario = data.scenarios.find((sc) => sc.id === action.scenario);
+    if (scenario) {
+      const button = document.createElement('button');
+      button.textContent = '▶ play';
+      button.title = scenario.label;
+      button.addEventListener('click', () => {
+        desktop.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        playScenario(scenario);
+      });
+      meta.appendChild(button);
+    }
+    body.append(name, when, meta);
+
+    card.append(pose, body);
+    host.appendChild(card);
+  }
+}
 
 document.getElementById('btn-clear-log').addEventListener('click', () => {
   logEl.replaceChildren();

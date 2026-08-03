@@ -142,7 +142,10 @@ function SHOW_RUN() {
   at(1300, { event: activity('Grep', { pattern: 'postInvoice' }) });
   at(1300, { event: activity('Edit', { file_path: '/repo/src/webhook.js' }) });
   at(1300, { event: activity('Bash', { description: 'run the test suite', command: 'npm test' }) });
-  at(1600, { note: 'A failed tool turns the line red', event: activity('Bash', { description: 'run the test suite', command: 'npm test' }, { state: 'done', ok: false }) });
+  at(1600, {
+    note: 'A failed tool turns the line red — and the buddy starts sweating',
+    event: activity('Bash', { description: 'run the test suite', command: 'npm test' }, { state: 'done', ok: false }),
+  });
 
   at(1800, {
     note: 'Urgent nudge — bouncing buddy, speech bubble, Got it / Snooze',
@@ -231,7 +234,11 @@ function SHOW_RUN() {
   at(500, { event: evt({ kind: 'drive-status', status: 'turn-done' }) });
   at(2500, { event: evt({ kind: 'drive-close' }) });
 
-  at(500, { note: 'Answered and quiet again — back to a bare buddy', event: evt({ kind: 'remove', status: 'idle' }) });
+  at(600, {
+    note: 'Finished — nothing left to do, so he curls up',
+    event: evt({ kind: 'activity', status: 'waiting', activity: null }),
+  });
+  at(3200, { note: 'Answered and quiet again — back to a bare buddy', event: evt({ kind: 'remove', status: 'idle' }) });
   return s;
 }
 
@@ -617,7 +624,16 @@ const USAGE = {
       totals: totals(48_000, 31_000, 2_400_000, 180_000),
     },
     day: { sessions: 4, totals: totals(190_000, 96_000, 9_800_000, 520_000) },
-    week: { sessions: 21, totals: totals(1_020_000, 480_000, 61_000_000, 3_100_000), truncated: false },
+    week: {
+      sessions: 21,
+      totals: totals(1_020_000, 480_000, 61_000_000, 3_100_000),
+      truncated: false,
+      byModel: {
+        'claude-opus-5': totals(700_000, 320_000, 41_000_000, 2_100_000),
+        'claude-sonnet-5': totals(240_000, 120_000, 16_000_000, 800_000),
+        'claude-haiku-4-5-20251001': totals(80_000, 40_000, 4_000_000, 200_000),
+      },
+    },
   },
   hot: {
     name: NAME,
@@ -629,7 +645,15 @@ const USAGE = {
       totals: totals(310_000, 205_000, 24_000_000, 1_400_000),
     },
     day: { sessions: 9, totals: totals(720_000, 410_000, 48_000_000, 2_600_000) },
-    week: { sessions: 44, totals: totals(3_400_000, 1_900_000, 210_000_000, 12_000_000), truncated: true },
+    week: {
+      sessions: 44,
+      totals: totals(3_400_000, 1_900_000, 210_000_000, 12_000_000),
+      truncated: true,
+      byModel: {
+        'claude-opus-5[1m]': totals(2_900_000, 1_600_000, 180_000_000, 10_000_000),
+        'claude-sonnet-5': totals(500_000, 300_000, 30_000_000, 2_000_000),
+      },
+    },
   },
   empty: {
     name: NAME,
@@ -726,6 +750,7 @@ const server = http.createServer(async (req, res) => {
       palette: PALETTE,
       characters: allCharacters(),
       sizes: sizeList(),
+      actions: ACTIONS,
     });
   }
 

@@ -79,6 +79,17 @@ function lean(g, px) {
   return out;
 }
 
+/** A bead of sweat: the one pixel-art shorthand everyone reads instantly. */
+function drop(g, x, y, fill, ink) {
+  blob(g, x, y, x + 2, y + 3, fill, 1);
+  put(g, x + 1, y - 1, ink);
+  put(g, x - 1, y + 1, ink);
+  put(g, x + 3, y + 1, ink);
+  put(g, x, y + 4, ink);
+  put(g, x + 2, y + 4, ink);
+  put(g, x + 1, y + 4, ink);
+}
+
 /** Sleep marks, drifting up and to the right. `n` grows them frame by frame. */
 function zzz(g, n, colour) {
   const marks = [
@@ -163,6 +174,9 @@ const TAIL_POSES = [
  * @param {boolean} opts.happy  eyes closed and curved up
  * @param {number} opts.sleeping how many sleep marks are floating (0 = awake)
  * @param {number} opts.tilt    lean the whole cat sideways
+ * @param {boolean} opts.worried small pupils, ears flat — something is wrong
+ * @param {number} opts.sweat   a drop beside the head, further down each step
+ * @param {number} opts.headTilt lean just the head, for a quizzical look
  */
 function drawCat({
   tail = 0,
@@ -175,6 +189,9 @@ function drawCat({
   happy = false,
   sleeping = 0,
   tilt = 0,
+  worried = false,
+  sweat = 0,
+  headTilt = 0,
 } = {}) {
   const g = grid();
   const dy = BASE_Y - lift;
@@ -209,13 +226,19 @@ function drawCat({
     put(g, 19, 32 + dy, INK);
   }
 
-  // Ears sit on top of a head that's smaller than the body it sits on.
+  // Ears sit on top of a head that's smaller than the body it sits on — and go
+  // flat against it when the cat is unhappy.
   const earTop = (wide ? 0 : 1) + hy;
   const flick = twitch ? 1 : 0;
-  ear(g, 8 - flick, earTop, 7, 6 + flick, FUR);
-  ear(g, 17, earTop, 7, 6, FUR);
-  ear(g, 10 - flick, earTop + 2, 3, 3, PINK);
-  ear(g, 19, earTop + 2, 3, 3, PINK);
+  if (worried) {
+    blob(g, 6, earTop + 3, 12, earTop + 6, FUR, 1);
+    blob(g, 19, earTop + 3, 25, earTop + 6, FUR, 1);
+  } else {
+    ear(g, 8 - flick, earTop, 7, 6 + flick, FUR);
+    ear(g, 17, earTop, 7, 6, FUR);
+    ear(g, 10 - flick, earTop + 2, 3, 3, PINK);
+    ear(g, 19, earTop + 2, 3, 3, PINK);
+  }
   blob(g, 8, 4 + hy, 23, 16 + hy, FUR, 3);
 
   // Tabby "M" between the ears.
@@ -272,7 +295,8 @@ function drawCat({
   }
 
   if (sleeping) zzz(g, sleeping, INK);
-  return tilt ? lean(g, tilt) : g;
+  if (sweat) drop(g, 25, 6 + sweat * 3 + hy, CREAM, INK);
+  return tilt || headTilt ? lean(g, tilt || headTilt) : g;
 }
 
 /**
@@ -380,6 +404,8 @@ function drawClip({
   happy = false,
   tilt = 0,
   sleeping = 0,
+  worried = false,
+  sweat = 0,
 } = {}) {
   const g = grid();
   const dy = BASE_Y + bob - lift;
@@ -410,12 +436,20 @@ function drawClip({
 
   outline(g, { exteriorOnly: true });
 
-  // Eyebrows, angled the way Clippy's always were — up when he's excited.
+  // Eyebrows, angled the way Clippy's always were — up when he's excited, and
+  // pinched *inward* when things are going badly.
   const browY = (brows ? 7 : 9) + dy;
-  rect(g, 6, browY + 1, 8, browY + 1, CINK);
-  rect(g, 9, browY, 10, browY, CINK);
-  rect(g, 23, browY + 1, 25, browY + 1, CINK);
-  rect(g, 21, browY, 22, browY, CINK);
+  if (worried) {
+    rect(g, 6, browY, 8, browY, CINK);
+    rect(g, 9, browY + 1, 11, browY + 1, CINK);
+    rect(g, 23, browY, 25, browY, CINK);
+    rect(g, 20, browY + 1, 22, browY + 1, CINK);
+  } else {
+    rect(g, 6, browY + 1, 8, browY + 1, CINK);
+    rect(g, 9, browY, 10, browY, CINK);
+    rect(g, 23, browY + 1, 25, browY + 1, CINK);
+    rect(g, 21, browY, 22, browY, CINK);
+  }
 
   // Eyes: white ovals sitting on the wire, pupils wandering about.
   const eyeTop = 12 + dy;
@@ -439,6 +473,7 @@ function drawClip({
   }
 
   if (sleeping) zzz(g, sleeping, CINK);
+  if (sweat) drop(g, 26, 6 + sweat * 3, WHITE, CINK);
   return tilt ? lean(g, tilt) : g;
 }
 
@@ -796,6 +831,28 @@ const CLIP_POSES = {
     { indices: drawClip({ lift: 6, happy: true, brows: true }), delayMs: 160 },
     { indices: drawClip({ lift: 4, happy: true, brows: true, tilt: 2 }), delayMs: 130 },
   ],
+  // Working: eyes up and away, a slow sway — thinking about something else.
+  think: [
+    { indices: drawClip({ bob: 0, look: 1, lookDown: -1 }), delayMs: 460 },
+    { indices: drawClip({ bob: 1, look: 1, lookDown: -1, tilt: 1 }), delayMs: 460 },
+    { indices: drawClip({ bob: 1, look: -1, lookDown: -1 }), delayMs: 460 },
+    { indices: drawClip({ bob: 0, look: -1, lookDown: -1, tilt: -1 }), delayMs: 460 },
+  ],
+  // A fast, small shake with the brows pinched in and a bead of sweat: the
+  // difference between "look at me" and "this is going badly".
+  stress: [
+    { indices: drawClip({ worried: true, tilt: -1, sweat: 1 }), delayMs: 90 },
+    { indices: drawClip({ worried: true, tilt: 1, sweat: 1, lookDown: 1 }), delayMs: 90 },
+    { indices: drawClip({ worried: true, tilt: -1, sweat: 2 }), delayMs: 90 },
+    { indices: drawClip({ worried: true, tilt: 1, sweat: 2, lookDown: 1 }), delayMs: 90 },
+    { indices: drawClip({ worried: true, tilt: 0, sweat: 3 }), delayMs: 120 },
+  ],
+  wave: [
+    { indices: drawClip({ tilt: -3, happy: true }), delayMs: 200 },
+    { indices: drawClip({ tilt: 0, happy: true, lift: 1 }), delayMs: 200 },
+    { indices: drawClip({ tilt: 3, happy: true }), delayMs: 200 },
+    { indices: drawClip({ tilt: 0, happy: true, lift: 1 }), delayMs: 200 },
+  ],
 };
 
 const CAT_POSES = {
@@ -836,6 +893,27 @@ const CAT_POSES = {
     { indices: drawCat({ tail: 3, lift: 4, happy: true, paw: 2, tilt: -2 }), delayMs: 130 },
     { indices: drawCat({ tail: 3, lift: 6, happy: true, paw: 2 }), delayMs: 160 },
     { indices: drawCat({ tail: 3, lift: 3, happy: true, paw: 1, tilt: 2 }), delayMs: 130 },
+  ],
+  // Watching something happen: head cocked one way, then the other.
+  think: [
+    { indices: drawCat({ tail: 1, breathe: 0, headTilt: -2 }), delayMs: 520 },
+    { indices: drawCat({ tail: 2, breathe: 1, headTilt: -2, blink: true }), delayMs: 140 },
+    { indices: drawCat({ tail: 2, breathe: 1, headTilt: 2 }), delayMs: 520 },
+    { indices: drawCat({ tail: 1, breathe: 0, headTilt: 2 }), delayMs: 520 },
+  ],
+  // Ears flat, eyes small, sweating, and shivering on the spot.
+  stress: [
+    { indices: drawCat({ tail: 2, worried: true, tilt: -1, sweat: 1 }), delayMs: 90 },
+    { indices: drawCat({ tail: 1, worried: true, tilt: 1, sweat: 1 }), delayMs: 90 },
+    { indices: drawCat({ tail: 2, worried: true, tilt: -1, sweat: 2 }), delayMs: 90 },
+    { indices: drawCat({ tail: 1, worried: true, tilt: 1, sweat: 2 }), delayMs: 90 },
+    { indices: drawCat({ tail: 2, worried: true, tilt: 0, sweat: 3 }), delayMs: 120 },
+  ],
+  wave: [
+    { indices: drawCat({ tail: 3, paw: 1, happy: true, tilt: -1 }), delayMs: 200 },
+    { indices: drawCat({ tail: 3, paw: 2, happy: true, tilt: 1 }), delayMs: 200 },
+    { indices: drawCat({ tail: 3, paw: 2, happy: true, tilt: -1 }), delayMs: 200 },
+    { indices: drawCat({ tail: 3, paw: 1, happy: true, tilt: 1 }), delayMs: 200 },
   ],
 };
 

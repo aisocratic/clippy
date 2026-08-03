@@ -52,7 +52,7 @@ const usageSession = document.getElementById('usage-session');
 const usageModel = document.getElementById('usage-model');
 const usageBarFill = document.getElementById('usage-bar-fill');
 const usageContext = document.getElementById('usage-context');
-const usageTable = document.getElementById('usage-table');
+const usageBars = document.getElementById('usage-bars');
 const usageNote = document.getElementById('usage-note');
 
 const menuEl = document.getElementById('menu');
@@ -66,6 +66,10 @@ const menuPoint = document.getElementById('menu-point');
 const sheetEl = document.getElementById('buddy-sheet');
 let sheetTimer = null;
 let pose = 'idle'; // what the buddy is doing right now, by name
+let pointing = false; // standing on a prompt
+let troubledUntil = 0; // a tool failed recently
+let greetingUntil = 0; // this session just started
+let contextTight = false; // the context window is filling up
 
 const pointerEl = document.getElementById('pointer');
 let walkTimer = null;
@@ -209,9 +213,31 @@ function setPose(name) {
 
 function setExcited(on) {
   clippyEl.classList.toggle('excited', on);
-  // A walk or a point is the more specific thing to be doing; mood waits.
-  if (pose === 'walk' || pose === 'point') return;
-  setPose(on ? 'excited' : 'idle');
+  refreshPose();
+}
+
+/**
+ * What the buddy should be doing, from what it knows — most specific first.
+ *
+ * A pose is a status line you can read across the room: sweating means
+ * something failed or the context window is filling up, bouncing means this
+ * session wants you, curled up means the turn is over.
+ */
+function poseForState() {
+  if (document.body.classList.contains('walking')) return 'walk';
+  if (pointing) return 'point';
+  if (greetingUntil > Date.now()) return 'wave';
+  if (activeRequestId || currentUrgent()) return 'excited';
+  if (troubledUntil > Date.now() || contextTight) return 'stress';
+  if (myStatus === 'working') return 'think';
+  if (myStatus === 'waiting') return 'sleep'; // finished — nothing left to do
+  return 'idle';
+}
+
+function refreshPose() {
+  const want = poseForState();
+  clippyEl.classList.toggle('stressed', want === 'stress');
+  if (want !== pose) setPose(want);
 }
 
 /** Same buddy, same behaviour, different shape — and one constant size. */
@@ -344,6 +370,7 @@ function render() {
   // while the menu is on screen.
   if (menuOpen()) syncMenuItems();
 
+  refreshPose();
   syncMode();
 }
 
@@ -367,11 +394,14 @@ function currentUrgent() {
 
 /* ---------- Ambient activity line ("what's Claude doing right now") ---------- */
 
+const TROUBLE_MS = 25 * 1000; // how long a failure keeps the buddy sweating
+
 function showActivity(name, activity) {
   if (!activity || !activity.label) {
     activityEl.classList.add('hidden');
     return;
   }
+  if (activity.ok === false) troubledUntil = Date.now() + TROUBLE_MS;
   const icon = !activity.ok ? '⚠' : activity.state === 'done' ? '✓' : '⚙';
   activityEl.textContent = `${icon} ${name} — ${activity.label}`;
   activityEl.classList.toggle('failed', !activity.ok);
@@ -420,15 +450,33 @@ const shortModel = (m) => String(m || '').replace(/^claude-/, '') || 'unknown mo
 /** in + out + cache, i.e. everything the plan's allowance sees. */
 const allTokens = (t) => (t ? t.input + t.output + t.cacheRead + t.cacheCreate : 0);
 
-function row(label, value, hint) {
-  const tr = document.createElement('tr');
-  const th = document.createElement('th');
-  th.textContent = label;
-  if (hint) th.title = hint;
-  const td = document.createElement('td');
-  td.textContent = value;
-  tr.append(th, td);
-  return tr;
+/**
+ * One labelled bar. `share` is a fraction of the row it's being compared to —
+ * these are *spend*, and Claude Code keeps the real allowances server-side, so
+ * a bar can only honestly show a proportion, never "how much you have left".
+ */
+function bar(label, value, share, { hint = '', tone = '' } = {}) {
+  const wrap = document.createElement('div');
+  wrap.className = 'ubar';
+  if (hint) wrap.title = hint;
+
+  const head = document.createElement('div');
+  head.className = 'ubar-head';
+  const name = document.createElement('span');
+  name.textContent = label;
+  const amount = document.createElement('b');
+  amount.textContent = value;
+  head.append(name, amount);
+
+  const track = document.createElement('div');
+  track.className = 'ubar-track';
+  const fill = document.createElement('div');
+  fill.className = `ubar-fill${tone ? ` ${tone}` : ''}`;
+  fill.style.width = `${Math.max(2, Math.min(100, Math.round(share * 100)))}%`;
+  track.appendChild(fill);
+
+  wrap.append(head, track);
+  return wrap;
 }
 
 async function showUsage() {
@@ -462,36 +510,53 @@ async function showUsage() {
     usageContext.textContent = 'no transcript for this session yet';
   }
 
-  // Cached input dwarfs everything else (it's re-read every turn), so the
-  // headline number per row is total-with-cache and output is broken out.
+  // Cached input dwarfs everything else (it's re-read every turn), so each bar
+  // counts total-with-cache. The week is the yardstick: this session and today
+  // are shown as their share of it, which is the honest comparison available
+  // without the server-side allowance.
   const cached = 'total including cached input, which is re-read every turn';
-  usageTable.replaceChildren();
+  const weekTotal = week ? allTokens(week.totals) : 0;
+  const share = (n) => (weekTotal > 0 ? n / weekTotal : 0);
+  usageBars.replaceChildren();
+
   if (session && session.turns > 0) {
-    usageTable.append(
-      row('this session', fmtTokens(allTokens(session.totals)), cached),
-      row('· output', fmtTokens(session.totals.output), 'tokens Claude actually generated'),
-      row('· turns', String(session.turns))
+    const spent = allTokens(session.totals);
+    usageBars.append(
+      bar(`this session · ${session.turns} turns`, fmtTokens(spent), share(spent), { hint: cached })
     );
   }
   if (day) {
-    usageTable.append(
-      row(`today · ${day.sessions} sessions`, fmtTokens(allTokens(day.totals)), cached),
-      row('· output', fmtTokens(day.totals.output))
+    const spent = allTokens(day.totals);
+    usageBars.append(
+      bar(`today · ${day.sessions} sessions`, fmtTokens(spent), share(spent), { hint: cached })
     );
   }
   const capped = (day && day.truncated) || (week && week.truncated);
   if (week) {
-    usageTable.append(
-      row(
-        `last 7 days${capped ? ' *' : ''}`,
-        fmtTokens(allTokens(week.totals)),
-        capped ? 'some older transcripts were skipped to keep this quick' : cached
-      ),
-      row('· output', fmtTokens(week.totals.output))
+    usageBars.append(
+      bar(`last 7 days${capped ? ' *' : ''}`, fmtTokens(weekTotal), 1, {
+        hint: capped ? 'some older transcripts were skipped to keep this quick' : cached,
+      })
     );
   }
 
-  usageNote.textContent = 'Spend, not remaining — ask Claude for /usage to see what is left.';
+  // Where it went: the models you actually leaned on this week.
+  const models = Object.entries((week && week.byModel) || {})
+    .map(([model, totals]) => [model, allTokens(totals)])
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 3);
+  if (models.length) {
+    const head = document.createElement('div');
+    head.className = 'ubar-group';
+    head.textContent = 'by model, last 7 days';
+    usageBars.append(head);
+    for (const [model, spent] of models) {
+      usageBars.append(bar(shortModel(model), fmtTokens(spent), share(spent), { tone: 'alt' }));
+    }
+  }
+
+  usageNote.textContent =
+    'Spend, not an allowance — bars are shares of the week. Ask Claude for /usage to see what is left.';
 
   usageEl.classList.remove('hidden');
   syncMode();
@@ -785,30 +850,33 @@ function handleEvent(evt) {
       document.body.classList.toggle('compact', Boolean(evt.compact));
       break;
     }
+    case 'pose': {
+      // A dev hook: the test bench uses it to look at one animation. Nothing in
+      // the app sends this — the buddy picks its own pose from what it knows.
+      setPose(evt.name || 'idle');
+      break;
+    }
     case 'walk': {
       // Main is stepping the window across the terminal; all we do is put him
       // in a walking pose, facing the way he's going.
       document.body.classList.add('walking');
       document.body.classList.toggle('facing-left', evt.facing === 'left');
-      setPose('walk');
+      refreshPose();
       clearTimeout(walkTimer);
       // Safety net: if the walk event that ends this one never lands, don't
       // leave him marching on the spot forever.
       walkTimer = setTimeout(() => {
         document.body.classList.remove('walking');
-        setPose('idle');
+        refreshPose();
       }, 4000);
       break;
     }
     case 'point': {
       document.body.classList.remove('walking');
       clearTimeout(walkTimer);
-      pointerEl.classList.toggle('hidden', !evt.on);
-      if (evt.on) setPose('point');
-      else {
-        pose = 'idle'; // let the mood decide again
-        setExcited(currentUrgent() || Boolean(activeRequestId));
-      }
+      pointing = Boolean(evt.on);
+      pointerEl.classList.toggle('hidden', !pointing);
+      refreshPose();
       break;
     }
     case 'question': {
@@ -862,6 +930,10 @@ function handleEvent(evt) {
       break;
     }
     case 'info':
+      // "Now watching …" — say hello.
+      greetingUntil = Date.now() + 2600;
+      refreshPose();
+      setTimeout(refreshPose, 2700);
       if (!activeRequestId) {
         showBubble(evt.message);
         setTimeout(() => {
@@ -876,6 +948,32 @@ function handleEvent(evt) {
 }
 
 window.clippyAPI.onEvent(handleEvent);
+
+/* ---------- Context pressure: a full window is worth worrying about ---------- */
+
+// Past this much of the context window used, the buddy starts to look stressed.
+// It's the number you'd want to notice before Claude starts forgetting things.
+const CONTEXT_STRESS = 0.3;
+const CONTEXT_POLL_MS = 60 * 1000;
+
+async function checkContext() {
+  let data = null;
+  try {
+    data = await window.clippyAPI.usage();
+  } catch {
+    return; // no transcript yet, or main is busy — try again next time
+  }
+  const session = data && data.session;
+  const tight = Boolean(
+    session && session.turns > 0 && session.context / session.contextLimit > CONTEXT_STRESS
+  );
+  if (tight === contextTight) return;
+  contextTight = tight;
+  refreshPose();
+}
+
+setInterval(checkContext, CONTEXT_POLL_MS);
+checkContext();
 
 /* ---------- Reminder loop: Clippy doesn't give up ---------- */
 

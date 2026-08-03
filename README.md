@@ -168,10 +168,10 @@ know.
   - **📌 Let go of this window** — unperch (only while riding a window).
   - **📊 Stats & token usage** — how much context is **left** (progress bar
     turning amber past 60% and red past 85%, 1M window detected automatically),
-    what this session has spent, and the totals for today and the last 7 days
-    across every session on the machine. Those are *spend* numbers — Claude Code
-    keeps your 5-hour and weekly allowances server-side, so ask it for `/usage`
-    to see what remains.
+    then bars for this session, today, the last 7 days, and the models you leaned
+    on most. Those are *spend* numbers and the bars are shares of the week —
+    Claude Code keeps your 5-hour and weekly allowances server-side, so ask it
+    for `/usage` to see what remains.
   - **⚙ Settings…** — opens the settings window (everything that applies to all
     buddies lives there, not here).
   - **× Hide Clippy**.
@@ -204,12 +204,23 @@ know.
   what lets Clippy ship with no image assets and no third-party art. Clippy is
   built once per session colour, since a GIF can't be recoloured by CSS.
 
-  Both speak the full **six-pose vocabulary**: `idle`, `excited`, `walk`,
-  `point`, `sleep`, `cheer`. The app asks for a pose by name and gets whatever
-  that buddy has — so the walk to a prompt actually plays a walk, and standing
-  on the line plays a point. `npm run make-buddies` rebuilds them;
-  `node scripts/make-buddies.js --preview clip:walk` prints a frame as ASCII if
-  you want to redraw one.
+  Both speak the full **nine-pose vocabulary** — and the buddy picks its own
+  pose from what the session is doing:
+
+  | pose | when |
+  |---|---|
+  | `idle` | quiet |
+  | `think` | Claude is working |
+  | `excited` | this session wants you — bouncing, with a glow |
+  | `stress` | a tool failed, or the context window is past 30% |
+  | `walk` | crossing a window on the way to a prompt |
+  | `point` | standing on the prompt, pointing at the line |
+  | `sleep` | the turn is over, nothing left to do |
+  | `cheer` | a turn finished cleanly |
+  | `wave` | hello — this session just started |
+
+  `npm run make-buddies` rebuilds them; `node scripts/make-buddies.js --preview
+  clip:walk` prints a frame as ASCII if you want to redraw one.
 - **Drag Clippy** anywhere; he floats above full-screen apps on all Spaces.
 - **Got it** acknowledges everything; **Snooze 5m** pauses the nagging.
 - The red badge and the menu bar `📎 N` show how many sessions need you.
