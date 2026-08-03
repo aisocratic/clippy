@@ -34,7 +34,7 @@ const {
   dockPosition,
   promptPosition,
 } = require('./terminal');
-const { sessionUsage, usageSince, startOfDay, startOfWeek } = require('./usage');
+const { sessionUsage, usageWindows, planLimitsFor, cleanLimits, PLANS } = require('./usage');
 
 const PORT = Number(process.env.CLIPPY_PORT || 43117);
 
@@ -83,6 +83,8 @@ const settings = {
   characterMode: 'same', // how each session's buddy is chosen — see CHARACTER_MODES
   characterByProject: {}, // project name -> character id, when you've picked one
   size: 'medium', // how big that buddy is drawn, and stays
+  plan: 'unknown', // which plan's allowance the usage bars are measured against
+  planLimits: {}, // your own token allowances, when the plan is "custom"
 };
 
 // Settings that aren't simple on/off switches, with the values they accept.
@@ -92,6 +94,7 @@ const CHOICES = {
   character: () => allCharacters().map((c) => c.id),
   characterMode: () => CHARACTER_MODES.map((m) => m.id),
   size: () => Object.keys(SIZES),
+  plan: () => PLANS.map((p) => p.id),
 };
 const settingsFile = () => path.join(app.getPath('userData'), 'clippy-settings.json');
 
@@ -126,7 +129,10 @@ function saveSettings() {
 
 function setSetting(key, value) {
   if (!(key in settings) || key === 'characterByProject') return;
-  if (CHOICES[key]) {
+  if (key === 'planLimits') {
+    // Numbers you typed yourself, so they get sanity-checked rather than cast.
+    settings.planLimits = cleanLimits(value);
+  } else if (CHOICES[key]) {
     if (!CHOICES[key]().includes(value)) return;
     settings[key] = value;
   } else {
@@ -157,6 +163,7 @@ function settingsPayload(buddy) {
     characters: allCharacters(),
     characterModes: CHARACTER_MODES,
     sizes: sizeList(),
+    plans: PLANS,
   };
 }
 
@@ -902,31 +909,33 @@ function tellBuddy(key, message, { sticky = false, fix = null } = {}) {
 
 const PROJECTS_DIR = path.join(os.homedir(), '.claude', 'projects');
 const USAGE_CACHE_MS = 60 * 1000;
-let usageCache = { at: 0, day: null, week: null };
+let usageCache = { at: 0, windows: null };
 
 /**
- * What this session (and the machine) has spent. Session numbers come straight
- * from its transcript; the day/week sweep reads every recent transcript, so it
- * is cached for a minute — right-clicking repeatedly shouldn't cost anything.
+ * What this session (and the machine) has spent. Session context comes straight
+ * from this session's transcript; the windows `/usage` reports on need a sweep
+ * of every recent transcript, so they are cached for a minute — right-clicking
+ * repeatedly shouldn't cost anything.
+ *
+ * The allowance those windows are measured against can only come from the
+ * settings window, because Claude Code never writes it down: `/usage` asks the
+ * API. When nobody has told us, `limits` is null and the panel says so instead
+ * of inventing a percentage.
  */
 async function collectUsage(key) {
   const session = await sessionUsage(tracker.transcriptFor(key));
   const now = Date.now();
   if (now - usageCache.at > USAGE_CACHE_MS) {
-    const [day, week] = await Promise.all([
-      usageSince(PROJECTS_DIR, startOfDay(now)),
-      usageSince(PROJECTS_DIR, startOfWeek(now)),
-    ]);
-    usageCache = { at: now, day, week };
+    usageCache = { at: now, windows: await usageWindows(PROJECTS_DIR, now) };
   }
+  const plan = PLANS.find((p) => p.id === settings.plan) || PLANS[0];
   return {
     name: buddies.get(key)?.name || '',
     session,
-    day: usageCache.day,
-    week: usageCache.week,
-    // Claude Code doesn't write the remaining 5h/weekly allowance anywhere —
-    // `/usage` asks the API for it — so the UI shows spend, not what's left.
-    limitsKnown: false,
+    windows: usageCache.windows,
+    now,
+    limits: planLimitsFor(settings),
+    plan: { id: plan.id, label: plan.label, estimated: Boolean(plan.estimated) },
   };
 }
 

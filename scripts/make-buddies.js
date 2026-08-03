@@ -90,19 +90,36 @@ function drop(g, x, y, fill, ink) {
   put(g, x + 1, y + 4, ink);
 }
 
-/** Sleep marks, drifting up and to the right. `n` grows them frame by frame. */
-function zzz(g, n, colour) {
-  const marks = [
-    [23, 8, 3],
-    [26, 4, 4],
-    [21, 2, 3],
-  ];
+/**
+ * Sleep marks, drifting up and to the right. `n` grows them frame by frame, and
+ * a narrow buddy can hand over its own three positions rather than wear them
+ * across its own face.
+ */
+const ZZZ_MARKS = [
+  [23, 8, 3],
+  [26, 4, 4],
+  [21, 2, 3],
+];
+function zzz(g, n, colour, marks = ZZZ_MARKS) {
   for (let i = 0; i < Math.min(n, marks.length); i++) {
     const [x, y, size] = marks[i];
     rect(g, x, y, x + size - 1, y, colour); // top bar
     rect(g, x, y + size - 1, x + size - 1, y + size - 1, colour); // bottom bar
     for (let j = 0; j < size; j++) put(g, x + size - 1 - j, y + j, colour); // diagonal
   }
+}
+
+/**
+ * Draw something that floats beside the buddy — a sleep mark, a thought — into
+ * its own layer, ink round its edge, and stamp the result down. A flat dark
+ * mark disappears against a dark desktop and a flat light one against a light
+ * desktop; only a light shape with a dark edge survives both.
+ */
+function floating(g, draw) {
+  const layer = grid();
+  draw(layer);
+  outline(layer);
+  for (let i = 0; i < layer.length; i++) if (layer[i]) g[i] = layer[i];
 }
 
 /** An upward triangle: an ear. */
@@ -384,15 +401,140 @@ const clipPalette = ({ color, dark }) => [
 ];
 
 /**
- * A paperclip: two nested wire loops, the inner one open at the bottom, with
- * Clippy's eyes and eyebrows sitting on top of the wire the way they always did.
+ * The wire, exactly as the very first commit's SVG drew it, still in its
+ * original 120x170 viewBox: up over the top, down the right, round the bottom,
+ * back up the left, and then the inner hook — which stops short, because that
+ * open end is the whole difference between a paperclip and a ring.
+ *
+ * Four numbers is a straight run, eight is a cubic (two control points and an
+ * end point); the start point is repeated so each segment stands alone.
+ */
+const CLIP_WIRE = [
+  [38, 64, 38, 40, 46, 26, 60, 26],
+  [60, 26, 74, 26, 82, 40, 82, 64],
+  [82, 64, 82, 122],
+  [82, 122, 82, 142, 73, 154, 60, 154],
+  [60, 154, 47, 154, 38, 142, 38, 122],
+  [38, 122, 38, 84],
+  [38, 84, 38, 70, 44, 62, 53, 62],
+  [53, 62, 62, 62, 68, 70, 68, 84],
+  [68, 84, 68, 118],
+];
+
+/**
+ * How that viewBox becomes sprite pixels. The scale can't be uniform: the clip
+ * is 137 units tall and only 53 wide, so a wire thick enough to survive at this
+ * size would leave a shape barely broader than its own stroke. So each axis
+ * gets its own — 44 units across become 13 pixels of centreline, 128 units down
+ * become 28 rows — and the clip lands sixteen pixels wide by thirty tall once the
+ * stroke has hung its own thickness off each end, still comfortably narrower
+ * than it is high.
+ *
+ * Across it isn't even one scale. A straight squeeze leaves the hook and the
+ * outer right leg a single pixel apart, and a one-pixel gap is no gap at all
+ * once the outline pass has been past it; so the right-hand stretch of the
+ * viewBox is compressed rather less than the left, which buys that gap its
+ * second pixel. The three numbers below are also picked so all three legs you
+ * can see — outer left, hook, outer right — sit on whole pixels, which is what
+ * keeps each of them exactly three pixels thick instead of two or four.
+ */
+const WIRE_R = 1.35; // half the wire's thickness, which makes it three across
+const fitX = (x) => (x <= 68 ? 9 + (x - 38) * (8 / 30) : 17 + (x - 68) * (5 / 14));
+const fitY = (y) => 1.35 + (y - 26) * (28.3 / 128);
+
+/** Chop a segment into points close enough together that the brush leaves no
+ *  holes — 60 to a bend is far more than a thirty-row clip could ever need. */
+function flatten(seg, steps = 60) {
+  const pts = [];
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
+    if (seg.length === 4) {
+      pts.push([seg[0] + (seg[2] - seg[0]) * t, seg[1] + (seg[3] - seg[1]) * t]);
+      continue;
+    }
+    const u = 1 - t;
+    pts.push([
+      u * u * u * seg[0] + 3 * u * u * t * seg[2] + 3 * u * t * t * seg[4] + t * t * t * seg[6],
+      u * u * u * seg[1] + 3 * u * u * t * seg[3] + 3 * u * t * t * seg[5] + t * t * t * seg[7],
+    ]);
+  }
+  return pts;
+}
+
+// The wire in sprite coordinates, worked out once: the silhouette never changes,
+// only where on the canvas it lands.
+const CLIP_POINTS = CLIP_WIRE.flatMap((seg) =>
+  flatten(seg).map(([x, y]) => [fitX(x), fitY(y)])
+);
+
+/**
+ * A wire arm, halfway up its swing and at the top of it. The SVG never had one;
+ * but a thing with no hands has to wave with something, and a bend of its own
+ * wire is all there is going. Written straight in sprite coordinates, since
+ * there's no original to be faithful to — same eight-number cubics all the same.
+ */
+const WAVE_ARM = [
+  [22.5, 19, 27, 17, 27, 14, 26.5, 13],
+  [22.5, 19, 27, 16, 27, 11, 26.5, 9],
+].map((arm) => flatten(arm, 40));
+
+/**
+ * Stamp a small disc along a run of points. This is how you stroke a path in
+ * pixel art: the disc is what gives the wire round ends and the same thickness
+ * whichever way it is bending, which a stack of rectangles never manages.
+ */
+function stamp(g, pts, colour, r, dy = 0) {
+  for (const [px, py] of pts) {
+    const cy = py + dy;
+    for (let y = Math.round(cy - r); y <= Math.round(cy + r); y++) {
+      for (let x = Math.round(px - r); x <= Math.round(px + r); x++) {
+        if ((x - px) ** 2 + (y - cy) ** 2 <= r * r) put(g, x, y, colour);
+      }
+    }
+  }
+}
+
+// Where the clip's own floating marks go: it is a narrow buddy and the shared
+// positions would sit across its face.
+const CLIP_ZZZ = [
+  [26, 12, 3],
+  [27, 7, 3],
+  [26, 2, 3],
+];
+const CLIP_DOTS = [
+  [27, 15, 1],
+  [28, 11, 1],
+  [26, 6, 2],
+];
+
+/** A rising trail of dots — the shorthand for a thought still being had. */
+function busy(g, n, colour) {
+  for (let i = 0; i < Math.min(n, CLIP_DOTS.length); i++) {
+    const [x, y, size] = CLIP_DOTS[i];
+    rect(g, x, y, x + size - 1, y + size - 1, colour);
+  }
+}
+
+/**
+ * Clippy, drawn the way the first commit drew him: one continuous wire, tall
+ * and narrow, round over the top, the inner hook left hanging open — with the
+ * big eyes and arched brows sitting *over* the wire, right where the SVG put
+ * them.
  *
  * @param {object} opts
- * @param {number} opts.bob    pixels the whole clip drifts down by
- * @param {number} opts.lift   pixels to bounce up by
- * @param {boolean} opts.blink eyes shut for a frame
- * @param {number} opts.look   -1, 0 or 1: which way the pupils drift
- * @param {boolean} opts.brows eyebrows up (excited)
+ * @param {number} opts.bob      pixels the whole clip drifts down by
+ * @param {number} opts.lift     pixels to bounce up by
+ * @param {boolean} opts.blink   eyes shut for a frame
+ * @param {number} opts.look     -2..2: which way the pupils drift
+ * @param {number} opts.lookDown -1..2: eyes up and away, or down at the prompt
+ * @param {boolean} opts.brows   eyebrows up (excited)
+ * @param {boolean} opts.happy   eyes shut and smiling
+ * @param {number} opts.tilt     lean the whole clip sideways
+ * @param {number} opts.sleeping how many sleep marks are floating (0 = awake)
+ * @param {boolean} opts.worried brows pinched in — this is going badly
+ * @param {number} opts.sweat    a bead beside him, further down each step
+ * @param {number} opts.thinking how many thought dots are rising (0 = none)
+ * @param {number} opts.wave     0 = no arm, 1-2 = a wire arm mid-greeting
  */
 function drawClip({
   bob = 0,
@@ -406,74 +548,74 @@ function drawClip({
   sleeping = 0,
   worried = false,
   sweat = 0,
+  thinking = 0,
+  wave = 0,
 } = {}) {
   const g = grid();
   const dy = BASE_Y + bob - lift;
 
-  // A paperclip is one bent wire, so it's drawn as strokes with real gaps
-  // between them — a filled ring just reads as a stone.
-  //
-  // One bent wire, drawn as rounded rings that get hollowed out — three pixels
-  // of stroke, three of gap. The outline only inks the outside (see outline()),
-  // so those gaps stay see-through the way a real clip's do.
-  //
-  // Outer bend: round the top, down both sides, round the bottom.
-  blob(g, 4, 2 + dy, 27, 31 + dy, WIRE, 5);
-  blob(g, 7, 5 + dy, 24, 28 + dy, CT, 4);
-
-  // Inner bend: over the top, down both sides, and stopping short — that open
-  // end is the giveaway that this is a clip and not a ring.
-  blob(g, 10, 7 + dy, 21, 25 + dy, WIRE, 4);
-  blob(g, 13, 10 + dy, 18, 22 + dy, CT, 3);
-  rect(g, 12, 22 + dy, 19, 25 + dy, CT);
+  // The wire is stroked, not carved: the holes between the legs are simply
+  // where the brush never went, so they stay see-through and the clip reads as
+  // bent wire rather than a slab with slots cut in it.
+  if (wave) stamp(g, WAVE_ARM[wave - 1], WIRE, WIRE_R - 0.2, dy);
+  stamp(g, CLIP_POINTS, WIRE, WIRE_R, dy);
 
   // A shaded pixel down the right of each stroke stops the wire reading flat.
-  for (let y = 2 + dy; y <= 31 + dy; y++) {
-    for (const x of [6, 27, 12, 21, 24]) {
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
       if (at(g, x, y) === WIRE && at(g, x + 1, y) !== WIRE) put(g, x, y, WIRE_DARK);
     }
   }
 
   outline(g, { exteriorOnly: true });
 
-  // Eyebrows, angled the way Clippy's always were — up when he's excited, and
-  // pinched *inward* when things are going badly.
-  const browY = (brows ? 7 : 9) + dy;
-  if (worried) {
-    rect(g, 6, browY, 8, browY, CINK);
-    rect(g, 9, browY + 1, 11, browY + 1, CINK);
-    rect(g, 23, browY, 25, browY, CINK);
-    rect(g, 20, browY + 1, 22, browY + 1, CINK);
-  } else {
-    rect(g, 6, browY + 1, 8, browY + 1, CINK);
-    rect(g, 9, browY, 10, browY, CINK);
-    rect(g, 23, browY + 1, 25, browY + 1, CINK);
-    rect(g, 21, browY, 22, browY, CINK);
-  }
-
-  // Eyes: white ovals sitting on the wire, pupils wandering about.
-  const eyeTop = 12 + dy;
-  if (blink) {
-    rect(g, 6, eyeTop + 3, 11, eyeTop + 3, CINK);
-    rect(g, 20, eyeTop + 3, 25, eyeTop + 3, CINK);
-  } else if (happy) {
-    // Closed and curved up — the difference between asleep and delighted.
-    for (const x0 of [6, 20]) {
-      rect(g, x0 + 1, eyeTop + 2, x0 + 4, eyeTop + 2, CINK);
-      put(g, x0, eyeTop + 3, CINK);
-      put(g, x0 + 5, eyeTop + 3, CINK);
+  // Eyebrows: arched in the middle the way the SVG's two little curves were —
+  // lifted a row when he's excited, and pinched *inward* when it's going badly.
+  const browY = (brows ? 1 : 2) + dy;
+  for (const [outer, inner] of [[8, 13], [23, 18]]) {
+    const step = Math.sign(inner - outer);
+    const span = Math.abs(inner - outer);
+    for (let i = 0; i <= span; i++) {
+      const x = outer + i * step;
+      // Two pixels thick, because a one-pixel brow lying across the top bend
+      // just reads as the wire having got lumpy. At rest the ends drop away and
+      // the middle rides high — the little curve the SVG drew. Worried, the
+      // whole brow slopes down toward the nose instead.
+      if (worried ? i <= 2 : i > 0 && i < span) put(g, x, browY, CINK);
+      if (!worried || i >= 1) put(g, x, browY + 1, CINK);
     }
-  } else {
-    blob(g, 6, eyeTop, 11, eyeTop + 6, WHITE, 2);
-    blob(g, 20, eyeTop, 25, eyeTop + 6, WHITE, 2);
-    const px = look; // -1 left, 0 centre, 1 right
-    const py = lookDown; // 1-2 = looking down at the prompt
-    rect(g, 8 + px, eyeTop + 2 + py, 9 + px, eyeTop + 4 + py, PUPIL);
-    rect(g, 22 + px, eyeTop + 2 + py, 23 + px, eyeTop + 4 + py, PUPIL);
   }
 
-  if (sleeping) zzz(g, sleeping, CINK);
-  if (sweat) drop(g, 26, 6 + sweat * 3, WHITE, CINK);
+  // Eyes: white ovals with a dark rim, sitting over the wire and — as in the
+  // SVG, where they very nearly touched — leaving hardly any daylight between.
+  const eyeTop = 4 + dy;
+  for (const x0 of [8, 17]) {
+    if (blink || happy) {
+      // Both shut eyes keep a white core: a bare dark curve would vanish, since
+      // what's behind the middle of a paperclip is the desktop.
+      const lid = eyeTop + 4;
+      if (happy) {
+        // Delighted: the top half of the eye, with the lid straight across the
+        // bottom of it. Nothing is looking out, and it is plainly not asleep.
+        blob(g, x0, lid - 2, x0 + 6, lid + 1, CINK, 2);
+        blob(g, x0 + 1, lid - 1, x0 + 5, lid, WHITE, 1);
+        rect(g, x0, lid + 1, x0 + 6, lid + 1, CINK);
+      } else {
+        // The CSS blinked by squashing the whole eye — white, dark rim and all
+        // — to scaleY(0.08); this is that sliver.
+        blob(g, x0, lid - 1, x0 + 6, lid + 1, CINK, 1);
+        rect(g, x0 + 1, lid, x0 + 5, lid, WHITE);
+      }
+      continue;
+    }
+    blob(g, x0, eyeTop, x0 + 6, eyeTop + 7, CINK, 2);
+    blob(g, x0 + 1, eyeTop + 1, x0 + 5, eyeTop + 6, WHITE, 1);
+    rect(g, x0 + 2 + look, eyeTop + 2 + lookDown, x0 + 3 + look, eyeTop + 4 + lookDown, PUPIL);
+  }
+
+  if (sleeping) floating(g, (l) => zzz(l, sleeping, WHITE, CLIP_ZZZ));
+  if (thinking) floating(g, (l) => busy(l, thinking, WHITE));
+  if (sweat) drop(g, 26, 8 + sweat * 3 + dy, WHITE, CINK);
   return tilt ? lean(g, tilt) : g;
 }
 
@@ -779,97 +921,6 @@ function drawRobot({ lift = 0, lamp = false, armsUp = false, look = 0, blink = f
   return g;
 }
 
-/**
- * Clippy the way the original SVG drew him — and the way everyone pictures him:
- * one continuous wire, tall and narrow, round over the top, with the inner hook
- * left open at the bottom. The first pixel clip squared all that off into two
- * concentric loops; this one keeps the silhouette.
- *
- * Same parameters as `drawClip`, so both wear every pose.
- */
-function drawClassicClip({
-  bob = 0,
-  lift = 0,
-  blink = false,
-  look = 0,
-  lookDown = 0,
-  brows = false,
-  happy = false,
-  tilt = 0,
-  sleeping = 0,
-  worried = false,
-  sweat = 0,
-} = {}) {
-  const g = grid();
-  const dy = BASE_Y + bob - lift;
-
-  /** A closed wire bend: a rounded rectangle with its middle hollowed out. */
-  const loop = (x0, y0, x1, y1, { radius, thickness, openBottom = 0 }) => {
-    blob(g, x0, y0 + dy, x1, y1 + dy, WIRE, radius);
-    blob(
-      g,
-      x0 + thickness,
-      y0 + thickness + dy,
-      x1 - thickness,
-      y1 - thickness + dy,
-      CT,
-      Math.max(1, radius - thickness)
-    );
-    // Cutting the bottom out of the inner bend is what turns a ring into a clip.
-    if (openBottom) rect(g, x0 + thickness, y1 - openBottom + dy, x1 - thickness, y1 + dy, CT);
-  };
-
-  loop(6, 0, 25, 31, { radius: 7, thickness: 3 }); // outer bend, tall and round
-  loop(11, 6, 20, 25, { radius: 4, thickness: 3, openBottom: 4 }); // inner hook
-
-  // A shaded pixel down the right of each stroke stops the wire reading flat.
-  for (let y = 0; y < H; y++) {
-    for (let x = 0; x < W - 1; x++) {
-      if (at(g, x, y) === WIRE && at(g, x + 1, y) !== WIRE) put(g, x, y, WIRE_DARK);
-    }
-  }
-
-  outline(g, { exteriorOnly: true });
-
-  // Eyebrows above the eyes — up when excited, pinched in when it's going badly.
-  const browY = (brows ? 5 : 7) + dy;
-  if (worried) {
-    rect(g, 6, browY, 8, browY, CINK);
-    rect(g, 9, browY + 1, 11, browY + 1, CINK);
-    rect(g, 23, browY, 25, browY, CINK);
-    rect(g, 20, browY + 1, 22, browY + 1, CINK);
-  } else {
-    rect(g, 6, browY + 1, 8, browY + 1, CINK);
-    rect(g, 9, browY, 11, browY, CINK);
-    rect(g, 23, browY + 1, 25, browY + 1, CINK);
-    rect(g, 20, browY, 22, browY, CINK);
-  }
-
-  // Eyes: tall ovals sitting *over* the wire, the way the SVG had them — outline
-  // first so they read against whatever they cover.
-  const eyeTop = 9 + dy;
-  for (const x0 of [6, 19]) {
-    if (blink) {
-      rect(g, x0 + 1, eyeTop + 3, x0 + 5, eyeTop + 3, CINK);
-      continue;
-    }
-    blob(g, x0, eyeTop, x0 + 6, eyeTop + 7, CINK, 2);
-    blob(g, x0 + 1, eyeTop + 1, x0 + 5, eyeTop + 6, WHITE, 1);
-    if (happy) {
-      // Closed and curved up: delighted, not asleep.
-      rect(g, x0 + 2, eyeTop + 4, x0 + 4, eyeTop + 4, CINK);
-      put(g, x0 + 1, eyeTop + 5, CINK);
-      put(g, x0 + 5, eyeTop + 5, CINK);
-    } else {
-      rect(g, x0 + 2 + look, eyeTop + 3 + lookDown, x0 + 3 + look, eyeTop + 5 + lookDown, PUPIL);
-    }
-  }
-
-  if (sleeping) zzz(g, sleeping, CINK);
-  if (sweat) drop(g, 26, 2 + sweat * 3 + dy, WHITE, CINK);
-  return tilt ? lean(g, tilt) : g;
-}
-
 /* ---------------- Animations ----------------
  *
  * Every character speaks the same six-word vocabulary, so the app can ask for a
@@ -884,32 +935,37 @@ function drawClassicClip({
  *   cheer    a turn finished cleanly
  */
 
-const clipPoses = (drawClip) => ({
+const CLIP_POSES = {
+  // The old CSS bobbed him over 3.2 seconds and blinked him with a transition;
+  // these delays add up to roughly that, so he still reads as breathing rather
+  // than flickering.
   idle: [
-    { indices: drawClip({ bob: 0, look: 0 }), delayMs: 420 },
-    { indices: drawClip({ bob: 1, look: 1 }), delayMs: 420 },
-    { indices: drawClip({ bob: 1, blink: true }), delayMs: 120 },
-    { indices: drawClip({ bob: 1, look: -1 }), delayMs: 420 },
-    { indices: drawClip({ bob: 0, look: 0 }), delayMs: 420 },
+    { indices: drawClip({ bob: 0, look: 0 }), delayMs: 620 },
+    { indices: drawClip({ bob: 1, look: 1 }), delayMs: 620 },
+    { indices: drawClip({ bob: 1, blink: true }), delayMs: 130 },
+    { indices: drawClip({ bob: 1, look: -1 }), delayMs: 620 },
+    { indices: drawClip({ bob: 0, look: 0 }), delayMs: 620 },
   ],
+  // The original bounce: up hard, rotated one way and then the other, brows
+  // lifted — the whole thing inside about half a second.
   excited: [
-    { indices: drawClip({ lift: 0, brows: true }), delayMs: 110 },
-    { indices: drawClip({ lift: 3, brows: true, look: 1 }), delayMs: 110 },
-    { indices: drawClip({ lift: 5, brows: true }), delayMs: 140 },
-    { indices: drawClip({ lift: 2, brows: true, look: -1 }), delayMs: 110 },
+    { indices: drawClip({ lift: 0, brows: true, tilt: -2 }), delayMs: 110 },
+    { indices: drawClip({ lift: 3, brows: true, tilt: -1, look: 1 }), delayMs: 110 },
+    { indices: drawClip({ lift: 4, brows: true, tilt: 1 }), delayMs: 140 },
+    { indices: drawClip({ lift: 2, brows: true, tilt: 2, look: -1 }), delayMs: 110 },
   ],
-  // A clip has no legs, so it walks the way a clip would: leaning into each
-  // step and rocking over its own base.
+  // A clip has no legs, so it walks the way a clip would: rocking over its own
+  // base, and watching where it's going.
   walk: [
     { indices: drawClip({ bob: 0, tilt: -2, look: -1 }), delayMs: 150 },
-    { indices: drawClip({ lift: 2, tilt: 0, look: -1 }), delayMs: 150 },
+    { indices: drawClip({ lift: 2, tilt: -1, look: -1 }), delayMs: 150 },
     { indices: drawClip({ bob: 0, tilt: 2, look: -1 }), delayMs: 150 },
-    { indices: drawClip({ lift: 2, tilt: 0, look: -1 }), delayMs: 150 },
+    { indices: drawClip({ lift: 2, tilt: 1, look: -1 }), delayMs: 150 },
   ],
-  // Leaning over the line it wants you to type on, eyes down.
+  // Leaning right over the line it wants you to type on, eyes down at it.
   point: [
-    { indices: drawClip({ tilt: -2, lookDown: 2, look: -1, brows: true }), delayMs: 260 },
-    { indices: drawClip({ tilt: -3, lookDown: 2, look: -1, brows: true, lift: 1 }), delayMs: 260 },
+    { indices: drawClip({ tilt: -3, lookDown: 2, look: -1, brows: true }), delayMs: 260 },
+    { indices: drawClip({ tilt: -4, lookDown: 2, look: -1, brows: true, lift: 1 }), delayMs: 260 },
   ],
   sleep: [
     { indices: drawClip({ bob: 0, blink: true, sleeping: 1 }), delayMs: 620 },
@@ -918,16 +974,17 @@ const clipPoses = (drawClip) => ({
   ],
   cheer: [
     { indices: drawClip({ lift: 0, happy: true, brows: true }), delayMs: 130 },
-    { indices: drawClip({ lift: 4, happy: true, brows: true, tilt: -2 }), delayMs: 130 },
-    { indices: drawClip({ lift: 6, happy: true, brows: true }), delayMs: 160 },
-    { indices: drawClip({ lift: 4, happy: true, brows: true, tilt: 2 }), delayMs: 130 },
+    { indices: drawClip({ lift: 3, happy: true, brows: true, tilt: -2 }), delayMs: 130 },
+    { indices: drawClip({ lift: 4, happy: true, brows: true }), delayMs: 160 },
+    { indices: drawClip({ lift: 3, happy: true, brows: true, tilt: 2 }), delayMs: 130 },
   ],
-  // Working: eyes up and away, a slow sway — thinking about something else.
+  // Working: eyes up and away, a slow sway, and a trail of dots going up —
+  // concentration, rather than anything wanting your attention.
   think: [
-    { indices: drawClip({ bob: 0, look: 1, lookDown: -1 }), delayMs: 460 },
-    { indices: drawClip({ bob: 1, look: 1, lookDown: -1, tilt: 1 }), delayMs: 460 },
-    { indices: drawClip({ bob: 1, look: -1, lookDown: -1 }), delayMs: 460 },
-    { indices: drawClip({ bob: 0, look: -1, lookDown: -1, tilt: -1 }), delayMs: 460 },
+    { indices: drawClip({ bob: 0, look: 1, lookDown: -1, thinking: 1 }), delayMs: 420 },
+    { indices: drawClip({ bob: 1, look: 1, lookDown: -1, thinking: 2, tilt: 1 }), delayMs: 420 },
+    { indices: drawClip({ bob: 1, look: -1, lookDown: -1, thinking: 3 }), delayMs: 420 },
+    { indices: drawClip({ bob: 0, look: -1, lookDown: -1, tilt: -1 }), delayMs: 420 },
   ],
   // A fast, small shake with the brows pinched in and a bead of sweat: the
   // difference between "look at me" and "this is going badly".
@@ -938,13 +995,14 @@ const clipPoses = (drawClip) => ({
     { indices: drawClip({ worried: true, tilt: 1, sweat: 2, lookDown: 1 }), delayMs: 90 },
     { indices: drawClip({ worried: true, tilt: 0, sweat: 3 }), delayMs: 120 },
   ],
+  // Hello: the wire arm swings, and he watches you while he does it.
   wave: [
-    { indices: drawClip({ tilt: -3, happy: true }), delayMs: 200 },
-    { indices: drawClip({ tilt: 0, happy: true, lift: 1 }), delayMs: 200 },
-    { indices: drawClip({ tilt: 3, happy: true }), delayMs: 200 },
-    { indices: drawClip({ tilt: 0, happy: true, lift: 1 }), delayMs: 200 },
+    { indices: drawClip({ wave: 1, brows: true, look: 1 }), delayMs: 170 },
+    { indices: drawClip({ wave: 2, brows: true, look: 1, tilt: -1 }), delayMs: 170 },
+    { indices: drawClip({ wave: 1, brows: true, look: 1, lift: 1 }), delayMs: 170 },
+    { indices: drawClip({ wave: 2, brows: true, look: 1, tilt: 1 }), delayMs: 170 },
   ],
-});
+};
 
 const CAT_POSES = {
   // Breathing throughout, the tail swishing over it, with a blink and an ear
@@ -1025,9 +1083,13 @@ const gif = (palette, frames) =>
 // is exactly what the renderer asks for (see buddyArt in clippy.js).
 const THEMES = [
   { id: 'cat', palette: PALETTE, poses: CAT_POSES },
-  { id: 'clip', poses: clipPoses(drawClip), perColour: true },
-  { id: 'classic', poses: clipPoses(drawClassicClip), perColour: true },
+  { id: 'clip', poses: CLIP_POSES, perColour: true },
 ];
+
+// `clip` used to be a blocky two-loop paperclip with `classic` beside it doing
+// the original SVG silhouette; now `clip` *is* that silhouette, so `classic` is
+// a duplicate and has been retired. Its old folder gets swept up in main().
+const RETIRED = ['classic'];
 
 function build() {
   const assets = {};
@@ -1068,6 +1130,15 @@ function main() {
   // someone dropped in next to them.
   for (const theme of THEMES.map((t) => t.id)) {
     fs.rmSync(path.join(dir, 'themes', theme), { recursive: true, force: true });
+  }
+  // Characters this script used to draw and no longer does. Their folders would
+  // otherwise sit there forever, and keep turning up in the menus. One with a
+  // `theme.json` in it isn't ours, though: that's somebody's sprite pack under a
+  // name we happened to have used, and deleting it would take their art with it.
+  for (const id of RETIRED) {
+    const folder = path.join(dir, 'themes', id);
+    if (!fs.existsSync(folder) || fs.existsSync(path.join(folder, 'theme.json'))) continue;
+    fs.rmSync(folder, { recursive: true, force: true });
   }
   for (const stale of fs.existsSync(dir) ? fs.readdirSync(dir) : []) {
     if (stale.endsWith('.gif')) fs.rmSync(path.join(dir, stale)); // pre-themes layout

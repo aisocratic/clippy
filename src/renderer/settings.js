@@ -43,7 +43,7 @@ const STATUS_TEXT = {
 
 // One flat object, exactly as main sends it: the settings themselves plus the
 // rosters and catalogue the page is drawn from.
-let state = { characters: [], sizes: [], actions: [], sessions: [] };
+let state = { characters: [], sizes: [], actions: [], sessions: [], plans: [] };
 const sheetTimers = [];
 
 /* ---------- Buddies ---------- */
@@ -206,6 +206,129 @@ function renderSizes() {
     btn.title = `${size.buddy}px`;
     btn.addEventListener('click', () => set('size', size.id));
     host.appendChild(btn);
+  }
+}
+
+/* ---------- Plan & allowances ---------- */
+
+// The windows Clippy measures, in the order `/usage` lists them; the ids are
+// the keys main keeps a custom allowance under.
+const LIMIT_ROWS = [
+  { key: 'session', label: 'Current session', note: 'the rolling 5-hour block' },
+  { key: 'week', label: 'Current week', note: 'all models, last 7 days' },
+  { key: 'weekOpus', label: 'Current week — Opus', note: 'your plan counts Opus again on its own' },
+];
+
+// Allowances are typed in millions of tokens: nobody wants to count zeroes,
+// and a week of real work runs to hundreds of millions once cache is included.
+const MILLION = 1_000_000;
+const inMillions = (n) => (n > 0 ? String(Math.round((n / MILLION) * 100) / 100) : '');
+
+function renderPlans() {
+  const host = document.getElementById('plans');
+  const note = document.getElementById('plan-note');
+  const plans = state.plans || [];
+  host.replaceChildren();
+
+  for (const plan of plans) {
+    const btn = document.createElement('button');
+    btn.className = plan.id === (state.plan || 'unknown') ? 'on' : '';
+    btn.textContent = plan.label;
+    btn.addEventListener('click', () => set('plan', plan.id));
+    host.appendChild(btn);
+  }
+  const current = plans.find((p) => p.id === (state.plan || 'unknown'));
+  note.textContent = current ? current.note : '';
+  renderLimits(current);
+}
+
+// The three boxes currently on screen, kept so a re-render can leave them
+// exactly where they are. Typing a number saves it, saving pushes fresh state
+// back from main, and a rebuild at that moment would hand the caret to <body>
+// mid-form — so the boxes outlive the render that would have replaced them.
+let limitBoxes = null; // { plan: id, boxes: Map<key, input> }
+
+/**
+ * The three allowances the bars are drawn against.
+ *
+ * A named tier shows the numbers it is guessing with, so nobody has to take
+ * them on trust; only Custom can be typed into, because those are the ones that
+ * came from a real `/usage`. Leave a Custom box empty and that window quietly
+ * goes back to showing a share of the week — no allowance, no percentage.
+ */
+function renderLimits(plan) {
+  const host = document.getElementById('plan-limits');
+  const known = plan && plan.id !== 'unknown';
+  host.classList.toggle('hidden', !known);
+  if (!known) {
+    host.replaceChildren();
+    limitBoxes = null;
+    return;
+  }
+
+  const custom = plan.id === 'custom';
+  const mine = state.planLimits || {};
+  const valueFor = (key) => inMillions(custom ? mine[key] : (plan.limits || {})[key]);
+
+  // Same plan, same three boxes: refresh what they say and leave the nodes —
+  // and whichever one you are halfway through typing into — alone.
+  if (limitBoxes && limitBoxes.plan === plan.id) {
+    for (const [key, box] of limitBoxes.boxes) {
+      if (box !== document.activeElement) box.value = valueFor(key);
+    }
+    return;
+  }
+
+  host.replaceChildren();
+  const boxes = new Map();
+  // One change writes all three, so a half-typed row can never strand the
+  // other two on an older number.
+  const commit = () => {
+    const limits = {};
+    for (const [key, box] of boxes) limits[key] = Math.round(Number(box.value) * MILLION) || 0;
+    set('planLimits', limits);
+  };
+
+  for (const row of LIMIT_ROWS) {
+    const field = document.createElement('div');
+    field.className = 'limit';
+
+    const label = document.createElement('label');
+    label.textContent = row.label;
+    const note = document.createElement('span');
+    note.className = 'limit-note';
+    note.textContent = row.note;
+
+    const box = document.createElement('input');
+    box.type = 'number';
+    box.min = '0';
+    box.step = '1';
+    box.placeholder = 'not set';
+    box.value = valueFor(row.key);
+    box.disabled = !custom;
+    box.title = custom
+      ? 'What `/usage` implies this window allows, in millions of tokens'
+      : `A ${plan.label} estimate — switch to Custom to correct it`;
+    box.addEventListener('change', commit);
+    boxes.set(row.key, box);
+
+    const unit = document.createElement('span');
+    unit.className = 'limit-unit';
+    unit.textContent = 'M tokens';
+
+    field.append(label, note, box, unit);
+    host.appendChild(field);
+  }
+  limitBoxes = { plan: plan.id, boxes };
+
+  if (plan.estimated) {
+    const warning = document.createElement('p');
+    warning.className = 'limit-warning';
+    warning.textContent =
+      'Estimates, not facts — Anthropic publishes no token numbers and Claude Code stores none. ' +
+      'Run /usage, compare it with the panel over your buddy, and put the corrected numbers in ' +
+      'under Custom.';
+    host.appendChild(warning);
   }
 }
 
@@ -452,6 +575,7 @@ function render() {
   renderModes();
   renderSizes();
   renderCast();
+  renderPlans();
   renderSwitches();
   renderActions();
   renderSessions();

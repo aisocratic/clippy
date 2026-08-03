@@ -31,6 +31,7 @@ const { describeToolCall, activityLabel, toHookResponse } = require('../src/deci
 const { PALETTE } = require('../src/identity');
 const { allCharacters, sizeList, CHARACTER_MODES } = require('../src/characters');
 const { ACTIONS } = require('../src/actions');
+const { PLANS, SESSION_WINDOW_MS, WEEK_WINDOW_MS } = require('../src/usage');
 
 const args = process.argv.slice(2);
 const argv = (flag, fallback) => {
@@ -626,55 +627,171 @@ const totals = (input, output, cacheRead, cacheCreate) => ({
   cacheCreate,
 });
 
-const USAGE = {
-  normal: {
+const HOUR = 60 * 60 * 1000;
+const limitsOf = (id) => (PLANS.find((p) => p.id === id) || {}).limits || null;
+const sumTotals = (list) =>
+  list.reduce(
+    (into, t) => ({
+      input: into.input + t.input,
+      output: into.output + t.output,
+      cacheRead: into.cacheRead + t.cacheRead,
+      cacheCreate: into.cacheCreate + t.cacheCreate,
+    }),
+    totals(0, 0, 0, 0)
+  );
+
+/**
+ * The usage payloads, built fresh on every request.
+ *
+ * The panel says when each window's spend starts, so these can't be a frozen
+ * constant: a window that started three hours ago has to still have started
+ * three hours ago whenever you open the bench.
+ */
+function usagePayloads() {
+  const now = Date.now();
+
+  /** One window of spend, as main's sweep would report it. */
+  const win = (spanMs, startedAgo, byModel, { sessions = 1, truncated = false } = {}) => {
+    const models = Object.entries(byModel);
+    const firstAt = startedAgo ? now - startedAgo : 0;
+    return {
+      since: now - spanMs,
+      spanMs,
+      firstAt,
+      lastAt: firstAt ? now - 90_000 : 0,
+      agesOutAt: firstAt ? firstAt + spanMs : 0,
+      totals: sumTotals(models.map(([, t]) => t)),
+      byModel,
+      sessions,
+      truncated,
+    };
+  };
+
+  const opusOnly = (week) => {
+    const byModel = Object.fromEntries(
+      Object.entries(week.byModel).filter(([model]) => /opus/i.test(model))
+    );
+    return { ...week, byModel, totals: sumTotals(Object.values(byModel)) };
+  };
+
+  /** A payload is a session, the three windows, and whatever plan you've told it. */
+  const payload = (session, block, week, plan) => ({
     name: NAME,
-    session: {
-      model: 'claude-opus-5',
-      turns: 24,
-      context: 61_000,
-      contextLimit: 200_000,
-      totals: totals(48_000, 31_000, 2_400_000, 180_000),
+    now,
+    session,
+    windows: { session: block, week, weekOpus: opusOnly(week) },
+    limits: plan.id === 'custom' ? plan.limits : limitsOf(plan.id),
+    plan: {
+      id: plan.id,
+      label: plan.label || (PLANS.find((p) => p.id === plan.id) || {}).label || 'Not set',
+      estimated: Boolean((PLANS.find((p) => p.id === plan.id) || {}).estimated),
     },
-    day: { sessions: 4, totals: totals(190_000, 96_000, 9_800_000, 520_000) },
-    week: {
-      sessions: 21,
-      totals: totals(1_020_000, 480_000, 61_000_000, 3_100_000),
-      truncated: false,
-      byModel: {
-        'claude-opus-5': totals(700_000, 320_000, 41_000_000, 2_100_000),
-        'claude-sonnet-5': totals(240_000, 120_000, 16_000_000, 800_000),
-        'claude-haiku-4-5-20251001': totals(80_000, 40_000, 4_000_000, 200_000),
+  });
+
+  const busyWeek = win(
+    WEEK_WINDOW_MS,
+    6.2 * 24 * HOUR,
+    {
+      'claude-opus-5': totals(700_000, 320_000, 41_000_000, 2_100_000),
+      'claude-sonnet-5': totals(240_000, 120_000, 16_000_000, 800_000),
+      'claude-haiku-4-5-20251001': totals(80_000, 40_000, 4_000_000, 200_000),
+    },
+    { sessions: 21 }
+  );
+
+  const heavyWeek = win(
+    WEEK_WINDOW_MS,
+    6.9 * 24 * HOUR,
+    {
+      'claude-opus-5[1m]': totals(2_900_000, 1_600_000, 180_000_000, 10_000_000),
+      'claude-sonnet-5': totals(500_000, 300_000, 30_000_000, 2_000_000),
+    },
+    { sessions: 44, truncated: true }
+  );
+
+  return {
+    // Nothing has been written yet: no bar may claim to know anything.
+    empty: payload(
+      { model: '', turns: 0, context: 0, contextLimit: 200_000, totals: totals(0, 0, 0, 0) },
+      win(SESSION_WINDOW_MS, 0, {}, { sessions: 0 }),
+      win(WEEK_WINDOW_MS, 0, {}, { sessions: 0 }),
+      { id: 'unknown' }
+    ),
+
+    // Ten minutes into a new session, on a quiet week.
+    fresh: payload(
+      {
+        model: 'claude-sonnet-5',
+        turns: 3,
+        context: 24_000,
+        contextLimit: 200_000,
+        totals: totals(6_000, 4_000, 180_000, 22_000),
       },
-    },
-  },
-  hot: {
-    name: NAME,
-    session: {
-      model: 'claude-opus-5[1m]',
-      turns: 118,
-      context: 188_000,
-      contextLimit: 200_000,
-      totals: totals(310_000, 205_000, 24_000_000, 1_400_000),
-    },
-    day: { sessions: 9, totals: totals(720_000, 410_000, 48_000_000, 2_600_000) },
-    week: {
-      sessions: 44,
-      totals: totals(3_400_000, 1_900_000, 210_000_000, 12_000_000),
-      truncated: true,
-      byModel: {
-        'claude-opus-5[1m]': totals(2_900_000, 1_600_000, 180_000_000, 10_000_000),
-        'claude-sonnet-5': totals(500_000, 300_000, 30_000_000, 2_000_000),
+      win(SESSION_WINDOW_MS, 12 * 60 * 1000, {
+        'claude-sonnet-5': totals(6_000, 4_000, 180_000, 22_000),
+      }),
+      win(
+        WEEK_WINDOW_MS,
+        2 * 24 * HOUR,
+        { 'claude-sonnet-5': totals(120_000, 60_000, 3_400_000, 210_000) },
+        { sessions: 3 }
+      ),
+      { id: 'unknown' }
+    ),
+
+    // A long session with the context nearly full — the bar that matters most.
+    context: payload(
+      {
+        model: 'claude-opus-5',
+        turns: 118,
+        context: 188_000,
+        contextLimit: 200_000,
+        totals: totals(310_000, 205_000, 24_000_000, 1_400_000),
       },
-    },
-  },
-  empty: {
-    name: NAME,
-    session: { model: '', turns: 0, context: 0, contextLimit: 200_000, totals: totals(0, 0, 0, 0) },
-    day: { sessions: 1, totals: totals(0, 0, 0, 0) },
-    week: { sessions: 1, totals: totals(0, 0, 0, 0) },
-  },
-};
+      win(SESSION_WINDOW_MS, 4.1 * HOUR, {
+        'claude-opus-5': totals(310_000, 205_000, 24_000_000, 1_400_000),
+      }),
+      busyWeek,
+      { id: 'max20' }
+    ),
+
+    // Plenty of spend, nobody has said what the allowance is: shares of the week.
+    noplan: payload(
+      {
+        model: 'claude-opus-5',
+        turns: 24,
+        context: 61_000,
+        contextLimit: 200_000,
+        totals: totals(48_000, 31_000, 2_400_000, 180_000),
+      },
+      win(SESSION_WINDOW_MS, 2.6 * HOUR, {
+        'claude-opus-5': totals(48_000, 31_000, 2_400_000, 180_000),
+      }),
+      busyWeek,
+      { id: 'unknown' }
+    ),
+
+    // Allowances set by hand, and very nearly gone — every bar in the hot tone.
+    spent: payload(
+      {
+        model: 'claude-opus-5[1m]',
+        turns: 96,
+        context: 402_000,
+        contextLimit: 1_000_000,
+        totals: totals(310_000, 205_000, 24_000_000, 1_400_000),
+      },
+      win(SESSION_WINDOW_MS, 3.4 * HOUR, {
+        'claude-opus-5[1m]': totals(1_100_000, 700_000, 88_000_000, 4_000_000),
+      }),
+      heavyWeek,
+      {
+        id: 'custom',
+        label: 'Custom',
+        limits: { session: 100_000_000, week: 250_000_000, weekOpus: 210_000_000 },
+      }
+    ),
+  };
+}
 
 /* ---------------- Static file serving ---------------- */
 
@@ -759,7 +876,7 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/scenarios') {
     return sendJson(res, {
       scenarios: SCENARIOS,
-      usage: USAGE,
+      usage: usagePayloads(),
       palette: PALETTE,
       characters: allCharacters(),
       sizes: sizeList(),
@@ -788,9 +905,12 @@ const server = http.createServer(async (req, res) => {
       characterMode: 'same',
       characterByProject: {},
       size: 'medium',
+      plan: 'unknown', // the default the panel has to degrade honestly to
+      planLimits: {},
       characters: allCharacters(),
       characterModes: CHARACTER_MODES,
       sizes: sizeList(),
+      plans: PLANS,
       actions: ACTIONS,
       port: 43117,
       windowAccess: false, // so the banner is visible while working on it
