@@ -44,11 +44,12 @@ front, so you land in the right session instead of hunting for it.
 Clippy is a **small buddy** by default and only grows a window when there's
 something to read — as tall as that thing needs, no more. **Click him** and a
 menu drops out from underneath: go to the agent's terminal, stats & token usage
-(`660k left of 1.0M · 340k used (34%)` over a progress bar, plus spend for the
-session, today and the week), a Settings submenu, and hide. The buddies are
-**pixel art**: Clippy himself in your session's colour and a pixel cat, both
-drawn in code with no image assets in the repo — and any sprite pack you drop
-in, swappable from the menu.
+(`660k left of 1.0M · 340k used (34%)` over a progress bar, plus real allowance
+bars for the rolling 5-hour block, the week, and Opus's own week once you tell
+Clippy your plan), a Settings submenu, and hide. The buddies are **pixel art**:
+Clippy himself in your session's colour and a pixel cat, both drawn in code
+with no image assets in the repo — and any sprite pack you drop in, swappable
+from the menu.
 
 ## How it works
 
@@ -166,12 +167,18 @@ know.
   - **👇 Show me the prompt** — he walks to that session's input line and points
     at it. From the corner he goes there first.
   - **📌 Let go of this window** — unperch (only while riding a window).
-  - **📊 Stats & token usage** — how much context is **left** (progress bar
-    turning amber past 60% and red past 85%, 1M window detected automatically),
-    then bars for this session, today, the last 7 days, and the models you leaned
-    on most. Those are *spend* numbers and the bars are shares of the week —
-    Claude Code keeps your 5-hour and weekly allowances server-side, so ask it
-    for `/usage` to see what remains.
+  - **📊 Stats & token usage** — how much context is **left** in this
+    conversation (progress bar turning amber past 60% and red past 85%, 1M
+    window detected automatically), then three bars for what every session on
+    this machine has spent in the windows `/usage` reports on — the rolling
+    5-hour block, the week across all models, and Opus's own week — plus the
+    models you leaned on most. Tell Clippy your plan (Pro, Max 5×, Max 20×, or
+    your own Custom numbers) in **Set plan…**/Settings and those become real
+    allowance bars, spend over limit; until then they're hatched bars showing
+    each window's share of the week, spend with nothing to compare it to.
+    Claude Code keeps the real 5-hour/weekly allowances server-side, so `/usage`
+    is still the source of truth — Clippy's numbers are for calibrating the
+    estimate, not replacing it.
   - **⚙ Settings…** — opens the settings window (everything that applies to all
     buddies lives there, not here).
   - **× Hide Clippy**.
@@ -206,7 +213,11 @@ know.
   🐱 pixel cat, both **drawn in code** — every frame is primitives in
   `scripts/make-buddies.js`, encoded by this repo's own GIF encoder, which is
   what lets Clippy ship with no image assets and no third-party art. Clippy is
-  built once per session colour, since a GIF can't be recoloured by CSS.
+  built once per session colour, since a GIF can't be recoloured by CSS. His
+  silhouette is traced from the original 1997 paperclip's own path data — one
+  continuous wire, round over the top, down both sides, the inner hook left
+  open — rather than a blockier stand-in, so there's no separate "classic"
+  variant to pick between anymore; `clip` just *is* that shape now.
 
   Both speak the full **nine-pose vocabulary** — and the buddy picks its own
   pose from what the session is doing:
@@ -333,7 +344,7 @@ would at least make the row say "Clippy" instead of "Electron".
 
 Click **📎 in the menu bar** and Clippy's settings window opens (right-click for
 the quick menu — sessions, Drive mode, quit). It's the one part of Clippy you sit
-and read, and it has four sections:
+and read, and it has five sections:
 
 - **Sessions** — everything reporting in right now, each with the buddy it's
   wearing and a picker to **give that project a buddy of its own**. That choice
@@ -349,6 +360,14 @@ and read, and it has four sections:
 
   There's a link to [openpets.dev/gallery](https://openpets.dev/gallery) for
   downloading more.
+- **Usage & limits** — turns the token panel's spend bars into real allowance
+  bars. Pick your plan (**Pro**, **Max 5×**, **Max 20×**) for a rough estimate
+  scaled off Anthropic's own 5×/20× steps, or **Custom** to type in your own
+  numbers for the 5-hour block, the week, and Opus's week. To get real numbers:
+  run `/usage` in Claude Code, right-click a buddy, and back out the allowance
+  from the percentage each side reports (40% in `/usage` against 2.0M in Clippy
+  means a ~5M allowance) — type that in under Custom and every bar after that
+  is honest instead of a guess.
 - **What Clippy answers** — the switches, each spelling out what it means for
   Claude Code. Turn one off and that moment goes back to the terminal exactly as
   if Clippy weren't running.
@@ -361,7 +380,7 @@ and read, and it has four sections:
 
 ## Bring your own buddy (sprite-sheet themes)
 
-The six built-in characters are drawn in code. If you'd rather use a sprite pack
+The built-in characters are drawn in code. If you'd rather use a sprite pack
 you downloaded, drop it in and Clippy wears it — no code change:
 
 ```
@@ -388,8 +407,9 @@ all the same size. Only `idle` is required — anything missing falls back to
 `excited`, then `idle`. Restart the app (or reload the bench) and the theme
 appears in the settings window and in the buddy's own **🎨 Buddy & size** menu.
 
-A pack can name any of the six poses Clippy knows — `idle`, `excited`, `walk`,
-`point`, `sleep`, `cheer` — under a `poses` object, and they're used wherever
+A pack can name any of the poses Clippy knows — `idle`, `excited`, `walk`,
+`point`, `sleep`, `cheer`, and the rest of the nine-pose vocabulary — under a
+`poses` object, and they're used wherever
 the app needs them (the walk really does play while a buddy crosses a window).
 
 Pixel art is scaled by whole numbers only, so a 32px-wide frame lands exactly on
@@ -543,7 +563,10 @@ Two things worth knowing before changing the UI:
   on the project name for everything else), raises it, and works out where
   Clippy should perch
 - `src/usage.js` — token usage read from Claude Code's own transcripts: this
-  session's context and spend, plus day/week totals across all sessions
+  session's context, plus a single sweep that fills the three rolling windows
+  `/usage` reports on (5-hour block, week, Opus's week) across every session on
+  the machine, and the Pro/Max/Custom plan estimates those windows are measured
+  against
 - `src/gif.js` — a small animated-GIF encoder (GIF89a + LZW), used by
   `scripts/make-buddies.js` to draw and build every character's animations
 - `src/sdk-session.js` — Drive mode: wraps the Agent SDK `query()` and routes

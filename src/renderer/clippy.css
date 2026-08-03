@@ -908,10 +908,24 @@ button.opt.chosen::after {
   margin-bottom: 3px;
 }
 
+.ubar-head span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* What a window covers — true of the row, but never the point of it. */
+.ubar-sub {
+  font-size: 9.5px;
+  color: #6f7a87;
+  margin-bottom: 3px;
+}
+
 .ubar-head b {
   color: #dce2e9;
   font-variant-numeric: tabular-nums;
   font-weight: 600;
+  white-space: nowrap;
 }
 
 .ubar-track {
@@ -925,6 +939,27 @@ button.opt.chosen::after {
   height: 100%;
   border-radius: 3px;
   background: var(--clip);
+  transition: width 0.3s ease;
+}
+
+.ubar-fill.warn {
+  background: var(--warn);
+}
+
+.ubar-fill.hot {
+  background: #e0413d;
+}
+
+/* No allowance to measure against, so this fill is only a share of the week.
+   Hatched, because a solid bar at 60% looks like a limit you're approaching. */
+.ubar-fill.share {
+  background: repeating-linear-gradient(
+    -45deg,
+    #5d6773,
+    #5d6773 3px,
+    #444d58 3px,
+    #444d58 6px
+  );
 }
 
 .ubar-fill.alt {
@@ -947,8 +982,10 @@ button.opt.chosen::after {
 }
 
 #usage-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
   margin-top: 7px;
-  text-align: right;
 }
 
 #usage-actions button {

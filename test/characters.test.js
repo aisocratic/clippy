@@ -38,6 +38,18 @@ test('the drawn cast and the sizes line up with what the menus need', () => {
   for (const s of sizeList()) assert.equal(s.buddy % 32, 0, `${s.id} is not a whole multiple`);
 });
 
+test('every character in the menus has art drawn for it', () => {
+  const { THEMES } = require('../scripts/make-buddies');
+  const drawn = THEMES.map((t) => t.id);
+  const ids = CHARACTERS.map((c) => c.id);
+
+  assert.deepEqual([...new Set(ids)], ids, 'nobody may be listed twice');
+  for (const id of ids) assert.ok(drawn.includes(id), `${id} is offered but never drawn`);
+  // 🖇 Clippy (classic) was folded back into 📎 Clippy the moment Clippy got the
+  // original silhouette back: two identical paperclips in a menu helps nobody.
+  assert.ok(!ids.includes('classic'), 'the duplicate paperclip is gone');
+});
+
 test('each mode decides who a session gets', () => {
   const cast = allCharacters().map((c) => c.id);
   const picked = { character: 'cat', characterMode: 'same' };

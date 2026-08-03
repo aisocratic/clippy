@@ -62,11 +62,16 @@
           submenus — what Clippy answers, and buddy &amp; size.</p>
         <label>Usage data
           <select id="opt-usage">
-            <option value="normal">healthy session (30% context)</option>
-            <option value="hot">nearly full (94% context)</option>
+            <option value="noplan">busy week, no allowance set (shares)</option>
+            <option value="fresh">fresh session, quiet week</option>
+            <option value="context">context nearly full (94%)</option>
+            <option value="spent">allowance set, nearly spent</option>
             <option value="empty">no transcript yet</option>
           </select>
         </label>
+        <p class="note">The panel's three bars are the windows <code>/usage</code> reports on.
+          With no allowance set they fall back to shares of the week and say so — that
+          degradation is the thing worth checking here.</p>
       </section>
 
       <section class="box" id="scenarios">
