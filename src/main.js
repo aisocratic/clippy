@@ -571,11 +571,21 @@ async function perchOn(key, { raise = false, auto = false, mode = null } = {}) {
     buddy.dock.timer = setInterval(() => followWindow(key), DOCK_POLL_MS);
     return true;
   } catch (err) {
-    // osascript exits non-zero when macOS hasn't granted control of the app.
     console.warn('clippy: could not reach the terminal window:', err.message);
-    // osascript exits non-zero when macOS hasn't granted control — which is
-    // something you can actually fix, so open the pane rather than just saying so.
-    if (!auto) askForWindowAccess(key);
+    if (auto) return false;
+    // osascript exits non-zero for two very different reasons: macOS hasn't
+    // granted control (fixable, worth opening the pane) or the window/app is
+    // simply gone (nothing to grant). Only the first one is a permissions
+    // problem — asking for permission we already have is how this used to spin.
+    if (!canDriveWindows()) askForWindowAccess(key);
+    else {
+      tellBuddy(
+        key,
+        `I couldn't reach “${buddy.name}”'s window — it may have closed, or its app ` +
+          'is busy. Try again in a moment.',
+        { sticky: true }
+      );
+    }
     return false;
   }
 }
@@ -599,7 +609,9 @@ const AX_PANE =
 // how often to look. Long enough to find the pane and flip it, then we stop.
 const AX_WATCH_MS = 3 * 60 * 1000;
 const AX_POLL_MS = 1500;
+const AX_ASK_COOLDOWN_MS = 60 * 1000;
 let axWatch = null;
+let lastAxAsk = 0;
 
 /**
  * Wait for the user to flip the switch, then pick up where we left off — no
@@ -616,7 +628,11 @@ function watchForAccess(key) {
       pushSettingsState();
       if (key && buddies.has(key)) {
         tellBuddy(key, 'Got it — thanks. Taking you to that terminal now.');
-        openSessionWindow(key, { point: false });
+        // `auto` so that a retry which fails for some *other* reason reports it
+        // quietly instead of asking for permission all over again.
+        perchOn(key, { raise: true, auto: true }).then((perched) => {
+          if (!perched) tellBuddy(key, "Hmm — still can't reach that window. Try the menu again.");
+        });
       }
       return;
     }
@@ -648,10 +664,18 @@ function canDriveWindows({ prompt = false } = {}) {
  * with the + button. After that we watch for the switch to flip and carry on
  * where we left off, instead of making anyone restart.
  */
-function askForWindowAccess(key) {
-  canDriveWindows({ prompt: true }); // adds us to the list, with macOS's own dialog
-  shell.openExternal(AX_PANE).catch(() => {});
-  watchForAccess(key);
+function askForWindowAccess(key, { force = false } = {}) {
+  // Opening System Settings is the loudest thing this app does, so it happens
+  // once per cooldown however many times we're asked. Without this, a failure
+  // that *isn't* about permissions bounces between the pane and the app.
+  // `force` is for the buttons — you clicked it, you meant it.
+  const now = Date.now();
+  if (force || now - lastAxAsk > AX_ASK_COOLDOWN_MS) {
+    lastAxAsk = now;
+    canDriveWindows({ prompt: true }); // adds us to the list, with macOS's own dialog
+    shell.openExternal(AX_PANE).catch(() => {});
+    watchForAccess(key);
+  }
   if (key) {
     tellBuddy(
       key,
@@ -1012,7 +1036,10 @@ function globalSettingsMenu() {
       click: (item) => setSetting('autoPerch', item.checked),
     },
     { type: 'separator' },
-    { label: 'Fix window access (Accessibility)…', click: () => askForWindowAccess(null) },
+    {
+      label: 'Fix window access (Accessibility)…',
+      click: () => askForWindowAccess(null, { force: true }),
+    },
   ];
 }
 
@@ -1454,7 +1481,7 @@ app.whenReady().then(async () => {
   ipcMain.on('clippy-fix', (e, what) => {
     // The "fix it" button on a sticky message.
     const buddy = buddyForSender(e.sender);
-    if (what === 'accessibility') askForWindowAccess(buddy?.sessionId || null);
+    if (what === 'accessibility') askForWindowAccess(buddy?.sessionId || null, { force: true });
   });
   ipcMain.on('clippy-open-external', (_e, url) => {
     // Only ever hand the OS an https link — this window must not become a
@@ -1462,7 +1489,7 @@ app.whenReady().then(async () => {
     if (typeof url === 'string' && url.startsWith('https://')) shell.openExternal(url);
   });
   ipcMain.on('clippy-settings-fix', (_e, what) => {
-    if (what === 'accessibility') askForWindowAccess(null);
+    if (what === 'accessibility') askForWindowAccess(null, { force: true });
     if (what === 'copy-path') clipboard.writeText(appBundlePath());
     pushSettingsState();
   });
