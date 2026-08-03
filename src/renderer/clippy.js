@@ -4,6 +4,17 @@ const REMIND_AFTER_MS = 90 * 1000; // re-bounce if a session is still ignored
 const SNOOZE_MS = 5 * 60 * 1000;
 const CHECK_INTERVAL_MS = 15 * 1000;
 const EXTEND_THROTTLE_MS = 5 * 1000; // while typing, ask main to extend the hold
+const GHOST_GRACE_MS = 5 * 1000; // how long past its deadline a card may linger
+
+/* ---------- Identity: this window watches exactly one session ---------- */
+
+const params = new URLSearchParams(location.search);
+const me = {
+  name: params.get('name') || 'session',
+  color: params.get('color') || '#9aa3ad',
+};
+
+document.documentElement.style.setProperty('--clip', me.color);
 
 const clippyEl = document.getElementById('clippy');
 const bubbleEl = document.getElementById('bubble');
@@ -26,6 +37,7 @@ const btnGood = document.getElementById('btn-good');
 const btnFeedback = document.getElementById('btn-feedback');
 const btnSubmit = document.getElementById('btn-submit');
 const btnDismiss = document.getElementById('btn-dismiss');
+const btnGoto = document.getElementById('btn-goto');
 
 const driveEl = document.getElementById('drive');
 const driveTitle = document.getElementById('drive-title');
@@ -34,36 +46,300 @@ const driveActivity = document.getElementById('drive-activity');
 const driveInput = document.getElementById('drive-input');
 const toggleApprovals = document.getElementById('toggle-approvals');
 const toggleReview = document.getElementById('toggle-review');
+const toggleQuestions = document.getElementById('toggle-questions');
+const togglePerch = document.getElementById('toggle-perch');
+const buddyEl = document.getElementById('buddy');
 
+const btnOpen = document.getElementById('btn-open');
+const usageEl = document.getElementById('usage');
+const usageSession = document.getElementById('usage-session');
+const usageModel = document.getElementById('usage-model');
+const usageBarFill = document.getElementById('usage-bar-fill');
+const usageContext = document.getElementById('usage-context');
+const usageTable = document.getElementById('usage-table');
+const usageNote = document.getElementById('usage-note');
+
+const menuEl = document.getElementById('menu');
+const menuName = document.getElementById('menu-name');
+const menuStatus = document.getElementById('menu-status');
+const menuWaiting = document.getElementById('menu-waiting');
+const menuGoto = document.getElementById('menu-goto');
+const menuUndock = document.getElementById('menu-undock');
+const menuAnswering = document.getElementById('menu-answering');
+const menuLook = document.getElementById('menu-look');
+const togglesEl = document.getElementById('toggles');
+const lookEl = document.getElementById('look');
+const charactersEl = document.getElementById('characters');
+const sizesEl = document.getElementById('sizes');
+
+const sheetEl = document.getElementById('buddy-sheet');
+let sheetTimer = null;
+
+const pointerEl = document.getElementById('pointer');
+let walkTimer = null;
+
+const whoEl = document.getElementById('who');
+const whoName = document.getElementById('who-name');
 const activityEl = document.getElementById('activity');
 const qcardEl = document.getElementById('qcard');
 const qcardSession = document.getElementById('qcard-session');
 const qcardTitle = document.getElementById('qcard-title');
 const qcardDetail = document.getElementById('qcard-detail');
+const btnQgoto = document.getElementById('btn-qgoto');
 
 // sessionId -> { message, urgency, name, lastNudge, snoozedUntil, acknowledged }
 const pending = new Map();
 // requestId -> { id, type: 'approval'|'review', name, title, detail, expiresAt, holdMs }
 const requests = new Map();
 let activeRequestId = null;
-let counts = { total: 0, waiting: 0 };
-let settings = { approvals: true, reviewOnStop: true };
+let myStatus = 'idle';
+
+const STATUS_TEXT = {
+  idle: 'idle — waiting for a prompt',
+  working: 'working…',
+  waiting: 'finished — your turn',
+  needs_permission: 'needs your permission',
+};
+// The same states, short enough for the menu's header line.
+const SHORT_STATUS = {
+  idle: 'idle',
+  working: 'working',
+  waiting: 'your turn',
+  needs_permission: 'needs you',
+};
+// Main owns these; the cast and the size steps arrive with them so the menu
+// never has its own copy of the list.
+let settings = {
+  approvals: true,
+  reviewOnStop: true,
+  answerQuestions: true,
+  autoPerch: true,
+  character: 'clip',
+  size: 'medium',
+  characters: [{ id: 'clip', label: '📎 Paperclip' }],
+  sizes: [{ id: 'medium', buddy: 96 }],
+};
+const SIZE_LABEL = { small: 'S', medium: 'M', large: 'L' };
 let lastExtendAt = 0;
+let canOpen = false; // do we know which terminal window this session lives in?
+let docked = false; // perched on that window's top-right corner
+
+/* ---------- Window size: a paperclip until there's something to read ---------- */
+
+let modeSent = null;
+let heightSent = 0;
+
+const PANELS = ['card', 'bubble', 'qcard', 'usage', 'drive', 'menu'];
+
+/**
+ * How tall the window has to be for everything on the stage to fit. Measured
+ * rather than guessed: a one-line approval and a 40-line plan are very
+ * different windows, and the fixed size used to cut the taller one off.
+ */
+function contentHeight() {
+  const stage = document.getElementById('stage');
+  const style = getComputedStyle(stage);
+  let h = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
+  for (const el of stage.children) {
+    if (el.classList.contains('hidden')) continue;
+    const cs = getComputedStyle(el);
+    if (cs.display === 'none') continue;
+    h += el.offsetHeight + parseFloat(cs.marginTop) + parseFloat(cs.marginBottom);
+  }
+  return Math.ceil(h) + 4; // a hair of slack for shadows and the card's tail
+}
+
+/**
+ * Clippy's window is only as big as it needs to be. Main owns the geometry, so
+ * the renderer just says which of the two sizes its current contents want, and
+ * how tall the full one has to be.
+ */
+function syncMode() {
+  const showing = PANELS.some((id) => !document.getElementById(id).classList.contains('hidden'));
+  const want = showing ? 'full' : 'compact';
+  // Measure after layout has settled, so a card that just appeared is included.
+  const height = want === 'full' ? contentHeight() : 0;
+  if (want === modeSent && Math.abs(height - heightSent) < 6) return;
+  modeSent = want;
+  heightSent = height;
+  window.clippyAPI.setMode(want, height);
+}
 
 /* ---------- UI helpers ---------- */
 
+function applyIdentity() {
+  whoName.textContent = me.name;
+  whoEl.title = `Claude Code session: ${me.name}`;
+}
+
+/**
+ * The GIF for this character and mood. Every character lives in its own theme
+ * folder; the paperclip is the only one built per session colour, since a GIF
+ * can't be recoloured by CSS.
+ */
+function buddyArt(excited) {
+  const state = excited ? 'excited' : 'idle';
+  const who = settings.character || 'clip';
+  if (who === 'clip') return `assets/themes/clip/${me.color.replace('#', '')}-${state}.gif`;
+  return `assets/themes/${who}/${state}.gif`;
+}
+
+/** The sprite-sheet definition for the current character, if it has one. */
+function currentSheet() {
+  const who = (settings.characters || []).find((c) => c.id === settings.character);
+  return who && who.sheet ? who.sheet : null;
+}
+
 function setExcited(on) {
   clippyEl.classList.toggle('excited', on);
+  const sheet = currentSheet();
+  if (sheet) {
+    playSheet(sheet, on);
+    return;
+  }
+  // The drawn buddies animate inside the GIF, so a change of mood is a change
+  // of file. The suffix restarts the animation from its first frame.
+  const want = buddyArt(on);
+  if (!buddyEl.src.includes(want)) buddyEl.src = `${want}?${on ? 'x' : 'i'}`;
 }
+
+/** Same buddy, same behaviour, different shape — and one constant size. */
+function applyCharacter() {
+  const excited = clippyEl.classList.contains('excited');
+  const sheet = currentSheet();
+  buddyEl.classList.toggle('hidden', Boolean(sheet));
+  sheetEl.classList.toggle('hidden', !sheet);
+  if (sheet) playSheet(sheet, excited);
+  else {
+    stopSheet();
+    buddyEl.src = buddyArt(excited);
+  }
+  applySize();
+  renderChips();
+}
+
+/**
+ * Step a PNG sprite sheet frame by frame. Pixel art wants whole-number scaling,
+ * so the frame is blown up by the largest integer that still fits the buddy
+ * size you picked.
+ */
+function playSheet(sheet, excited) {
+  const pose = (excited ? sheet.excited : sheet.idle) || sheet.idle;
+  const scale = Math.max(1, Math.round(buddyPx() / sheet.frameWidth));
+  const w = sheet.frameWidth * scale;
+  const h = sheet.frameHeight * scale;
+
+  sheetEl.style.width = `${w}px`;
+  sheetEl.style.height = `${h}px`;
+  sheetEl.style.backgroundImage = `url("${pose.file}")`;
+  sheetEl.style.backgroundSize = `${w * pose.frames}px ${h}px`;
+
+  stopSheet();
+  let frame = 0;
+  const step = () => {
+    sheetEl.style.backgroundPosition = `-${frame * w}px 0`;
+    frame = (frame + 1) % pose.frames;
+  };
+  step();
+  if (pose.frames > 1) sheetTimer = setInterval(step, Math.round(1000 / sheet.fps));
+}
+
+function stopSheet() {
+  clearInterval(sheetTimer);
+  sheetTimer = null;
+}
+
+/** How wide the buddy is drawn, per the size you picked. */
+function buddyPx() {
+  const step = (settings.sizes || []).find((s) => s.id === settings.size);
+  return step ? step.buddy : 96;
+}
+
+/** The buddy is drawn at whatever size you picked, in every mode. */
+function applySize() {
+  document.documentElement.style.setProperty('--buddy', `${buddyPx()}px`);
+}
+
+/** Character and size pickers, built from the roster main sent us. */
+function renderChips() {
+  const fill = (host, items, current, key, label) => {
+    host.replaceChildren();
+    for (const item of items) {
+      const btn = document.createElement('button');
+      btn.className = `chip${item.id === current ? ' on' : ''}`;
+      btn.textContent = label(item);
+      btn.title = label(item);
+      btn.addEventListener('click', () => window.clippyAPI.setSetting(key, item.id));
+      host.appendChild(btn);
+    }
+  };
+  fill(charactersEl, settings.characters || [], settings.character, 'character', (c) => c.label);
+  fill(sizesEl, settings.sizes || [], settings.size, 'size', (s) => SIZE_LABEL[s.id] || s.id);
+}
+
+// The art is generated, so a missing file means the build didn't run — show
+// nothing rather than a broken-image icon, and say why in the console.
+buddyEl.addEventListener('error', () => {
+  buddyEl.classList.add('hidden');
+  console.warn(`clippy: missing ${buddyEl.src} — run \`npm run make-buddies\``);
+});
 
 function showBubble(text) {
   bubbleText.textContent = text;
+  usageEl.classList.add('hidden'); // news wins over the token panel
+  menuEl.classList.add('hidden');
   bubbleEl.classList.remove('hidden');
+  syncMode();
 }
 
 function hideBubble() {
   bubbleEl.classList.add('hidden');
   if (!activeRequestId) setExcited(false);
+  syncMode();
+}
+
+/* ---------- Click menu ---------- */
+
+function menuOpen() {
+  return !menuEl.classList.contains('hidden');
+}
+
+/** Only offer what this buddy can actually do right now. */
+function syncMenuItems() {
+  const waiting = [...pending.values()].some((p) => !p.acknowledged);
+  menuWaiting.classList.toggle('hidden', !waiting);
+  menuGoto.classList.toggle('hidden', !canOpen);
+  menuUndock.classList.toggle('hidden', !docked);
+  menuName.textContent = me.name;
+  menuStatus.textContent = SHORT_STATUS[myStatus] || myStatus;
+}
+
+function openMenu() {
+  syncMenuItems();
+  menuEl.classList.remove('hidden');
+  syncMode();
+}
+
+function closeMenu() {
+  if (!menuOpen()) return;
+  menuEl.classList.add('hidden');
+  // Next open starts from the short list again.
+  showSubmenu(menuAnswering, togglesEl, false);
+  showSubmenu(menuLook, lookEl, false);
+  syncMode();
+}
+
+/** Submenus open in place — the window grows around them. */
+function showSubmenu(item, panel, on) {
+  panel.classList.toggle('hidden', !on);
+  item.setAttribute('aria-expanded', String(on));
+  item.querySelector('.caret').textContent = on ? '▾' : '▸';
+  syncMode();
+}
+
+function toggleMenu() {
+  if (menuOpen()) closeMenu();
+  else openMenu();
 }
 
 function render() {
@@ -72,18 +348,31 @@ function render() {
   badgeEl.textContent = String(open);
   badgeEl.classList.toggle('hidden', open === 0);
 
-  if (counts.total === 0) {
-    statusEl.textContent = 'no sessions yet — start claude in a terminal';
-  } else {
-    statusEl.textContent =
-      `${counts.total} session${counts.total === 1 ? '' : 's'}` +
-      (counts.waiting ? ` · ${counts.waiting} waiting for you` : ' · all busy');
+  // This window speaks for one session only, so the status line is about it.
+  statusEl.textContent = STATUS_TEXT[myStatus] || myStatus;
+  whoEl.classList.toggle('busy', myStatus === 'working');
+
+  // Every route to the terminal window needs to know we can find it.
+  btnOpen.classList.toggle('hidden', !canOpen);
+  btnGoto.classList.toggle('hidden', !canOpen);
+  btnQgoto.classList.toggle('hidden', !canOpen);
+
+  // Perching, a terminal we can find, a message waiting: all of it can change
+  // while the menu is on screen.
+  if (menuOpen()) syncMenuItems();
+
+  const SWITCHES = [
+    [toggleApprovals, settings.approvals, 'answer permission requests'],
+    [toggleReview, settings.reviewOnStop, 'review when Claude finishes'],
+    [toggleQuestions, settings.answerQuestions, "answer Claude's questions"],
+    [togglePerch, settings.autoPerch, "perch on the session's window"],
+  ];
+  for (const [el, on, label] of SWITCHES) {
+    el.classList.toggle('on', Boolean(on));
+    el.textContent = `${on ? '✓' : '✗'} ${label}`;
   }
 
-  toggleApprovals.classList.toggle('on', settings.approvals);
-  toggleReview.classList.toggle('on', settings.reviewOnStop);
-  toggleApprovals.textContent = `${settings.approvals ? '✓' : '✗'} approvals`;
-  toggleReview.textContent = `${settings.reviewOnStop ? '✓' : '✗'} review`;
+  syncMode();
 }
 
 function nudge(p) {
@@ -125,23 +414,126 @@ function clearActivity() {
 /* ---------- Read-only question card (AskUserQuestion surfacing) ---------- */
 
 function showQuestion(evt) {
-  qcardSession.textContent = `📎 ${evt.name}`;
+  qcardSession.textContent = evt.name;
   qcardTitle.textContent = evt.title || 'Claude is asking you a question';
   qcardDetail.textContent = evt.detail || '';
   qcardDetail.classList.toggle('hidden', !evt.detail);
+  // The picker is up in the terminal — the question is readable here, and this
+  // takes you to where it can be answered.
+  btnQgoto.classList.toggle('hidden', !canOpen);
+  menuEl.classList.add('hidden');
   qcardEl.classList.remove('hidden');
   setExcited(true);
+  syncMode();
 }
 
 function hideQuestion() {
   qcardEl.classList.add('hidden');
   if (!activeRequestId) setExcited(currentUrgent());
+  syncMode();
+}
+
+/* ---------- Token usage (right-click Clippy) ---------- */
+
+const fmtTokens = (n) => {
+  const v = Number(n) || 0;
+  if (v >= 1e9) return `${(v / 1e9).toFixed(2)}B`;
+  if (v >= 1e6) return `${(v / 1e6).toFixed(v >= 1e7 ? 0 : 1)}M`;
+  if (v >= 1e3) return `${Math.round(v / 1e3)}k`;
+  return String(v);
+};
+
+const shortModel = (m) => String(m || '').replace(/^claude-/, '') || 'unknown model';
+
+/** in + out + cache, i.e. everything the plan's allowance sees. */
+const allTokens = (t) => (t ? t.input + t.output + t.cacheRead + t.cacheCreate : 0);
+
+function row(label, value, hint) {
+  const tr = document.createElement('tr');
+  const th = document.createElement('th');
+  th.textContent = label;
+  if (hint) th.title = hint;
+  const td = document.createElement('td');
+  td.textContent = value;
+  tr.append(th, td);
+  return tr;
+}
+
+async function showUsage() {
+  const data = await window.clippyAPI.usage();
+  if (!data) return;
+  const { session, day, week } = data;
+
+  // The panel and a speech bubble both want the space above Clippy's head.
+  bubbleEl.classList.add('hidden');
+  qcardEl.classList.add('hidden');
+
+  usageSession.textContent = data.name || me.name;
+  usageModel.textContent = shortModel(session?.model);
+
+  if (session && session.turns > 0) {
+    const pct = Math.min(100, Math.round((session.context / session.contextLimit) * 100));
+    const left = Math.max(0, session.contextLimit - session.context);
+    usageBarFill.style.width = `${pct}%`;
+    usageBarFill.classList.toggle('warn', pct >= 60 && pct < 85);
+    usageBarFill.classList.toggle('hot', pct >= 85);
+    // What's left is the number you act on, so it leads.
+    usageContext.innerHTML = '';
+    const strong = document.createElement('b');
+    strong.textContent = `${fmtTokens(left)} left`;
+    usageContext.append(
+      strong,
+      ` of ${fmtTokens(session.contextLimit)} context · ${fmtTokens(session.context)} used (${pct}%)`
+    );
+  } else {
+    usageBarFill.style.width = '0';
+    usageContext.textContent = 'no transcript for this session yet';
+  }
+
+  // Cached input dwarfs everything else (it's re-read every turn), so the
+  // headline number per row is total-with-cache and output is broken out.
+  const cached = 'total including cached input, which is re-read every turn';
+  usageTable.replaceChildren();
+  if (session && session.turns > 0) {
+    usageTable.append(
+      row('this session', fmtTokens(allTokens(session.totals)), cached),
+      row('· output', fmtTokens(session.totals.output), 'tokens Claude actually generated'),
+      row('· turns', String(session.turns))
+    );
+  }
+  if (day) {
+    usageTable.append(
+      row(`today · ${day.sessions} sessions`, fmtTokens(allTokens(day.totals)), cached),
+      row('· output', fmtTokens(day.totals.output))
+    );
+  }
+  const capped = (day && day.truncated) || (week && week.truncated);
+  if (week) {
+    usageTable.append(
+      row(
+        `last 7 days${capped ? ' *' : ''}`,
+        fmtTokens(allTokens(week.totals)),
+        capped ? 'some older transcripts were skipped to keep this quick' : cached
+      ),
+      row('· output', fmtTokens(week.totals.output))
+    );
+  }
+
+  usageNote.textContent = 'Spend, not remaining — ask Claude for /usage to see what is left.';
+
+  usageEl.classList.remove('hidden');
+  syncMode();
+}
+
+function hideUsage() {
+  usageEl.classList.add('hidden');
+  syncMode();
 }
 
 /* ---------- Drive mode panel (Clippy-driven Agent SDK session) ---------- */
 
 function openDrive(evt) {
-  driveTitle.textContent = `📎 Driving “${evt.name}”`;
+  driveTitle.textContent = `Driving “${evt.name}”`;
   driveTranscript.innerHTML = '';
   driveActivity.classList.add('hidden');
   driveEl.classList.remove('hidden');
@@ -174,6 +566,7 @@ function showNextRequest() {
   if (!next) {
     activeRequestId = null;
     cardEl.classList.add('hidden');
+    syncMode();
     setExcited(currentUrgent());
     // surface whatever passive nudge was waiting behind the card
     const p = [...pending.values()].find((x) => !x.acknowledged);
@@ -184,24 +577,33 @@ function showNextRequest() {
   activeRequestId = next.id;
   hideBubble();
   qcardEl.classList.add('hidden'); // a held card takes the stage
+  menuEl.classList.add('hidden');
 
   const isApproval = next.type === 'approval';
   const isAnswer = next.type === 'answer';
   const isPlan = next.variant === 'plan';
-  cardSession.textContent = `📎 ${next.name}`;
-  cardQueue.classList.toggle('hidden', requests.size <= 1);
-  cardQueue.textContent = `+${requests.size - 1} more`;
+  cardSession.textContent = next.name;
+  showQueueDepth();
   cardTitle.textContent = next.title;
 
-  // Answerable multiple-choice question (Drive mode only — option buttons).
+  // Answerable multiple-choice question — option buttons. The answer is fed
+  // straight back to Claude (hook: updatedInput.answers, Drive: canUseTool),
+  // so the terminal picker never has to appear.
   if (isAnswer) {
     cardDetail.classList.add('hidden');
     cardInput.classList.add('hidden');
     renderAnswerOptions(next);
-    for (const b of [btnAllow, btnDeny, btnPass, btnGood, btnFeedback]) b.classList.add('hidden');
+    for (const b of [btnAllow, btnDeny, btnGood, btnFeedback]) b.classList.add('hidden');
+    // A held question can't be in two places at once: while Clippy holds it,
+    // Claude Code hasn't run the tool, so there is no picker in the terminal
+    // yet. This button hands it over — release the hook so the picker appears,
+    // and raise that terminal window so you land on it.
+    btnPass.textContent = canOpen ? 'Move to terminal ↗' : 'Ask me in terminal';
+    btnPass.classList.toggle('hidden', !!next.noPass);
     btnSubmit.classList.remove('hidden');
     btnDismiss.classList.remove('hidden');
     cardEl.classList.remove('hidden');
+    syncMode();
     setExcited(true);
     return;
   }
@@ -223,6 +625,7 @@ function showNextRequest() {
   // Plan approvals reuse the allow/deny path but read better as Approve/Revise.
   btnAllow.textContent = isPlan ? 'Approve plan' : 'Allow';
   btnDeny.textContent = isPlan ? 'Revise' : 'Deny';
+  btnPass.textContent = canOpen ? 'Ask me in terminal ↗' : 'Ask me in terminal';
   btnAllow.classList.toggle('hidden', !isApproval);
   btnDeny.classList.toggle('hidden', !isApproval);
   btnPass.classList.toggle('hidden', !isApproval || next.noPass); // Drive has no terminal
@@ -231,7 +634,14 @@ function showNextRequest() {
   btnFeedback.disabled = true;
 
   cardEl.classList.remove('hidden');
+  syncMode();
   setExcited(true);
+}
+
+/** "+2 more": how many held requests are stacked up behind this card. */
+function showQueueDepth() {
+  cardQueue.classList.toggle('hidden', requests.size <= 1);
+  cardQueue.textContent = `+${requests.size - 1} more`;
 }
 
 // answers map for the active answer card: questionText -> label | [labels]
@@ -290,10 +700,26 @@ function decide(action, message = '') {
 // Shrink the countdown bar; main resolves the request server-side on timeout,
 // this is just so the user can see how long Clippy can wait.
 setInterval(() => {
+  // Safety net: main sends `request-closed` when a hold expires, but if that
+  // event is ever missed the card would sit there accepting clicks that can no
+  // longer reach Claude. Drop anything well past its deadline.
+  const now = Date.now();
+  let dropped = false;
+  for (const [id, req] of requests) {
+    if (now - req.expiresAt > GHOST_GRACE_MS) {
+      requests.delete(id);
+      dropped = true;
+    }
+  }
+  if (dropped) {
+    if (!requests.has(activeRequestId)) showNextRequest();
+    render();
+  }
+
   if (!activeRequestId) return;
   const req = requests.get(activeRequestId);
   if (!req) return;
-  const left = Math.max(0, req.expiresAt - Date.now());
+  const left = Math.max(0, req.expiresAt - now);
   countdownFill.style.width = `${Math.min(100, (left / req.holdMs) * 100)}%`;
 }, 200);
 
@@ -301,11 +727,21 @@ setInterval(() => {
 
 window.clippyAPI.onSettings((s) => {
   settings = s;
+  applyCharacter();
   render();
 });
 
+window.clippyAPI.onIdentity((id) => {
+  Object.assign(me, id);
+  applyIdentity();
+});
+
 function handleEvent(evt) {
-  if (evt.counts) counts = evt.counts;
+  if (evt.status) myStatus = evt.status;
+  if (evt.name && evt.name !== me.name) {
+    me.name = evt.name;
+    applyIdentity();
+  }
 
   switch (evt.kind) {
     case 'approval':
@@ -322,22 +758,25 @@ function handleEvent(evt) {
         holdMs: Math.max(1, evt.expiresAt - Date.now()),
       });
       if (!activeRequestId) showNextRequest();
-      else cardQueue.classList.remove('hidden');
+      else showQueueDepth(); // another one queued behind the open card
       break;
     }
     case 'answer': {
-      // Drive mode: an answerable multiple-choice question (option buttons).
+      // An answerable multiple-choice question (option buttons). Comes from
+      // the AskUserQuestion hook in watch mode, or canUseTool in Drive mode.
+      const expiresAt = evt.expiresAt || Date.now() + 300000;
       requests.set(evt.requestId, {
         id: evt.requestId,
         type: 'answer',
+        noPass: !!evt.noPass,
         name: evt.name,
         title: evt.title || 'Claude is asking you',
         questions: evt.questions || [],
-        expiresAt: evt.expiresAt || Date.now() + 300000,
-        holdMs: 300000,
+        expiresAt,
+        holdMs: Math.max(1, expiresAt - Date.now()),
       });
       if (!activeRequestId) showNextRequest();
-      else cardQueue.classList.remove('hidden');
+      else showQueueDepth(); // another one queued behind the open card
       break;
     }
     case 'drive-open':
@@ -358,6 +797,38 @@ function handleEvent(evt) {
       break;
     case 'activity': {
       showActivity(evt.name, evt.activity);
+      break;
+    }
+    case 'can-open': {
+      canOpen = Boolean(evt.value);
+      break;
+    }
+    case 'dock': {
+      // Perched on the session's terminal window: happy, small, and quiet
+      // until something actually needs an answer.
+      docked = Boolean(evt.docked);
+      document.body.classList.toggle('docked', docked);
+      // Compact is about size, not about being perched — a corner buddy is a
+      // bare paperclip too until it has something to show.
+      document.body.classList.toggle('compact', Boolean(evt.compact));
+      break;
+    }
+    case 'walk': {
+      // Main is stepping the window across the terminal; all we do is put him
+      // in a walking pose, facing the way he's going.
+      document.body.classList.add('walking');
+      document.body.classList.toggle('facing-left', evt.facing === 'left');
+      clearTimeout(walkTimer);
+      // Safety net: if the walk event that ends this one never lands, don't
+      // leave him marching on the spot forever.
+      walkTimer = setTimeout(() => document.body.classList.remove('walking'), 4000);
+      break;
+    }
+    case 'point': {
+      document.body.classList.remove('walking');
+      clearTimeout(walkTimer);
+      pointerEl.classList.toggle('hidden', !evt.on);
+      setExcited(Boolean(evt.on));
       break;
     }
     case 'question': {
@@ -445,7 +916,13 @@ setInterval(() => {
 
 btnAllow.addEventListener('click', () => decide('allow', cardInput.value.trim()));
 btnDeny.addEventListener('click', () => decide('deny', cardInput.value.trim()));
-btnPass.addEventListener('click', () => decide('pass'));
+// Hand this one back to the terminal — and take the user there, since that's
+// where the prompt (or the question picker) is about to appear.
+btnPass.addEventListener('click', () => {
+  decide('pass');
+  // …and once we're there, walk down and point at the line to answer on.
+  if (canOpen) window.clippyAPI.openWindow({ point: true });
+});
 btnGood.addEventListener('click', () => decide('ok'));
 btnFeedback.addEventListener('click', () => {
   const msg = cardInput.value.trim();
@@ -479,13 +956,26 @@ cardInput.addEventListener('input', () => {
   }
 });
 
-document.getElementById('btn-qok').addEventListener('click', hideQuestion);
+// "I'll answer in the terminal" — put the card away and show them where.
+document.getElementById('btn-qok').addEventListener('click', () => {
+  hideQuestion();
+  if (canOpen) window.clippyAPI.pointAtPrompt();
+});
+// Same question, other screen: raise the terminal where the picker is waiting,
+// then stand on the prompt.
+btnQgoto.addEventListener('click', () => window.clippyAPI.openWindow({ point: true }));
 
 toggleApprovals.addEventListener('click', () => {
   window.clippyAPI.setSetting('approvals', !settings.approvals);
 });
 toggleReview.addEventListener('click', () => {
   window.clippyAPI.setSetting('reviewOnStop', !settings.reviewOnStop);
+});
+toggleQuestions.addEventListener('click', () => {
+  window.clippyAPI.setSetting('answerQuestions', !settings.answerQuestions);
+});
+togglePerch.addEventListener('click', () => {
+  window.clippyAPI.setSetting('autoPerch', !settings.autoPerch);
 });
 
 document.getElementById('btn-ok').addEventListener('click', () => {
@@ -505,27 +995,75 @@ document.getElementById('btn-hide').addEventListener('click', () => {
   window.clippyAPI.hide();
 });
 
-// Clicking Clippy re-opens the bubble with whatever is pending.
+// Raise this session's terminal window; Clippy rides along on its top-right
+// corner until you hide it or send it back to its own corner.
+btnOpen.addEventListener('click', () => window.clippyAPI.openWindow());
+// Same thing from a card: "this needs you — take me to that terminal".
+btnGoto.addEventListener('click', () => window.clippyAPI.openWindow());
+
+document.getElementById('btn-usage-close').addEventListener('click', hideUsage);
+
+// Click Clippy: the little menu of everything you'd want from him — jump to
+// this session's terminal, see the numbers, let go of a window, go away.
 clippyEl.addEventListener('click', () => {
   if (activeRequestId) return; // the card is already the main attraction
-  const next = [...pending.values()].find((p) => !p.acknowledged) || [...pending.values()][0];
+  toggleMenu();
+});
+
+// Right-click does the same thing, so neither button is a dead end.
+clippyEl.addEventListener('contextmenu', (e) => {
+  e.preventDefault();
+  if (!activeRequestId) toggleMenu();
+});
+
+// A click anywhere else puts the menu away, like any other popup.
+document.addEventListener('click', (e) => {
+  if (!menuOpen()) return;
+  if (menuEl.contains(e.target) || clippyEl.contains(e.target)) return;
+  closeMenu();
+});
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') closeMenu();
+});
+
+menuWaiting.addEventListener('click', () => {
+  closeMenu();
+  const next = [...pending.values()].find((p) => !p.acknowledged);
   if (next) nudge(next);
 });
 
-/* ---------- Idle life: blinking & wandering pupils ---------- */
+// Send Clippy over to the terminal this agent is running in: main raises that
+// window and perches the buddy on its corner.
+menuGoto.addEventListener('click', () => {
+  closeMenu();
+  window.clippyAPI.openWindow();
+});
 
-const eyes = [...document.querySelectorAll('.eye')];
-const pupils = [...document.querySelectorAll('.pupil')];
+menuAnswering.addEventListener('click', () => {
+  showSubmenu(menuAnswering, togglesEl, togglesEl.classList.contains('hidden'));
+});
 
-setInterval(() => {
-  eyes.forEach((e) => e.classList.add('blink'));
-  setTimeout(() => eyes.forEach((e) => e.classList.remove('blink')), 140);
-}, 3800 + Math.random() * 1500);
+menuLook.addEventListener('click', () => {
+  showSubmenu(menuLook, lookEl, lookEl.classList.contains('hidden'));
+});
 
-setInterval(() => {
-  const dx = (Math.random() * 6 - 3).toFixed(1);
-  const dy = (Math.random() * 4 - 2).toFixed(1);
-  pupils.forEach((p) => (p.style.transform = `translate(${dx}px, ${dy}px)`));
-}, 2600);
+document.getElementById('menu-stats').addEventListener('click', () => {
+  closeMenu();
+  if (usageEl.classList.contains('hidden')) showUsage();
+  else hideUsage();
+});
 
+menuUndock.addEventListener('click', () => {
+  closeMenu();
+  window.clippyAPI.undock();
+});
+
+document.getElementById('menu-hide').addEventListener('click', () => {
+  closeMenu();
+  window.clippyAPI.hide();
+});
+
+applyIdentity();
+applyCharacter();
 render();

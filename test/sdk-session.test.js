@@ -50,7 +50,7 @@ test('normalizeMessage extracts text and tool activity', () => {
   assert.deepEqual(normalizeMessage(null), []);
 });
 
-test('DriveSession answers AskUserQuestion through canUseTool (the thing hooks cannot do)', async () => {
+test('DriveSession answers AskUserQuestion through canUseTool', async () => {
   const events = [];
   let captured = null;
 

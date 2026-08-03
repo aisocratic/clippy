@@ -11,6 +11,8 @@
       <div id="card-head">
         <span id="card-session"></span>
         <span id="card-queue" class="hidden"></span>
+        <button id="btn-goto" class="dim hidden"
+                title="Bring this session's terminal window to the front">go to terminal ↗</button>
       </div>
       <div id="card-title"></div>
       <pre id="card-detail" class="hidden"></pre>
@@ -19,7 +21,7 @@
       <div id="card-actions">
         <button id="btn-allow" class="good">Allow</button>
         <button id="btn-deny" class="bad">Deny</button>
-        <button id="btn-pass" class="dim">To terminal</button>
+        <button id="btn-pass" class="dim">Ask me in terminal</button>
         <button id="btn-good" class="good">Looks good</button>
         <button id="btn-feedback" class="bad">Send feedback</button>
         <button id="btn-submit" class="good">Submit answer</button>
@@ -46,8 +48,19 @@
       <div id="qcard-title"></div>
       <pre id="qcard-detail" class="hidden"></pre>
       <div id="qcard-actions">
+        <button id="btn-qgoto" class="good hidden"
+                title="Bring this session's terminal window to the front, where the picker is waiting">go to terminal ↗</button>
         <button id="btn-qok" class="dim">Answer in terminal ✓</button>
       </div>
+    </div>
+
+    <div id="usage" class="hidden">
+      <div id="usage-head"><span id="usage-session"></span><span id="usage-model"></span></div>
+      <div id="usage-bar"><div id="usage-bar-fill"></div></div>
+      <div id="usage-context"></div>
+      <table id="usage-table"></table>
+      <div id="usage-note"></div>
+      <div id="usage-actions"><button id="btn-usage-close" class="dim">Close</button></div>
     </div>
 
     <div id="bubble" class="hidden">
@@ -58,51 +71,77 @@
       </div>
     </div>
 
-    <div id="clippy" title="Drag me around. Click me when I have news!">
-      <svg viewBox="0 0 120 170" width="140" height="198" aria-label="Clippy">
-        <!-- paperclip wire -->
-        <path
-          id="wire"
-          d="M38 64
-             C38 40 46 26 60 26
-             C74 26 82 40 82 64
-             L82 122
-             C82 142 73 154 60 154
-             C47 154 38 142 38 122
-             L38 84
-             C38 70 44 62 53 62
-             C62 62 68 70 68 84
-             L68 118"
-          fill="none" stroke="#9aa3ad" stroke-width="9" stroke-linecap="round"
-        />
-        <!-- eyebrows -->
-        <g id="brows">
-          <path d="M36 36 q10 -8 20 -3" fill="none" stroke="#444" stroke-width="4" stroke-linecap="round"/>
-          <path d="M64 33 q10 -5 20 3" fill="none" stroke="#444" stroke-width="4" stroke-linecap="round"/>
-        </g>
-        <!-- eyes -->
-        <g id="eyes">
-          <g class="eye">
-            <ellipse cx="46" cy="52" rx="12" ry="15" fill="#fff" stroke="#444" stroke-width="2.5"/>
-            <circle class="pupil" cx="48" cy="55" r="4.5" fill="#222"/>
-          </g>
-          <g class="eye">
-            <ellipse cx="74" cy="52" rx="12" ry="15" fill="#fff" stroke="#444" stroke-width="2.5"/>
-            <circle class="pupil" cx="76" cy="55" r="4.5" fill="#222"/>
-          </g>
-        </g>
-      </svg>
+    <div id="who" title="Which Claude Code session this Clippy is watching">
+      <span id="who-dot"></span><span id="who-name">…</span>
+    </div>
+
+    <div id="clippy" title="Drag me around. Click me for the menu.">
+      <!-- Every character is an animated GIF built by `npm run make-buddies`:
+           one calm, one excited, and the paperclip in each session colour. -->
+      <img id="buddy" width="96" height="120" alt="" />
+      <!-- A dropped-in sprite-sheet theme is drawn here instead: one PNG per
+           mood, stepped frame by frame (see applySheet in clippy.js). -->
+      <div id="buddy-sheet" class="hidden"></div>
       <div id="badge" class="hidden">0</div>
+    </div>
+
+    <!-- Shown when Clippy has walked down to the session's prompt: an arrow
+         under his feet, pointing at the line you're meant to type in. -->
+    <div id="pointer" class="hidden">
+      <span id="pointer-hint">answer here</span>
+      <span id="pointer-arrow">▼</span>
+    </div>
+
+    <!-- Click the buddy and the menu drops out from under him: what you can do
+         with this session first, then how it looks — the long lists (character,
+         size, switches) fold away in submenus so the top level stays short. -->
+    <div id="menu" class="hidden">
+      <div id="menu-head">
+        <span id="menu-name">session</span><span id="menu-status">idle</span>
+      </div>
+
+      <button id="menu-waiting" class="menu-item hidden"><span class="mi">📨</span>See what's waiting</button>
+      <button id="menu-goto" class="menu-item hidden"
+              title="Bring this session's terminal window to the front and perch Clippy on it"><span
+              class="mi">↗</span>Go to the agent's terminal</button>
+      <button id="menu-undock" class="menu-item hidden"
+              title="Stop riding this window and go back to the screen corner"><span
+              class="mi">📌</span>Let go of this window</button>
+      <button id="menu-stats" class="menu-item"><span class="mi">📊</span>Stats &amp; token usage</button>
+
+      <div class="menu-sep"></div>
+
+      <button id="menu-answering" class="menu-item" aria-expanded="false"><span
+              class="mi">⚙</span>What Clippy answers<span class="caret">▸</span></button>
+      <div id="toggles" class="submenu hidden">
+        <button id="toggle-approvals" title="Answer permission requests from Clippy instead of the terminal">approvals</button>
+        <button id="toggle-review" title="Offer a review box when Claude finishes a turn">review</button>
+        <button id="toggle-questions" title="Answer Claude's multiple-choice questions from Clippy instead of the terminal">questions</button>
+        <button id="toggle-perch" title="Show up on this session's own terminal window instead of the corner of the screen">perch</button>
+      </div>
+
+      <button id="menu-look" class="menu-item" aria-expanded="false"><span
+              class="mi">🎨</span>Buddy &amp; size<span class="caret">▸</span></button>
+      <div id="look" class="submenu hidden">
+        <div class="submenu-label">Character</div>
+        <div id="characters" class="chips"></div>
+        <div class="submenu-label">Size</div>
+        <div id="sizes" class="chips"></div>
+      </div>
+
+      <div class="menu-sep"></div>
+
+      <button id="menu-hide" class="menu-item dim"><span class="mi">×</span>Hide Clippy</button>
     </div>
 
     <div id="activity" class="hidden"></div>
     <div id="statusline">waiting for sessions…</div>
-    <div id="toggles">
-      <button id="toggle-approvals" title="Answer permission requests from Clippy instead of the terminal">approvals</button>
-      <button id="toggle-review" title="Offer a review box when Claude finishes a turn">review</button>
-    </div>
     <div id="controls">
-      <button id="btn-hide" title="Hide (Clippy keeps running in the menu bar)">hide</button>
+      <button id="btn-open" class="hidden"
+              title="Bring this session's terminal window to the front and perch on it"><span
+              class="wide">open session </span>↗</button>
+      <button id="btn-hide" title="Hide (Clippy keeps running in the menu bar)"><span
+              class="wide">hide</span><span class="narrow">×</span></button>
     </div>
   </div>
   <script src="clippy.js"></script>

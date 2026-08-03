@@ -1,7 +1,12 @@
 'use strict';
 
 const path = require('node:path');
-const { DecisionBroker, describeToolCall, activityLabel } = require('./decisions');
+const {
+  DecisionBroker,
+  describeToolCall,
+  activityLabel,
+  normalizeAnswers,
+} = require('./decisions');
 
 // Drive mode: a headless Claude Code session that Clippy *owns* (via the Agent
 // SDK), as opposed to the hook path which only watches the user's terminal
@@ -18,15 +23,11 @@ const QUESTION_HOLD_MS = 5 * 60 * 1000; // Drive owns the session — wait gener
 /** Map a user card decision to the SDK PermissionResult shape. Pure + tested. */
 function toPermissionResult(toolName, action, message, input) {
   if (toolName === 'AskUserQuestion') {
-    if (action === 'answer' && message) {
-      let answers;
-      try {
-        answers = JSON.parse(message);
-      } catch {
-        answers = {};
-      }
-      return { behavior: 'allow', updatedInput: { ...input, answers } };
-    }
+    // Same contract as the hook path: one string per question, multi-select
+    // answers comma-joined. Passing the UI's raw arrays through would hand
+    // AskUserQuestion an `answers` map it can't read.
+    const answers = action === 'answer' ? normalizeAnswers(message) : null;
+    if (answers) return { behavior: 'allow', updatedInput: { ...input, answers } };
     return { behavior: 'deny', message: 'The user dismissed the question.' };
   }
   if (action === 'allow') return { behavior: 'allow', updatedInput: input };
@@ -144,14 +145,19 @@ class DriveSession {
   }
 
   _askQuestion(input) {
-    const { id, promise } = this.broker.ask({ event: 'DriveQuestion', sessionId: this.id }, QUESTION_HOLD_MS);
+    const { id, expiresAt, promise } = this.broker.ask(
+      { event: 'DriveQuestion', sessionId: this.id },
+      QUESTION_HOLD_MS
+    );
     const { title } = describeToolCall('AskUserQuestion', input);
     this.send({
       kind: 'answer',
       requestId: id,
       name: this.name,
       title,
+      noPass: true, // Drive has no terminal picker to fall back to
       questions: Array.isArray(input.questions) ? input.questions : [],
+      expiresAt,
     });
     return promise.then(({ action, message }) => {
       this.send({ kind: 'request-closed', requestId: id });

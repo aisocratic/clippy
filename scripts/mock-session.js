@@ -3,9 +3,9 @@
 /**
  * Mock Claude Code session — drives a realistic sequence of hook POSTs at a
  * running Clippy so you can watch (and test) how it reacts, without a real
- * `claude` session. Held hooks (PermissionRequest / Stop) block until you
- * answer in the Clippy UI; the script prints the decision that came back —
- * exactly like a real session would receive it.
+ * `claude` session. Held hooks (PermissionRequest / AskUserQuestion / Stop)
+ * block until you answer in the Clippy UI; the script prints the decision that
+ * came back — exactly like a real session would receive it.
  *
  *   npm start                 # in one terminal: launch Clippy
  *   npm run mock-session      # in another: drive it, click the cards
@@ -46,10 +46,27 @@ const log = (...a) => console.log(...a);
 const ok = (msg) => (pass++, log(`   ✓ ${msg}`));
 const bad = (msg) => (fail++, log(`   ✗ ${msg}`));
 
+// The real hooks report which terminal they ran in; send this script's own so
+// "open session window" points at the terminal you're running the mock from.
+const TERM_HEADERS = {
+  'X-Clippy-Term': process.env.TERM_PROGRAM || '',
+  'X-Clippy-Pid': String(process.ppid),
+  'X-Clippy-Tty': (() => {
+    try {
+      return require('node:child_process')
+        .execFileSync('/bin/ps', ['-o', 'tty=', '-p', String(process.ppid)])
+        .toString()
+        .trim();
+    } catch {
+      return '';
+    }
+  })(),
+};
+
 function post(event, payload) {
   return fetch(`${BASE}/hook/${event}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...TERM_HEADERS },
     body: JSON.stringify({ hook_event_name: event, ...payload }),
   });
 }
@@ -83,8 +100,16 @@ async function held(event, payload, note, auto) {
 
 async function cdp(expression) {
   const targets = await (await fetch(`http://127.0.0.1:${CDP_PORT}/json`)).json();
-  const page = targets.find((t) => t.type === 'page' && /index\.html/.test(t.url));
-  if (!page) throw new Error(`no Clippy renderer on CDP port ${CDP_PORT} — launch with --remote-debugging-port=${CDP_PORT}`);
+  const pages = targets.filter((t) => t.type === 'page' && /index\.html/.test(t.url));
+  // One window per session: only ever drive *our* mock session's Clippy, never
+  // a real session that happens to be running alongside it.
+  const page = pages.find((t) => new URL(t.url).searchParams.get('session') === SESSION);
+  if (!page) {
+    throw new Error(
+      `no Clippy window for session ${SESSION} on CDP port ${CDP_PORT} ` +
+        `(${pages.length} window(s) open) — launch with --remote-debugging-port=${CDP_PORT}`
+    );
+  }
   const ws = new WebSocket(page.webSocketDebuggerUrl);
   await new Promise((res, rej) => ((ws.onopen = res), (ws.onerror = rej)));
   const reply = new Promise((res, rej) => {
@@ -125,6 +150,22 @@ async function main() {
   await fire('PreToolUse', { ...base(), tool_name: 'Edit', tool_input: { file_path: `${CWD}/src/server.js`, old_string: 'a', new_string: 'b' } }, 'activity → Editing server.js');
   await sleep(1300);
 
+  // A tool that fails reports on its own event, with the error attached.
+  await fire('PreToolUse', { ...base(), tool_name: 'Bash', tool_input: { command: 'npm run lint', description: 'Lint the project' } }, 'activity → Linting');
+  await sleep(1000);
+  await fire(
+    'PostToolUseFailure',
+    {
+      ...base(),
+      tool_name: 'Bash',
+      tool_input: { command: 'npm run lint', description: 'Lint the project' },
+      error: 'Exit code 1\n2 problems (2 errors, 0 warnings)',
+      is_interrupt: false,
+    },
+    'activity → ⚠ Bash failed'
+  );
+  await sleep(1300);
+
   // Held approval card.
   await held(
     'PermissionRequest',
@@ -140,35 +181,60 @@ async function main() {
   );
   await sleep(700);
 
-  // Surface a multiple-choice question (PreToolUse, fire-and-forget — answered in the terminal).
-  await fire(
-    'PreToolUse',
-    {
-      ...base(),
-      tool_name: 'AskUserQuestion',
-      tool_input: {
-        questions: [
-          {
-            question: 'Which rate-limit store should I use?',
-            header: 'Store',
-            options: [
-              { label: 'Redis', description: 'Shared across instances' },
-              { label: 'In-memory', description: 'Simplest, single instance' },
-            ],
-            multiSelect: false,
-          },
+  // Held question card: the picked options go back as updatedInput.answers, so
+  // the terminal picker never appears.
+  const questionInput = {
+    questions: [
+      {
+        question: 'Which rate-limit store should I use?',
+        header: 'Store',
+        options: [
+          { label: 'Redis', description: 'Shared across instances' },
+          { label: 'In-memory', description: 'Simplest, single instance' },
         ],
+        multiSelect: false,
       },
-    },
-    'AskUserQuestion → question card + notification (answer in terminal)'
+      {
+        question: 'Which routes should it cover?',
+        header: 'Routes',
+        options: [
+          { label: '/api/v1', description: 'The public API' },
+          { label: '/admin', description: 'Admin endpoints' },
+        ],
+        multiSelect: true,
+      },
+    ],
+  };
+  await held(
+    'PreToolUse',
+    { ...base(), tool_name: 'AskUserQuestion', tool_input: questionInput },
+    'Claude is asking a multiple-choice question — pick the answers',
+    {
+      // Click the first option of question 1, then both options of question 2.
+      expr: `(() => {
+        const groups = [...document.querySelectorAll('#card-options .opt-group')];
+        groups[0].querySelectorAll('.opt')[0].click();
+        groups[1].querySelectorAll('.opt').forEach((b) => b.click());
+        document.getElementById('btn-submit').click();
+        return 'answered';
+      })()`,
+      assert: (d) => {
+        const out = d?.hookSpecificOutput || {};
+        const answers = out.updatedInput?.answers || {};
+        const good =
+          out.permissionDecision === 'allow' &&
+          answers['Which rate-limit store should I use?'] === 'Redis' &&
+          // multi-select answers come back comma-joined, one string per question
+          answers['Which routes should it cover?'] === '/api/v1, /admin' &&
+          // the rest of the tool input must survive untouched
+          out.updatedInput?.questions?.length === 2;
+        return good
+          ? ok('question → answers injected as updatedInput.answers')
+          : bad(`question expected answered input, got ${JSON.stringify(d)}`);
+      },
+    }
   );
-  if (AUTO) {
-    await sleep(600);
-    await cdp(`document.getElementById('qcard').classList.contains('hidden') ? 'hidden' : 'shown'`)
-      .then(() => ok('question card surfaced'))
-      .catch((e) => bad(`question card check failed: ${e.message}`));
-  }
-  await sleep(1500);
+  await sleep(900);
 
   // Plan-mode activity, then a held plan-approval card.
   const plan = '# Plan: API rate limiting\n\n1. Add a token-bucket middleware\n2. Wire it into the router\n3. Add config for limits per route\n4. Tests for 200/429 paths';

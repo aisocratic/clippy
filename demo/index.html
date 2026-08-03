@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Clippy — web test bench</title>
+  <link rel="stylesheet" href="demo.css" />
+</head>
+<body>
+  <header>
+    <h1>📎 Clippy — web test bench</h1>
+    <p>
+      The real <code>src/renderer</code> running in a browser, with
+      <code>window.clippyAPI</code> stubbed. Click a state on the left; the buddy on the
+      right reacts exactly as it would in Electron.
+      <strong>End-to-end still means <code>npm start</code> + a real Claude Code session.</strong>
+    </p>
+  </header>
+
+  <main>
+    <aside id="panel">
+      <section class="box">
+        <h2>Buddy</h2>
+        <label>Session name
+          <input id="opt-name" type="text" value="billing-api" spellcheck="false" />
+        </label>
+        <label>Colour
+          <select id="opt-color"></select>
+        </label>
+        <div class="row">
+          <button id="opt-random" class="ghost">Random buddy</button>
+          <button id="opt-reload" class="ghost">Reload</button>
+        </div>
+      </section>
+
+      <section class="box">
+        <h2>Settings <small>(Clippy's own menu writes back here)</small></h2>
+        <label class="check"><input type="checkbox" id="set-approvals" checked /> approvals</label>
+        <label class="check"><input type="checkbox" id="set-reviewOnStop" checked /> review on stop</label>
+        <label class="check"><input type="checkbox" id="set-answerQuestions" checked /> answer questions</label>
+        <label class="check"><input type="checkbox" id="set-autoPerch" checked /> auto perch</label>
+        <label>Character
+          <select id="set-character"></select>
+        </label>
+        <label>Size <small>(the buddy keeps it in every mode)</small>
+          <select id="set-size"></select>
+        </label>
+      </section>
+
+      <section class="box">
+        <h2>Window &amp; chrome</h2>
+        <label class="check"><input type="checkbox" id="set-canopen" checked /> knows the terminal window (shows “open session ↗”)</label>
+        <label class="check"><input type="checkbox" id="set-docked" /> perched on the terminal window</label>
+        <div class="row">
+          <button data-poke="left" class="ghost">Click the buddy (menu)</button>
+          <button data-poke="right" class="ghost">Right-click</button>
+        </div>
+        <div class="row">
+          <button id="btn-walk" class="ghost">Walk to the prompt &amp; point</button>
+        </div>
+        <p class="note">The menu drops out from under the buddy: what's waiting, go to the
+          agent's terminal, let go of a perched window, stats &amp; token usage, then two
+          submenus — what Clippy answers, and buddy &amp; size.</p>
+        <label>Usage data
+          <select id="opt-usage">
+            <option value="normal">healthy session (30% context)</option>
+            <option value="hot">nearly full (94% context)</option>
+            <option value="empty">no transcript yet</option>
+          </select>
+        </label>
+      </section>
+
+      <section class="box" id="scenarios">
+        <h2>States</h2>
+        <div id="scenario-groups"></div>
+      </section>
+
+      <section class="box">
+        <div class="row">
+          <button id="btn-reset" class="ghost">Reset everything</button>
+          <button id="btn-clear-log" class="ghost">Clear log</button>
+        </div>
+      </section>
+    </aside>
+
+    <section id="stagewrap">
+      <div id="stagebar">
+        <button id="btn-showrun" class="play">▶ Show run</button>
+        <span id="note">Press play for the hands-off tour of every state.</span>
+      </div>
+      <div id="desktop">
+        <div id="fake-terminal" class="hidden">
+          <div class="tbar"><span class="dots"><i></i><i></i><i></i></span>billing-api — claude</div>
+          <pre class="tbody">$ claude
+› add retries to the billing webhook
+
+⏺ Reading src/webhook.js…
+⏺ Editing src/webhook.js…
+</pre>
+          <!-- Claude Code's input box lives at the bottom of the window; this
+               is what the buddy walks down to and points at. -->
+          <div class="tprompt">&gt; <span class="caret">▏</span></div>
+        </div>
+        <iframe id="buddy-frame" title="Clippy renderer" src="about:blank"></iframe>
+      </div>
+
+      <div id="logwrap">
+        <div id="loghead">
+          <span>Bridge log</span>
+          <small>events sent to the renderer, and what it sent back (incl. the hook JSON Claude Code would get)</small>
+        </div>
+        <div id="log"></div>
+      </div>
+    </section>
+  </main>
+
+  <script src="demo.js"></script>
+</body>
+</html>

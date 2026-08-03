@@ -96,6 +96,75 @@ test('PreToolUse/PostToolUse drive the activity line (meaningful tools only)', (
   assert.equal(t.handle('UserPromptSubmit', null, payload('s1')).activity.label, 'Working…');
 });
 
+test('a failed tool arrives on PostToolUseFailure, not PostToolUse', () => {
+  // Claude Code only fires PostToolUse on success, so this is the event that
+  // actually produces the ⚠ in the activity line.
+  const t = new SessionTracker();
+  t.handle('SessionStart', null, payload('s1'));
+
+  const failed = t.handle('PostToolUseFailure', null, {
+    ...payload('s1'),
+    tool_name: 'Bash',
+    tool_input: { command: 'ls /nope', description: 'List a missing path' },
+    error: 'Exit code 1\nls: /nope: No such file or directory',
+    is_interrupt: false,
+  });
+  assert.equal(failed.activity.state, 'done');
+  assert.equal(failed.activity.ok, false);
+  assert.equal(failed.activity.error, 'Exit code 1'); // first line only
+  assert.match(failed.message, /Bash failed/);
+
+  // Hitting esc isn't a failure — don't cry wolf.
+  const stopped = t.handle('PostToolUseFailure', null, {
+    ...payload('s1'),
+    tool_name: 'Bash',
+    tool_input: { command: 'sleep 100' },
+    error: 'Interrupted',
+    is_interrupt: true,
+  });
+  assert.equal(stopped.activity.ok, true);
+  assert.equal(stopped.message, '');
+});
+
+test('stale sessions are swept, parked ones get a longer leash', () => {
+  const t = new SessionTracker();
+  const now = Date.now();
+
+  t.handle('SessionStart', null, payload('busy', '/p/busy'));
+  t.handle('PreToolUse', null, { ...payload('busy'), tool_name: 'Bash', tool_input: {} });
+  t.handle('Stop', null, payload('parked', '/p/parked'));
+  assert.deepEqual(t.counts(), { total: 2, waiting: 1 });
+
+  // Nothing is stale yet.
+  assert.deepEqual(t.sweepStale(now), []);
+
+  // A working session that has gone quiet is a dead terminal; a session parked
+  // on the user is just someone who stepped away, so it survives.
+  const removed = t.sweepStale(now + 45 * 60 * 1000);
+  assert.deepEqual(removed.map((s) => s.sessionId), ['busy']);
+  assert.deepEqual(t.counts(), { total: 1, waiting: 1 });
+
+  assert.equal(t.sweepStale(now + 7 * 60 * 60 * 1000).length, 1);
+  assert.deepEqual(t.counts(), { total: 0, waiting: 0 });
+});
+
+test('a session remembers the terminal window it runs in', () => {
+  const t = new SessionTracker();
+  const term = { program: 'Apple_Terminal', tty: '/dev/ttys004', pid: 4711 };
+
+  // Learned before any event for that session has been handled.
+  assert.equal(t.setTerminal('s1', term), true);
+  assert.equal(t.setTerminal('s1', term), false); // only new the first time
+  assert.equal(t.setTerminal('s1', null), false); // older hooks report nothing
+  assert.deepEqual(t.terminalFor('s1'), term);
+
+  t.handle('SessionStart', null, payload('s1'));
+  assert.deepEqual(t.list()[0].terminal, term);
+
+  t.handle('SessionEnd', null, payload('s1'));
+  assert.equal(t.terminalFor('s1'), null);
+});
+
 test('setActivity updates a tracked session', () => {
   const t = new SessionTracker();
   t.handle('SessionStart', null, payload('s1'));

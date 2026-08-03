@@ -34,6 +34,10 @@ app.whenReady().then(async () => {
       nodeIntegration: false,
     },
   });
+  // A renderer error would otherwise show up only as a missing card in a PNG.
+  win.webContents.on('console-message', (_e, level, message) => {
+    if (level >= 2) console.error('renderer:', message);
+  });
   await win.loadFile(path.join(__dirname, '..', 'src', 'renderer', 'index.html'));
 
   const tracker = new SessionTracker();
@@ -44,11 +48,14 @@ app.whenReady().then(async () => {
     }
   };
   const shot = async (name) => {
-    // Force a fresh composite — capturePage can otherwise return a stale frame
-    // on a non-focused window, yielding identical PNGs across shots.
+    // Wait for the page to actually paint the new state before capturing:
+    // capturePage on an unfocused window otherwise hands back the previous
+    // frame, and every PNG comes out one step behind the story.
     win.webContents.invalidate();
-    await win.capturePage(); // priming capture triggers a recomposite
-    await sleep(120);
+    await win.webContents.executeJavaScript(
+      'new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)))'
+    );
+    await sleep(80);
     const img = await win.webContents.capturePage();
     fs.writeFileSync(path.join(OUT_DIR, name), img.toPNG());
     console.log('captured', name);
