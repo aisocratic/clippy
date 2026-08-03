@@ -320,6 +320,60 @@ function renderActions() {
 
 /* ---------- Sessions ---------- */
 
+/**
+ * The one bit of macOS bureaucracy Clippy can't do for you.
+ *
+ * Running from source, the app *is* Electron's own bundle — so the Accessibility
+ * list says "Electron", there is no "Clippy" in it, and the entry may not exist
+ * at all until it's added by hand. That confuses everyone once, so say it here
+ * with the exact path and a button that copies it.
+ */
+function renderAccess() {
+  const host = document.getElementById('access');
+  host.classList.toggle('hidden', state.windowAccess !== false);
+  if (state.windowAccess !== false) return;
+
+  host.replaceChildren();
+  const title = document.createElement('div');
+  title.className = 'access-title';
+  title.textContent = "macOS hasn't given Clippy window access";
+
+  const body = document.createElement('p');
+  body.className = 'access-body';
+  body.textContent =
+    'Without it Clippy can\'t raise your terminal windows, perch on them, or walk ' +
+    'to a prompt. macOS only lets you grant this yourself — no app can add itself ' +
+    `to that list. Press the button below and look for “${state.appName}” (not ` +
+    '"Clippy"): asking puts it there, so it should just need switching on. If the ' +
+    'list still has no entry, click + and add this:';
+
+  const after = document.createElement('p');
+  after.className = 'access-body access-after';
+  after.textContent =
+    'No restart needed — Clippy notices the moment you flip the switch and carries on.';
+
+  const path = document.createElement('code');
+  path.className = 'access-path';
+  path.textContent = state.appPath || '';
+
+  const actions = document.createElement('div');
+  actions.className = 'access-actions';
+  const open = document.createElement('button');
+  open.className = 'primary';
+  open.textContent = 'Open Accessibility ↗';
+  open.addEventListener('click', () => window.clippySettings.fix('accessibility'));
+  const copy = document.createElement('button');
+  copy.textContent = 'Copy path';
+  copy.addEventListener('click', () => {
+    window.clippySettings.fix('copy-path');
+    copy.textContent = 'Copied ✓';
+    setTimeout(() => (copy.textContent = 'Copy path'), 1600);
+  });
+  actions.append(open, copy);
+
+  host.append(title, body, path, actions, after);
+}
+
 function renderSessions() {
   const host = document.getElementById('session-list');
   host.replaceChildren();
@@ -396,6 +450,7 @@ function set(key, value) {
 }
 
 function render() {
+  renderAccess();
   renderModes();
   renderSizes();
   renderCast();

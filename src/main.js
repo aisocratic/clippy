@@ -12,6 +12,7 @@ const {
   shell,
   systemPreferences,
   nativeImage,
+  clipboard,
 } = require('electron');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -224,12 +225,27 @@ function openSettingsWindow() {
   return settingsWin;
 }
 
+/**
+ * Where macOS thinks this app lives. Running from source that's Electron's own
+ * bundle — which is why the Accessibility list says "Electron" and not
+ * "Clippy", and why nobody can find it.
+ */
+function appBundlePath() {
+  const exe = app.getPath('exe');
+  const bundle = exe.indexOf('.app/Contents/MacOS/');
+  return bundle === -1 ? exe : exe.slice(0, bundle + 4);
+}
+
 /** Everything the settings window draws itself from. */
 function settingsState() {
   return {
     ...settingsPayload(),
     actions: ACTIONS,
     port: PORT,
+    // Can we raise other apps' windows? Everything about perching depends on it.
+    windowAccess: canDriveWindows(),
+    appName: path.basename(appBundlePath(), '.app'),
+    appPath: appBundlePath(),
     sessions: tracker.list().map((s) => ({
       sessionId: s.sessionId,
       name: s.name,
@@ -579,6 +595,39 @@ const openSessionWindow = (key, { point = false } = {}) =>
 const AX_PANE =
   'x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility';
 
+// How long to keep an eye on the Accessibility switch after asking for it, and
+// how often to look. Long enough to find the pane and flip it, then we stop.
+const AX_WATCH_MS = 3 * 60 * 1000;
+const AX_POLL_MS = 1500;
+let axWatch = null;
+
+/**
+ * Wait for the user to flip the switch, then pick up where we left off — no
+ * restart, no second click. macOS hands the running process the new grant, so
+ * polling `isTrustedAccessibilityClient` is all it takes.
+ */
+function watchForAccess(key) {
+  if (axWatch) return;
+  const started = Date.now();
+  axWatch = setInterval(() => {
+    if (canDriveWindows()) {
+      clearInterval(axWatch);
+      axWatch = null;
+      pushSettingsState();
+      if (key && buddies.has(key)) {
+        tellBuddy(key, 'Got it — thanks. Taking you to that terminal now.');
+        openSessionWindow(key, { point: false });
+      }
+      return;
+    }
+    if (Date.now() - started > AX_WATCH_MS) {
+      clearInterval(axWatch);
+      axWatch = null;
+    }
+  }, AX_POLL_MS);
+  axWatch.unref?.();
+}
+
 /**
  * Reaching into another app's windows needs Accessibility. macOS answers a
  * denied request with an *empty* window list rather than an error, so an
@@ -590,15 +639,25 @@ function canDriveWindows({ prompt = false } = {}) {
   return systemPreferences.isTrustedAccessibilityClient(prompt);
 }
 
+/**
+ * Ask macOS for Accessibility.
+ *
+ * An app can't grant itself this — the list lives in a SIP-protected database
+ * and only the user (or an MDM profile) can write to it. What the prompt *does*
+ * do is put us in the list, so it's one switch rather than hunting for the app
+ * with the + button. After that we watch for the switch to flip and carry on
+ * where we left off, instead of making anyone restart.
+ */
 function askForWindowAccess(key) {
-  canDriveWindows({ prompt: true }); // macOS shows its own "Open Settings" dialog
+  canDriveWindows({ prompt: true }); // adds us to the list, with macOS's own dialog
   shell.openExternal(AX_PANE).catch(() => {});
+  watchForAccess(key);
   if (key) {
     tellBuddy(
       key,
-      'macOS has to let me control other apps first. I opened the right pane: ' +
-        'tick Clippy (Electron) under Privacy & Security → Accessibility, then ' +
-        'try again.',
+      `macOS has to let me control other apps first. I opened the right pane — ` +
+        `look for “${path.basename(appBundlePath(), '.app')}”, not “Clippy”. ` +
+        'Settings ▸ Sessions has the full instructions.',
       { sticky: true, fix: 'accessibility' }
     );
   }
@@ -1401,6 +1460,11 @@ app.whenReady().then(async () => {
     // Only ever hand the OS an https link — this window must not become a
     // browser, and it must not be talked into opening anything else.
     if (typeof url === 'string' && url.startsWith('https://')) shell.openExternal(url);
+  });
+  ipcMain.on('clippy-settings-fix', (_e, what) => {
+    if (what === 'accessibility') askForWindowAccess(null);
+    if (what === 'copy-path') clipboard.writeText(appBundlePath());
+    pushSettingsState();
   });
   ipcMain.on('clippy-settings-assign', (_e, payload) => {
     const { name, character } = payload || {};

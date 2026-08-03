@@ -309,6 +309,26 @@ auth:
   a separate Agent SDK credit; an API key bills per token. Watch mode (hooks)
   has no such cost — it's just your normal terminal sessions.
 
+### Granting window access (the “I can't find Clippy in Accessibility” bit)
+
+Perching, raising a terminal and walking to a prompt all need macOS
+Accessibility. Running from source, **the app is Electron's own bundle**, so the
+list in *Privacy & Security ▸ Accessibility* says **Electron**, not "Clippy" —
+and it may not be there at all until it's added by hand:
+
+1. Open the settings window (📎 in the menu bar). If access is missing, the
+   Sessions section explains it, with the exact path and a **Copy path** button.
+2. Hit **Open Accessibility ↗**. Asking is what *puts the app in the list*, so
+   usually there's already an **Electron** row waiting to be switched on.
+3. If the list still has no entry, click **+**, press ⌘⇧G and paste
+   `<repo>/node_modules/electron/dist/Electron.app`, then switch it on.
+
+No restart needed: Clippy watches for the switch and picks up what it was doing.
+**No app can add itself** — that list is a SIP-protected database, writable only
+by you through System Settings (or an MDM profile on a managed Mac); `tccutil`
+can reset permissions but never grant them. Packaging Clippy as a signed `.app`
+would at least make the row say "Clippy" instead of "Electron".
+
 ## The settings window
 
 Click **📎 in the menu bar** and Clippy's settings window opens (right-click for

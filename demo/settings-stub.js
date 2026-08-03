@@ -36,5 +36,6 @@
       push();
     },
     openExternal: (url) => window.open(url, '_blank', 'noopener'),
+    fix: (what) => console.log('would fix', what),
   };
 })();

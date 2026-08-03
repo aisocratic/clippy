@@ -14,6 +14,8 @@ contextBridge.exposeInMainWorld('clippySettings', {
   showBuddy: (sessionId) => ipcRenderer.send('clippy-settings-show', sessionId),
   // Give one project a buddy of its own; '' hands it back to the mode.
   assign: (name, character) => ipcRenderer.send('clippy-settings-assign', { name, character }),
+  // 'accessibility' opens the macOS pane; 'copy-path' copies this app's path.
+  fix: (what) => ipcRenderer.send('clippy-settings-fix', what),
   // Links open in the user's browser, never inside this window.
   openExternal: (url) => ipcRenderer.send('clippy-open-external', url),
 });

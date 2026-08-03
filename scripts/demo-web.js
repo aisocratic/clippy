@@ -793,6 +793,9 @@ const server = http.createServer(async (req, res) => {
       sizes: sizeList(),
       actions: ACTIONS,
       port: 43117,
+      windowAccess: false, // so the banner is visible while working on it
+      appName: 'Electron',
+      appPath: '/path/to/clippy/node_modules/electron/dist/Electron.app',
       sessions: [
         { sessionId: 'demo-1', name: NAME, color: '#4fa3d1', status: 'working', character: 'clip' },
         { sessionId: 'demo-2', name: 'clippy', color: '#6cbf6c', status: 'waiting', character: 'cat' },
