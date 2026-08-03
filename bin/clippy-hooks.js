@@ -30,7 +30,13 @@ const DECIDE_HOOK_TIMEOUT_S = 120;
 // round-trip, no latency on the noisy read-only tools). This string is a
 // Claude Code matcher: `A|B` matches either tool, `mcp__.*` matches MCP tools.
 const MEANINGFUL_TOOLS =
-  'Bash|Edit|Write|MultiEdit|NotebookEdit|WebFetch|WebSearch|Task|ExitPlanMode|AskUserQuestion|mcp__.*';
+  'Bash|Edit|Write|MultiEdit|NotebookEdit|WebFetch|WebSearch|Task|ExitPlanMode|mcp__.*';
+
+// AskUserQuestion gets its own *interactive* PreToolUse hook instead of riding
+// the activity matcher: answering it means replying on stdout, which the
+// fire-and-forget activity hook throws away. Kept out of MEANINGFUL_TOOLS so
+// the two never both fire for the same tool call.
+const QUESTION_TOOL = 'AskUserQuestion';
 
 // Which hook events we subscribe to. For Notification hooks, `matcher` doubles
 // as the ?kind= query param so the app knows why it fired; for tool hooks
@@ -43,13 +49,25 @@ const SPECS = [
   { event: 'Notification', matcher: 'permission_prompt' },
   { event: 'Notification', matcher: 'idle_prompt' },
   { event: 'PermissionRequest', mode: 'decide' },
+  { event: 'PreToolUse', matcher: QUESTION_TOOL, mode: 'decide' },
   { event: 'Stop', mode: 'decide' },
   { event: 'PreToolUse', matcher: MEANINGFUL_TOOLS },
   { event: 'PostToolUse', matcher: MEANINGFUL_TOOLS },
+  // Claude Code reports a failed tool on its own event, not PostToolUse.
+  { event: 'PostToolUseFailure', matcher: MEANINGFUL_TOOLS },
   { event: 'UserPromptSubmit' },
   { event: 'SessionStart' },
   { event: 'SessionEnd' },
 ];
+
+// Which terminal window a session lives in. The hook shell's parent is the
+// `claude` process, so its tty pins the exact tab in Terminal.app/iTerm2, and
+// its pid lets the app walk up to the owning .app for every other terminal.
+// Sent as headers so the payload Claude Code hands us stays untouched.
+const TERM_HEADERS =
+  `-H "X-Clippy-Term: \${TERM_PROGRAM:-}" ` +
+  `-H "X-Clippy-Pid: $PPID" ` +
+  `-H "X-Clippy-Tty: $(ps -o tty= -p $PPID 2>/dev/null | tr -d ' ')" `;
 
 function hookCommand(spec, port) {
   const kind = spec.event === 'Notification' && spec.matcher ? `?kind=${spec.matcher}` : '';
@@ -60,14 +78,14 @@ function hookCommand(spec, port) {
     // no output, which Claude Code treats as "no decision" — zero impact.
     return (
       `curl -s --connect-timeout 1 -m ${DECIDE_CURL_MAX_S} -X POST '${url}' ` +
-      `-H 'Content-Type: application/json' --data-binary @- 2>/dev/null || true ${MARKER}`
+      `-H 'Content-Type: application/json' ${TERM_HEADERS}--data-binary @- 2>/dev/null || true ${MARKER}`
     );
   }
   // -m 2: never stall Claude Code; `|| true`: never report an error if the
   // Clippy app isn't running. The trailing marker comment lets us find and
   // remove our own entries later.
   return (
-    `curl -s -m 2 -X POST '${url}' -H 'Content-Type: application/json' ` +
+    `curl -s -m 2 -X POST '${url}' -H 'Content-Type: application/json' ${TERM_HEADERS}` +
     `--data-binary @- >/dev/null 2>&1 || true ${MARKER}`
   );
 }
@@ -127,6 +145,43 @@ function listInstalled(settings) {
   return found;
 }
 
+/**
+ * Compare what's installed against what this build expects. The app calls this
+ * on startup: hooks live in ~/.claude/settings.json and are only rewritten by
+ * an explicit `hooks:install`, so upgrading Clippy otherwise leaves new events
+ * (a newly answerable question, tool failures) silently unsubscribed.
+ *
+ * @returns {{installed: boolean, missing: string[], wrongPort: boolean, noTerminalInfo: boolean}}
+ */
+function checkDrift(settings, port = DEFAULT_PORT) {
+  const installed = [];
+  for (const [event, groups] of Object.entries(settings.hooks || {})) {
+    for (const group of groups || []) {
+      for (const hook of group.hooks || []) {
+        if (isOurs(hook)) {
+          installed.push({ event, matcher: group.matcher || '', command: String(hook.command) });
+        }
+      }
+    }
+  }
+  if (installed.length === 0) {
+    return { installed: false, missing: [], wrongPort: false, noTerminalInfo: false };
+  }
+
+  const missing = SPECS.filter(
+    (spec) => !installed.some((h) => h.event === spec.event && h.matcher === (spec.matcher || ''))
+  ).map((spec) => `${spec.event}${spec.matcher ? ` (${spec.matcher})` : ''}`);
+
+  return {
+    installed: true,
+    missing,
+    wrongPort: installed.some((h) => !h.command.includes(`127.0.0.1:${port}/`)),
+    // Older installs don't report which terminal they ran in, so "open the
+    // session's window" has nothing to aim at.
+    noTerminalInfo: installed.some((h) => !h.command.includes('X-Clippy-Tty')),
+  };
+}
+
 /* ---------------- CLI ---------------- */
 
 function parseArgs(argv) {
@@ -179,11 +234,18 @@ function main() {
       const found = listInstalled(settings);
       if (found.length === 0) {
         console.log(`No Clippy hooks in ${settingsPath}. Run: node bin/clippy-hooks.js install`);
-      } else {
-        console.log(`Clippy hooks in ${settingsPath}:`);
-        for (const f of found) {
-          console.log(`  - ${f.event}${f.matcher ? ` (${f.matcher})` : ''}`);
-        }
+        break;
+      }
+      console.log(`Clippy hooks in ${settingsPath}:`);
+      for (const f of found) {
+        console.log(`  - ${f.event}${f.matcher ? ` (${f.matcher})` : ''}`);
+      }
+      const drift = checkDrift(settings, args.port);
+      if (drift.missing.length || drift.wrongPort || drift.noTerminalInfo) {
+        console.log('\n⚠ These hooks are out of date — re-run `npm run hooks:install`:');
+        for (const m of drift.missing) console.log(`  - missing: ${m}`);
+        if (drift.wrongPort) console.log(`  - some hooks don't point at port ${args.port}`);
+        if (drift.noTerminalInfo) console.log("  - they don't report the session's terminal window");
       }
       break;
     }
@@ -199,8 +261,11 @@ module.exports = {
   installHooks,
   uninstallHooks,
   listInstalled,
+  checkDrift,
   hookCommand,
   SPECS,
   MARKER,
   MEANINGFUL_TOOLS,
+  QUESTION_TOOL,
+  DEFAULT_PORT,
 };

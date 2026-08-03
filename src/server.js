@@ -19,7 +19,7 @@ const MAX_BODY = 1024 * 1024; // 1 MB
  * then. `ctx.onClose(fn)` fires if the hook's curl gives up first.
  *
  * @param {object} opts
- * @param {(eventName: string, kind: string|null, payload: object, ctx: {onClose: (fn: () => void) => void}) => (object|void|Promise<object|void>)} opts.onEvent
+ * @param {(eventName: string, kind: string|null, payload: object, ctx: {onClose: (fn: () => void) => void, headers: object}) => (object|void|Promise<object|void>)} opts.onEvent
  * @param {() => object} [opts.getStatus]  Returns JSON for GET /status
  * @param {number} [opts.port]
  * @param {string} [opts.host]
@@ -64,7 +64,9 @@ function createHookServer({ onEvent, getStatus, port = 43117, host = '127.0.0.1'
       }
 
       const closeHandlers = [];
-      const ctx = { onClose: (fn) => closeHandlers.push(fn) };
+      // `headers` carries the terminal context the hook shipped (X-Clippy-*),
+      // which is how the app finds the window a session is running in.
+      const ctx = { onClose: (fn) => closeHandlers.push(fn), headers: req.headers };
       res.on('close', () => {
         for (const fn of closeHandlers) {
           try {

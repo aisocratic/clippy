@@ -29,18 +29,23 @@ class DecisionBroker {
   ask(meta, holdMs) {
     const id = `d${nextId++}`;
     const createdAt = Date.now();
+    // The hard cap is what keeps us inside the hook's curl deadline, so it has
+    // to bound the *initial* hold too — not just extensions. Otherwise a large
+    // CLIPPY_*_HOLD_SECS makes curl give up first and the card outlives the
+    // hook it was supposed to answer.
+    const hold = Math.max(1, Math.min(Number(holdMs) || 0, this.hardCapMs));
     const entry = {
       id,
       meta,
       createdAt,
-      expiresAt: createdAt + holdMs,
+      expiresAt: createdAt + hold,
       resolve: null,
       timer: null,
     };
     const promise = new Promise((resolve) => {
       entry.resolve = resolve;
     });
-    entry.timer = setTimeout(() => this._finish(entry, 'timeout', '', true), holdMs);
+    entry.timer = setTimeout(() => this._finish(entry, 'timeout', '', true), hold);
     this.pending.set(id, entry);
     return { id, expiresAt: entry.expiresAt, promise };
   }
@@ -72,6 +77,14 @@ class DecisionBroker {
     return next;
   }
 
+  /** Is anything still waiting on an answer for this session? */
+  hasPending(sessionId) {
+    for (const entry of this.pending.values()) {
+      if (entry.meta.sessionId === sessionId) return true;
+    }
+    return false;
+  }
+
   /** Drop every pending request for a session (e.g. the session ended). */
   cancelBySession(sessionId) {
     for (const entry of [...this.pending.values()]) {
@@ -98,11 +111,64 @@ class DecisionBroker {
 }
 
 /**
+ * The UI sends its answer map as { questionText: label | [labels] }.
+ * AskUserQuestion's `answers` field wants exactly one string per question —
+ * a multi-select answer is the chosen labels comma-joined, the same shape the
+ * terminal picker records. Anything the user typed that isn't one of the
+ * offered options is fine too; Claude reads it as an "Other" answer.
+ *
+ * Returns null when there's nothing usable, so callers fall back to `{}`
+ * (i.e. let the terminal picker handle it) instead of sending junk to Claude.
+ */
+function normalizeAnswers(raw) {
+  let obj = raw;
+  if (typeof raw === 'string') {
+    try {
+      obj = JSON.parse(raw);
+    } catch {
+      return null;
+    }
+  }
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return null;
+
+  const answers = {};
+  for (const [question, value] of Object.entries(obj)) {
+    const text = Array.isArray(value)
+      ? value.map((v) => String(v ?? '').trim()).filter(Boolean).join(', ')
+      : String(value ?? '').trim();
+    if (question && text) answers[question] = text;
+  }
+  return Object.keys(answers).length > 0 ? answers : null;
+}
+
+/**
  * Translate a user decision into the JSON Claude Code expects on the hook's
  * stdout. `{}` means "no opinion" — Claude Code falls through to its normal
  * permission flow (allowlist, then terminal prompt), so it is always safe.
+ *
+ * @param {object} [opts]
+ * @param {object} [opts.toolInput]  original tool_input, needed to answer a
+ *                                   PreToolUse AskUserQuestion in place.
  */
-function toHookResponse(event, action, message = '') {
+function toHookResponse(event, action, message = '', { toolInput } = {}) {
+  // PreToolUse on AskUserQuestion: `updatedInput` replaces the tool's arguments
+  // before it runs, and an AskUserQuestion that already carries `answers` has
+  // nothing left to ask — so the terminal picker never appears and Claude reads
+  // our answer as the user's. This is the CLI equivalent of the Agent SDK's
+  // canUseTool allow+updatedInput, and it's what makes questions answerable
+  // from Clippy in watch mode.
+  if (event === 'PreToolUse') {
+    const answers = action === 'answer' ? normalizeAnswers(message) : null;
+    if (!answers) return {}; // pass / dismiss / timeout / cancel -> terminal picker
+    return {
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        permissionDecision: 'allow',
+        updatedInput: { ...(toolInput || {}), answers },
+      },
+    };
+  }
+
   if (event === 'PermissionRequest') {
     if (action === 'allow') {
       return {
@@ -228,4 +294,10 @@ function activityLabel(toolName, toolInput = {}) {
   }
 }
 
-module.exports = { DecisionBroker, toHookResponse, describeToolCall, activityLabel };
+module.exports = {
+  DecisionBroker,
+  toHookResponse,
+  normalizeAnswers,
+  describeToolCall,
+  activityLabel,
+};

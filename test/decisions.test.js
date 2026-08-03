@@ -5,6 +5,7 @@ const assert = require('node:assert');
 const {
   DecisionBroker,
   toHookResponse,
+  normalizeAnswers,
   describeToolCall,
   activityLabel,
 } = require('../src/decisions');
@@ -18,6 +19,16 @@ test('resolve answers a pending ask', async () => {
   assert.deepEqual(await promise, { action: 'allow', message: 'fine by me', timedOut: false });
   assert.equal(broker.list().length, 0);
   assert.equal(broker.resolve(id, 'allow'), false); // already gone
+});
+
+test('hasPending tracks whether a session is still waiting on the user', async () => {
+  const broker = new DecisionBroker();
+  const { id } = broker.ask({ event: 'PermissionRequest', sessionId: 's1' }, 5000);
+
+  assert.equal(broker.hasPending('s1'), true);
+  assert.equal(broker.hasPending('s2'), false);
+  broker.resolve(id, 'allow');
+  assert.equal(broker.hasPending('s1'), false);
 });
 
 test('unanswered asks time out', async () => {
@@ -40,6 +51,16 @@ test('extend pushes the deadline but never past the hard cap', () => {
 
   broker.resolve(id, 'ok');
   assert.equal(broker.extend(id), null);
+});
+
+test('the initial hold is clamped to the hard cap', async () => {
+  // Otherwise a big CLIPPY_*_HOLD_SECS outlives the hook's curl deadline and
+  // the card is still on screen after Claude Code has moved on.
+  const broker = new DecisionBroker({ hardCapMs: 30 });
+  const { expiresAt, promise } = broker.ask({ event: 'Stop', sessionId: 's1' }, 10 * 60 * 1000);
+
+  assert.ok(expiresAt <= Date.now() + 30, 'hold must not exceed the hard cap');
+  assert.equal((await promise).timedOut, true);
 });
 
 test('cancelBySession drops only that session', async () => {
@@ -82,6 +103,56 @@ test('Stop responses block only on real feedback', () => {
   assert.deepEqual(toHookResponse('Stop', 'ok'), {});
   assert.deepEqual(toHookResponse('Stop', 'timeout'), {});
   assert.deepEqual(toHookResponse('UnknownEvent', 'allow'), {});
+});
+
+test('normalizeAnswers produces one string per question', () => {
+  // Single-select: the chosen label, as-is.
+  assert.deepEqual(normalizeAnswers({ 'Which store?': 'Redis' }), { 'Which store?': 'Redis' });
+
+  // Multi-select: comma-joined, the shape the terminal picker records.
+  assert.deepEqual(
+    normalizeAnswers({ Toppings: ['Cheese', 'Ham', 'Olives'] }),
+    { Toppings: 'Cheese, Ham, Olives' }
+  );
+
+  // The UI hands it over as JSON on the IPC wire.
+  assert.deepEqual(normalizeAnswers('{"Crust":["Thin"]}'), { Crust: 'Thin' });
+
+  // Unanswered questions are dropped rather than sent as empty strings.
+  assert.deepEqual(normalizeAnswers({ a: 'Yes', b: null, c: [], d: '  ' }), { a: 'Yes' });
+
+  // Nothing usable -> null, so callers fall back to the terminal picker.
+  assert.equal(normalizeAnswers('not json'), null);
+  assert.equal(normalizeAnswers({}), null);
+  assert.equal(normalizeAnswers({ a: '' }), null);
+  assert.equal(normalizeAnswers(null), null);
+  assert.equal(normalizeAnswers(['Redis']), null);
+});
+
+test('an answered AskUserQuestion comes back as updatedInput.answers', () => {
+  const toolInput = {
+    questions: [
+      { question: 'Which store?', options: [{ label: 'Redis' }, { label: 'In-memory' }] },
+    ],
+  };
+
+  const reply = toHookResponse('PreToolUse', 'answer', '{"Which store?":"Redis"}', { toolInput });
+  assert.deepEqual(reply, {
+    hookSpecificOutput: {
+      hookEventName: 'PreToolUse',
+      permissionDecision: 'allow',
+      // The original input is preserved; `answers` is what makes the tool
+      // resolve without ever drawing the terminal picker.
+      updatedInput: { ...toolInput, answers: { 'Which store?': 'Redis' } },
+    },
+  });
+
+  // Everything else hands the question back to the terminal untouched.
+  for (const action of ['pass', 'dismiss', 'timeout', 'cancel']) {
+    assert.deepEqual(toHookResponse('PreToolUse', action, '', { toolInput }), {});
+  }
+  assert.deepEqual(toHookResponse('PreToolUse', 'answer', 'garbage', { toolInput }), {});
+  assert.deepEqual(toHookResponse('PreToolUse', 'answer', '{}'), {});
 });
 
 test('describeToolCall summarizes common tools', () => {

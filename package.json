@@ -1,17 +1,34 @@
 {
   "name": "clippy-for-claude",
   "version": "0.1.0",
-  "description": "A Clippy for your MacBook that watches your Claude Code sessions and nags you when they need input",
+  "description": "A Clippy for your Mac that watches your Claude Code sessions and lets you answer them without hunting through terminal tabs",
+  "keywords": [
+    "claude",
+    "claude-code",
+    "electron",
+    "hooks",
+    "macos",
+    "pixel-art"
+  ],
+  "license": "MIT",
   "main": "src/main.js",
+  "os": [
+    "darwin"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
-    "start": "electron .",
-    "mock-session": "node scripts/mock-session.js",
+    "start": "node scripts/make-buddies.js --if-missing && electron .",
     "test": "node --test",
+    "make-buddies": "node scripts/make-buddies.js",
+    "add-sprite-pack": "node scripts/add-sprite-pack.js",
+    "mock-session": "node scripts/mock-session.js",
+    "demo:web": "node scripts/demo-web.js",
     "hooks:install": "node bin/clippy-hooks.js install",
     "hooks:uninstall": "node bin/clippy-hooks.js uninstall",
     "hooks:status": "node bin/clippy-hooks.js status"
   },
-  "license": "MIT",
   "devDependencies": {
     "electron": "^33.0.0"
   },
