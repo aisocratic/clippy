@@ -82,3 +82,66 @@ test('half-written themes are skipped rather than crashing the menus', () => {
 test('a missing themes directory is simply no extra characters', () => {
   assert.deepEqual(customThemes(path.join(os.tmpdir(), 'clippy-does-not-exist')), []);
 });
+
+test('a grid sheet keeps its rows and columns', () => {
+  const dir = tmpThemes({
+    pets: {
+      'theme.json': JSON.stringify({
+        frameWidth: 192,
+        frameHeight: 208,
+        columns: 8,
+        rows: 9,
+        idle: { file: 'sheet.webp', row: 0, frames: 6 },
+        excited: { file: 'sheet.webp', row: 3, frames: 4 },
+      }),
+    },
+  });
+
+  const [{ sheet }] = customThemes(dir);
+  assert.equal(sheet.columns, 8);
+  assert.equal(sheet.rows, 9);
+  assert.equal(sheet.excited.row, 3);
+  // A plain one-row strip doesn't have to spell the grid out.
+  const strip = customThemes(
+    tmpThemes({
+      strip: {
+        'theme.json': JSON.stringify({
+          frameWidth: 32,
+          frameHeight: 32,
+          idle: { file: 'idle.png', frames: 5 },
+        }),
+      },
+    })
+  )[0];
+  assert.equal(strip.sheet.columns, 5);
+  assert.equal(strip.sheet.rows, 1);
+  assert.equal(strip.sheet.idle.row, 0);
+});
+
+test('sheet sizes are read straight out of the image header', () => {
+  const { imageSize } = require('../scripts/add-sprite-pack');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clippy-img-'));
+
+  // PNG: the IHDR carries width and height as big-endian 32-bit ints.
+  const png = Buffer.alloc(24);
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(png);
+  png.writeUInt32BE(1536, 16);
+  png.writeUInt32BE(1872, 20);
+  const pngFile = path.join(dir, 'a.png');
+  fs.writeFileSync(pngFile, png);
+  assert.deepEqual(imageSize(pngFile), { width: 1536, height: 1872 });
+
+  // Extended WebP (the flavour with alpha): 24-bit canvas size, minus one.
+  const webp = Buffer.alloc(30);
+  webp.write('RIFF', 0, 'ascii');
+  webp.write('WEBP', 8, 'ascii');
+  webp.write('VP8X', 12, 'ascii');
+  webp.writeUIntLE(1535, 24, 3);
+  webp.writeUIntLE(1871, 27, 3);
+  const webpFile = path.join(dir, 'a.webp');
+  fs.writeFileSync(webpFile, webp);
+  assert.deepEqual(imageSize(webpFile), { width: 1536, height: 1872 });
+
+  fs.writeFileSync(path.join(dir, 'a.gif'), 'GIF89a');
+  assert.throws(() => imageSize(path.join(dir, 'a.gif')), /PNG and WebP/);
+});

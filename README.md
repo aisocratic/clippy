@@ -330,19 +330,30 @@ Pixel art is scaled by whole numbers only, so a 32px-wide frame lands exactly on
 the Small/Medium/Large steps (2×/3×/4×). Sheets of other sizes still work, they
 just scale to the nearest whole multiple that fits.
 
-**On other people's art.** `src/renderer/assets/` is gitignored: dropped-in packs
-stay on your machine, keep their own licence, and are never redistributed by this
-repo. That's deliberate — Clippy ships only art it draws itself, so the MIT
-licence here covers everything in the tree. If you want to *publish* a theme,
-publish it as its own repo with its licence attached.
+`src/renderer/assets/` is gitignored, so dropped-in packs stay on your machine
+and are never redistributed by this repo. That's deliberate: Clippy ships only
+art it draws itself, so the MIT licence here covers everything in the tree. To
+*publish* a theme, publish it as its own repo with its licence attached.
 
-For example, to use a pack like
-[shadow28144's Pixel Cat](https://shadow28144.itch.io/pixel-cat): download
-`Cat.zip` from itch.io, unzip it, put the animation strips you want in
-`src/renderer/assets/themes/pixel-cat/`, and write the `theme.json` above with
-that pack's frame size and frame counts. Check the pack's own terms first —
-that page states no licence, so it is "all rights reserved" by default and
-absolutely must not be committed here.
+Most desktop-pet packs ship exactly this shape — a `pet.json` next to one big
+sheet — so there's a script for it:
+
+```bash
+npm run add-sprite-pack -- ~/Downloads/miso            # a folder from the zip
+npm run add-sprite-pack -- ~/Downloads/fox --excited 4:5   # pick another row
+```
+
+It reads the sheet's size from the image header, works out the frame size from
+`--grid` (default `8x9`), copies the sheet into place and writes the
+`theme.json`. Defaults: `--idle 0:6` (row 0, six frames) and `--excited 3:4`.
+Rows differ between packs, so play a couple and pick the ones that read as
+"calm" and "look at me" — with the pet packs above, row 0 is a sitting idle and
+row 3 is a wave.
+
+**On other people's art.** Check what you're allowed to do with a pack before
+using it, and note that "free to download" is not the same as "free to
+redistribute" — a page with no licence at all is *all rights reserved* by
+default. That's why nothing here is committed for you.
 
 ## Configuration
 
@@ -472,6 +483,7 @@ Two things worth knowing before changing the UI:
 - `bin/clippy-hooks.js` — hook installer/uninstaller for `~/.claude/settings.json`
 - `scripts/mock-session.js` — mock Claude Code session (above)
 - `scripts/demo-web.js` + `demo/` — the browser test bench (above)
+- `scripts/add-sprite-pack.js` — install a downloaded sprite pack as a character
 - `scripts/cdp-eval.js` — drive the renderer over CDP for e2e checks
   (`npx electron . --remote-debugging-port=9333`)
 

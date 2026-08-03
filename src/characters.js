@@ -36,8 +36,12 @@ const SIZES = {
   large: { buddy: 128, win: [140, 174] },
 };
 
-/** The size list as the menus want it: an ordered array with ids attached. */
-const sizeList = () => Object.entries(SIZES).map(([id, s]) => ({ id, buddy: s.buddy }));
+/**
+ * The size list as the menus want it: an ordered array with ids attached.
+ * `win` rides along so anything standing in for the main process (the web test
+ * bench) sizes its window exactly the way main does.
+ */
+const sizeList = () => Object.entries(SIZES).map(([id, s]) => ({ id, buddy: s.buddy, win: s.win }));
 
 const THEMES_DIR = path.join(__dirname, 'renderer', 'assets', 'themes');
 
@@ -53,6 +57,13 @@ const THEMES_DIR = path.join(__dirname, 'renderer', 'assets', 'themes');
  *     "idle":    { "file": "idle.png",    "frames": 4 },
  *     "excited": { "file": "excited.png", "frames": 6 }
  *   }
+ *
+ * Packs that put every animation in one grid — a row per animation, which is
+ * how most pet sprite sheets ship — say so instead:
+ *
+ *   { "frameWidth": 192, "frameHeight": 208, "columns": 8, "rows": 9,
+ *     "idle":    { "file": "spritesheet.webp", "row": 0, "frames": 6 },
+ *     "excited": { "file": "spritesheet.webp", "row": 3, "frames": 4 } }
  *
  * Sprite packs stay *out* of this repo — that folder is gitignored, so whatever
  * you drop in keeps its own licence and never ends up redistributed here.
@@ -86,7 +97,11 @@ function customThemes(dir = THEMES_DIR) {
 function readSheet(raw, id) {
   const pose = (p) =>
     p && typeof p.file === 'string' && Number(p.frames) > 0
-      ? { file: `assets/themes/${id}/${p.file}`, frames: Math.floor(Number(p.frames)) }
+      ? {
+          file: `assets/themes/${id}/${p.file}`,
+          frames: Math.floor(Number(p.frames)),
+          row: Math.max(0, Math.floor(Number(p.row) || 0)),
+        }
       : null;
 
   const idle = pose(raw.idle);
@@ -94,13 +109,18 @@ function readSheet(raw, id) {
   const frameHeight = Math.floor(Number(raw.frameHeight));
   if (!idle || !(frameWidth > 0) || !(frameHeight > 0)) return null;
 
+  // A pack with only one animation just reuses it when Clippy gets excited.
+  const excited = pose(raw.excited) || idle;
   return {
     frameWidth,
     frameHeight,
+    // How big the whole image is, in frames — needed to scale the background.
+    // A plain one-row strip doesn't have to spell it out.
+    columns: Math.max(1, Math.floor(Number(raw.columns)) || Math.max(idle.frames, excited.frames)),
+    rows: Math.max(1, Math.floor(Number(raw.rows)) || Math.max(idle.row, excited.row) + 1),
     fps: Number(raw.fps) > 0 ? Number(raw.fps) : 6,
     idle,
-    // A pack with only one animation just reuses it when Clippy gets excited.
-    excited: pose(raw.excited) || idle,
+    excited,
   };
 }
 

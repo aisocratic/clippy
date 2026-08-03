@@ -219,25 +219,29 @@ function applyCharacter() {
 }
 
 /**
- * Step a PNG sprite sheet frame by frame. Pixel art wants whole-number scaling,
- * so the frame is blown up by the largest integer that still fits the buddy
- * size you picked.
+ * Step a sprite sheet frame by frame: the sheet is scaled as a whole and the
+ * window onto it moves along the pose's row.
+ *
+ * Small pixel art is blown up by whole numbers only (2x, 3x) because half a
+ * pixel is mush; a sheet that's already bigger than the buddy is scaled down to
+ * fit, where fractions are fine.
  */
 function playSheet(sheet, excited) {
   const pose = (excited ? sheet.excited : sheet.idle) || sheet.idle;
-  const scale = Math.max(1, Math.round(buddyPx() / sheet.frameWidth));
+  const want = buddyPx() / sheet.frameWidth;
+  const scale = want >= 1 ? Math.round(want) : want;
   const w = sheet.frameWidth * scale;
   const h = sheet.frameHeight * scale;
 
   sheetEl.style.width = `${w}px`;
   sheetEl.style.height = `${h}px`;
   sheetEl.style.backgroundImage = `url("${pose.file}")`;
-  sheetEl.style.backgroundSize = `${w * pose.frames}px ${h}px`;
+  sheetEl.style.backgroundSize = `${w * sheet.columns}px ${h * sheet.rows}px`;
 
   stopSheet();
   let frame = 0;
   const step = () => {
-    sheetEl.style.backgroundPosition = `-${frame * w}px 0`;
+    sheetEl.style.backgroundPosition = `-${frame * w}px -${pose.row * h}px`;
     frame = (frame + 1) % pose.frames;
   };
   step();

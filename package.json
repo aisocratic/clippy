@@ -22,6 +22,7 @@
     "start": "node scripts/make-buddies.js --if-missing && electron .",
     "test": "node --test",
     "make-buddies": "node scripts/make-buddies.js",
+    "add-sprite-pack": "node scripts/add-sprite-pack.js",
     "mock-session": "node scripts/mock-session.js",
     "demo:web": "node scripts/demo-web.js",
     "hooks:install": "node bin/clippy-hooks.js install",

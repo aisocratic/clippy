@@ -14,9 +14,19 @@ const logEl = document.getElementById('log');
 const noteEl = document.getElementById('note');
 
 // Same geometry main uses (src/main.js): a bare buddy until there's a card,
-// then as tall as the renderer says it needs to be.
-const SIZE = { compact: [104, 118], full: [268, 470] };
+// then as tall as the renderer says it needs to be. The compact size comes from
+// the size roster, so it tracks whichever size is selected.
+const FULL_W = 268;
+const FALLBACK_H = 470;
 const MIN_FULL_H = 190;
+// Which of the two window sizes the frame is at. Tracked rather than measured:
+// the frame's width animates, so reading offsetWidth mid-transition reports the
+// size it is leaving, not the one it is at.
+let frameMode = 'compact';
+const compactSize = () => {
+  const step = (settings.sizes || []).find((s) => s.id === settings.size);
+  return (step && step.win) || [108, 136];
+};
 // Matches the walk in src/main.js, so the bench looks like the app.
 const WALK_MS = 900;
 const POINT_MS = 5000;
@@ -244,7 +254,13 @@ window.addEventListener('message', async (e) => {
       send('settings', settings);
       send('usage-data', data.usage[document.getElementById('opt-usage').value]);
       send('event', { kind: 'can-open', value: document.getElementById('set-canopen').checked });
-      send('event', { kind: 'dock', docked: desktop.classList.contains('docked'), compact: false });
+      // Whatever size the frame is already at decides the layout — saying
+      // "not compact" here would leave a bare buddy wearing the full chrome.
+      send('event', {
+        kind: 'dock',
+        docked: desktop.classList.contains('docked'),
+        compact: frameMode === 'compact',
+      });
       log('note', 'renderer', 'loaded — clippyAPI stub attached');
       break;
 
@@ -252,7 +268,8 @@ window.addEventListener('message', async (e) => {
       // Main owns the geometry; here the iframe is the window. The renderer
       // measures how tall its contents need to be — clamp it to the fake
       // desktop the way main clamps to the display's work area.
-      const [w, fallback] = SIZE[p.mode] || SIZE.full;
+      frameMode = p.mode;
+      const [w, fallback] = p.mode === 'compact' ? compactSize() : [FULL_W, FALLBACK_H];
       const h =
         p.mode === 'compact'
           ? fallback
@@ -345,6 +362,14 @@ window.addEventListener('message', async (e) => {
     case 'open-window':
       log('in', 'openWindow', 'raise the terminal window and perch on it');
       setDocked(true);
+      // `point: true` means the answer has to be typed on that prompt — main
+      // walks over once it has landed, so the bench does too.
+      if (p.point) setTimeout(walkToPrompt, 500);
+      break;
+
+    case 'point':
+      log('in', 'pointAtPrompt', 'show me where to answer');
+      walkToPrompt();
       break;
 
     case 'hide':
@@ -381,8 +406,8 @@ function reloadFrame() {
   const name = document.getElementById('opt-name').value.trim() || 'session';
   const color = document.getElementById('opt-color').value;
   const params = new URLSearchParams({ session: 'demo-session', name, color });
-  frame.style.width = `${SIZE.full[0]}px`;
-  frame.style.height = `${SIZE.full[1]}px`;
+  frame.style.width = `${FULL_W}px`;
+  frame.style.height = `${FALLBACK_H}px`;
   frame.src = `/renderer/?${params}`;
 }
 
@@ -390,7 +415,7 @@ function setDocked(on) {
   document.getElementById('set-docked').checked = on;
   desktop.classList.toggle('docked', on);
   terminal.classList.toggle('hidden', !on);
-  send('event', { kind: 'dock', docked: on, compact: frame.offsetWidth <= SIZE.compact[0] });
+  send('event', { kind: 'dock', docked: on, compact: frameMode === 'compact' });
 }
 
 async function boot() {
