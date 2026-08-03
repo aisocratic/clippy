@@ -28,5 +28,6 @@
       push();
     },
     showBuddy: (sessionId) => console.log('would show the buddy for', sessionId),
+    openExternal: (url) => window.open(url, '_blank', 'noopener'),
   };
 })();

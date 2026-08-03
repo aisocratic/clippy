@@ -228,6 +228,7 @@ code {
 .cast {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(228px, 1fr));
+  align-items: start; /* a card with fewer poses shouldn't stretch to match */
   gap: 12px;
 }
 
@@ -339,6 +340,24 @@ code {
   font-size: 11.5px;
   color: var(--muted);
   line-height: 1.6;
+}
+
+.drop-hint p + p {
+  margin-top: 6px;
+}
+
+.drop-hint b {
+  color: #c3cbd5;
+}
+
+.drop-hint a {
+  color: var(--accent);
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.drop-hint a:hover {
+  text-decoration: underline;
 }
 
 /* ---------- Switches ---------- */

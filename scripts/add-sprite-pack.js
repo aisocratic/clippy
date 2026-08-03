@@ -21,12 +21,20 @@
  *   --grid CxR       frame grid, columns x rows (default 8x9)
  *   --idle R:F       row and frame count for the calm animation (default 0:6)
  *   --excited R:F    …and for the excited one (default 3:4)
+ *   --walk R:F       …the walk, played while the buddy crosses a window
+ *   --point R:F      …standing at a prompt, pointing at it
+ *   --sleep R:F      …nothing happening for a while
+ *   --cheer R:F      …a turn finished cleanly
  *   --fps N          frames per second (default 6)
+ *
+ * Only idle and excited have defaults; name the others if the pack has rows
+ * that suit them. Rows you never name still show up in the settings window, so
+ * you can look through a sheet and come back for them.
  */
 
 const fs = require('node:fs');
 const path = require('node:path');
-const { THEMES_DIR } = require('../src/characters');
+const { THEMES_DIR, POSES } = require('../src/characters');
 
 const args = process.argv.slice(2);
 const flag = (name, fallback) => {
@@ -117,6 +125,12 @@ function main() {
     );
   }
 
+  const poses = {};
+  for (const name of POSES) {
+    const spec = flag(name, name === 'idle' ? '0:6' : name === 'excited' ? '3:4' : null);
+    if (spec) poses[name] = { file: sheetName, ...pose(spec, name) };
+  }
+
   const theme = {
     label: flag('label', meta.displayName || id),
     frameWidth: Math.floor(width / columns),
@@ -124,8 +138,7 @@ function main() {
     columns,
     rows,
     fps: Number(flag('fps', 6)),
-    idle: { file: sheetName, ...pose(flag('idle', '0:6'), 'idle') },
-    excited: { file: sheetName, ...pose(flag('excited', '3:4'), 'excited') },
+    poses,
   };
 
   const out = path.join(THEMES_DIR, id);
@@ -135,8 +148,9 @@ function main() {
 
   console.log(`installed “${theme.label}” as ${id}`);
   console.log(`  ${width}x${height} sheet -> ${theme.frameWidth}x${theme.frameHeight} frames`);
-  console.log(`  idle row ${theme.idle.row} (${theme.idle.frames} frames), ` +
-    `excited row ${theme.excited.row} (${theme.excited.frames})`);
+  for (const [name, p] of Object.entries(theme.poses)) {
+    console.log(`  ${name.padEnd(8)} row ${p.row} (${p.frames} frames)`);
+  }
   console.log(`  ${path.relative(process.cwd(), out)}`);
   console.log('Restart the app (or reload the test bench) to pick it up.');
 }

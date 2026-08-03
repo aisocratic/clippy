@@ -50,8 +50,8 @@ test('a dropped-in sprite sheet becomes a character', () => {
   assert.equal(theme.label, '🐈 My cat');
   assert.equal(theme.sheet.fps, 8);
   // Paths are handed to the renderer, so they're relative to the renderer.
-  assert.equal(theme.sheet.idle.file, 'assets/themes/my-cat/idle.png');
-  assert.equal(theme.sheet.excited.frames, 6);
+  assert.equal(theme.sheet.poses.idle.file, 'assets/themes/my-cat/idle.png');
+  assert.equal(theme.sheet.poses.excited.frames, 6);
 });
 
 test('half-written themes are skipped rather than crashing the menus', () => {
@@ -74,7 +74,7 @@ test('half-written themes are skipped rather than crashing the menus', () => {
     ['one-pose']
   );
   // No excited sheet: the calm one is reused rather than leaving a hole.
-  assert.deepEqual(found[0].sheet.excited, found[0].sheet.idle);
+  assert.deepEqual(found[0].sheet.poses.excited, found[0].sheet.poses.idle);
   assert.equal(found[0].sheet.fps, 6, 'a sensible default frame rate');
   assert.equal(found[0].label, 'one-pose', 'the folder name is the fallback label');
 });
@@ -91,8 +91,11 @@ test('a grid sheet keeps its rows and columns', () => {
         frameHeight: 208,
         columns: 8,
         rows: 9,
-        idle: { file: 'sheet.webp', row: 0, frames: 6 },
-        excited: { file: 'sheet.webp', row: 3, frames: 4 },
+        poses: {
+          idle: { file: 'sheet.webp', row: 0, frames: 6 },
+          excited: { file: 'sheet.webp', row: 3, frames: 4 },
+          walk: { file: 'sheet.webp', row: 1, frames: 8 },
+        },
       }),
     },
   });
@@ -100,7 +103,8 @@ test('a grid sheet keeps its rows and columns', () => {
   const [{ sheet }] = customThemes(dir);
   assert.equal(sheet.columns, 8);
   assert.equal(sheet.rows, 9);
-  assert.equal(sheet.excited.row, 3);
+  assert.equal(sheet.poses.excited.row, 3);
+  assert.equal(sheet.poses.walk.frames, 8, 'a pack can name the whole vocabulary');
   // A plain one-row strip doesn't have to spell the grid out.
   const strip = customThemes(
     tmpThemes({
@@ -115,7 +119,7 @@ test('a grid sheet keeps its rows and columns', () => {
   )[0];
   assert.equal(strip.sheet.columns, 5);
   assert.equal(strip.sheet.rows, 1);
-  assert.equal(strip.sheet.idle.row, 0);
+  assert.equal(strip.sheet.poses.idle.row, 0);
 });
 
 test('sheet sizes are read straight out of the image header', () => {

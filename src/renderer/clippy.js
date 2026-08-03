@@ -74,6 +74,7 @@ const sizesEl = document.getElementById('sizes');
 
 const sheetEl = document.getElementById('buddy-sheet');
 let sheetTimer = null;
+let pose = 'idle'; // what the buddy is doing right now, by name
 
 const pointerEl = document.getElementById('pointer');
 let walkTimer = null;
@@ -173,16 +174,27 @@ function applyIdentity() {
 }
 
 /**
- * The GIF for this character and mood. Every character lives in its own theme
- * folder; the paperclip is the only one built per session colour, since a GIF
- * can't be recoloured by CSS.
+ * The GIF for this character and pose. Every character lives in its own theme
+ * folder; Clippy is the only one built per session colour, since a GIF can't be
+ * recoloured by CSS.
  */
-function buddyArt(excited) {
-  const state = excited ? 'excited' : 'idle';
+function buddyArt(pose) {
   const who = settings.character || 'clip';
-  if (who === 'clip') return `assets/themes/clip/${me.color.replace('#', '')}-${state}.gif`;
-  return `assets/themes/${who}/${state}.gif`;
+  if (who === 'clip') return `assets/themes/clip/${me.color.replace('#', '')}-${pose}.gif`;
+  return `assets/themes/${who}/${pose}.gif`;
 }
+
+/** The pose that fits what's happening — falling back to what this buddy has. */
+function poseFor(name) {
+  const character = (settings.characters || []).find((c) => c.id === settings.character);
+  const has = character && (character.sheet ? character.sheet.poses : toSet(character.poses));
+  for (const want of [name, 'excited', 'idle']) {
+    if (!has || has[want]) return want;
+  }
+  return 'idle';
+}
+
+const toSet = (list) => Object.fromEntries((list || ['idle', 'excited']).map((p) => [p, true]));
 
 /** The sprite-sheet definition for the current character, if it has one. */
 function currentSheet() {
@@ -190,31 +202,35 @@ function currentSheet() {
   return who && who.sheet ? who.sheet : null;
 }
 
-function setExcited(on) {
-  clippyEl.classList.toggle('excited', on);
+/** Show a pose by name — `walk`, `point`, `excited`, `idle`… */
+function setPose(name) {
+  pose = poseFor(name);
   const sheet = currentSheet();
   if (sheet) {
-    playSheet(sheet, on);
+    playSheet(sheet, pose);
     return;
   }
-  // The drawn buddies animate inside the GIF, so a change of mood is a change
+  // The drawn buddies animate inside the GIF, so a change of pose is a change
   // of file. The suffix restarts the animation from its first frame.
-  const want = buddyArt(on);
-  if (!buddyEl.src.includes(want)) buddyEl.src = `${want}?${on ? 'x' : 'i'}`;
+  const want = buddyArt(pose);
+  if (!buddyEl.src.includes(want)) buddyEl.src = `${want}?${pose[0]}`;
+}
+
+function setExcited(on) {
+  clippyEl.classList.toggle('excited', on);
+  // A walk or a point is the more specific thing to be doing; mood waits.
+  if (pose === 'walk' || pose === 'point') return;
+  setPose(on ? 'excited' : 'idle');
 }
 
 /** Same buddy, same behaviour, different shape — and one constant size. */
 function applyCharacter() {
-  const excited = clippyEl.classList.contains('excited');
   const sheet = currentSheet();
   buddyEl.classList.toggle('hidden', Boolean(sheet));
   sheetEl.classList.toggle('hidden', !sheet);
-  if (sheet) playSheet(sheet, excited);
-  else {
-    stopSheet();
-    buddyEl.src = buddyArt(excited);
-  }
+  if (!sheet) stopSheet();
   applySize();
+  setPose(pose);
   renderChips();
 }
 
@@ -226,8 +242,8 @@ function applyCharacter() {
  * pixel is mush; a sheet that's already bigger than the buddy is scaled down to
  * fit, where fractions are fine.
  */
-function playSheet(sheet, excited) {
-  const pose = (excited ? sheet.excited : sheet.idle) || sheet.idle;
+function playSheet(sheet, name) {
+  const pose = sheet.poses[name] || sheet.poses.idle;
   const want = buddyPx() / sheet.frameWidth;
   const scale = want >= 1 ? Math.round(want) : want;
   const w = sheet.frameWidth * scale;
@@ -822,17 +838,25 @@ function handleEvent(evt) {
       // in a walking pose, facing the way he's going.
       document.body.classList.add('walking');
       document.body.classList.toggle('facing-left', evt.facing === 'left');
+      setPose('walk');
       clearTimeout(walkTimer);
       // Safety net: if the walk event that ends this one never lands, don't
       // leave him marching on the spot forever.
-      walkTimer = setTimeout(() => document.body.classList.remove('walking'), 4000);
+      walkTimer = setTimeout(() => {
+        document.body.classList.remove('walking');
+        setPose('idle');
+      }, 4000);
       break;
     }
     case 'point': {
       document.body.classList.remove('walking');
       clearTimeout(walkTimer);
       pointerEl.classList.toggle('hidden', !evt.on);
-      setExcited(Boolean(evt.on));
+      if (evt.on) setPose('point');
+      else {
+        pose = 'idle'; // let the mood decide again
+        setExcited(currentUrgent() || Boolean(activeRequestId));
+      }
       break;
     }
     case 'question': {

@@ -1287,6 +1287,11 @@ app.whenReady().then(async () => {
       e.sender.send('clippy-settings-state', settingsState());
     }
   });
+  ipcMain.on('clippy-open-external', (_e, url) => {
+    // Only ever hand the OS an https link — this window must not become a
+    // browser, and it must not be talked into opening anything else.
+    if (typeof url === 'string' && url.startsWith('https://')) shell.openExternal(url);
+  });
   ipcMain.on('clippy-settings-show', (_e, sessionId) => {
     if (sessionId) showBuddy(String(sessionId), { pin: true });
   });

@@ -16,13 +16,16 @@ const path = require('node:path');
  * per session colour, since a GIF can't be recoloured by CSS.
  */
 
+/**
+ * The vocabulary every character speaks. A buddy is asked for a pose by name
+ * and shows whatever it has for it; anything missing falls back to `excited`
+ * and then `idle`, so a pack that only ships two animations still works.
+ */
+const POSES = ['idle', 'excited', 'walk', 'point', 'sleep', 'cheer'];
+
 const CHARACTERS = [
-  { id: 'clip', label: '📎 Paperclip' },
-  { id: 'cat', label: '🐱 Pixel cat' },
-  { id: 'fighter', label: '🥋 Street fighter' },
-  { id: 'dino', label: '🫧 Bubble dino' },
-  { id: 'ghost', label: '👻 Arcade ghost' },
-  { id: 'robot', label: '🤖 Tin robot' },
+  { id: 'clip', label: '📎 Clippy', poses: POSES, perColour: true },
+  { id: 'cat', label: '🐱 Pixel cat', poses: POSES },
 ];
 
 /**
@@ -59,11 +62,15 @@ const THEMES_DIR = path.join(__dirname, 'renderer', 'assets', 'themes');
  *   }
  *
  * Packs that put every animation in one grid — a row per animation, which is
- * how most pet sprite sheets ship — say so instead:
+ * how most pet sprite sheets ship — say so instead, and can name as many of the
+ * poses as the sheet actually has:
  *
  *   { "frameWidth": 192, "frameHeight": 208, "columns": 8, "rows": 9,
- *     "idle":    { "file": "spritesheet.webp", "row": 0, "frames": 6 },
- *     "excited": { "file": "spritesheet.webp", "row": 3, "frames": 4 } }
+ *     "poses": {
+ *       "idle":    { "file": "spritesheet.webp", "row": 0, "frames": 6 },
+ *       "excited": { "file": "spritesheet.webp", "row": 3, "frames": 4 },
+ *       "walk":    { "file": "spritesheet.webp", "row": 1, "frames": 8 }
+ *     } }
  *
  * Sprite packs stay *out* of this repo — that folder is gitignored, so whatever
  * you drop in keeps its own licence and never ends up redistributed here.
@@ -95,7 +102,7 @@ function customThemes(dir = THEMES_DIR) {
 
 /** Validate the bits the renderer has to have, or return null. */
 function readSheet(raw, id) {
-  const pose = (p) =>
+  const read = (p) =>
     p && typeof p.file === 'string' && Number(p.frames) > 0
       ? {
           file: `assets/themes/${id}/${p.file}`,
@@ -104,23 +111,32 @@ function readSheet(raw, id) {
         }
       : null;
 
-  const idle = pose(raw.idle);
+  // Poses live under `poses`, but a sheet that only names idle/excited at the
+  // top level (the shape this started as) still reads.
+  const named = { ...raw, ...(raw.poses || {}) };
+  const poses = {};
+  for (const name of POSES) {
+    const pose = read(named[name]);
+    if (pose) poses[name] = pose;
+  }
+
   const frameWidth = Math.floor(Number(raw.frameWidth));
   const frameHeight = Math.floor(Number(raw.frameHeight));
-  if (!idle || !(frameWidth > 0) || !(frameHeight > 0)) return null;
+  if (!poses.idle || !(frameWidth > 0) || !(frameHeight > 0)) return null;
 
   // A pack with only one animation just reuses it when Clippy gets excited.
-  const excited = pose(raw.excited) || idle;
+  if (!poses.excited) poses.excited = poses.idle;
+
+  const all = Object.values(poses);
   return {
     frameWidth,
     frameHeight,
     // How big the whole image is, in frames — needed to scale the background.
     // A plain one-row strip doesn't have to spell it out.
-    columns: Math.max(1, Math.floor(Number(raw.columns)) || Math.max(idle.frames, excited.frames)),
-    rows: Math.max(1, Math.floor(Number(raw.rows)) || Math.max(idle.row, excited.row) + 1),
+    columns: Math.max(1, Math.floor(Number(raw.columns)) || Math.max(...all.map((p) => p.frames))),
+    rows: Math.max(1, Math.floor(Number(raw.rows)) || Math.max(...all.map((p) => p.row)) + 1),
     fps: Number(raw.fps) > 0 ? Number(raw.fps) : 6,
-    idle,
-    excited,
+    poses,
   };
 }
 
@@ -130,4 +146,4 @@ function allCharacters() {
   return [...CHARACTERS, ...custom];
 }
 
-module.exports = { CHARACTERS, SIZES, sizeList, customThemes, allCharacters, THEMES_DIR };
+module.exports = { CHARACTERS, POSES, SIZES, sizeList, customThemes, allCharacters, THEMES_DIR };

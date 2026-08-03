@@ -45,10 +45,10 @@ Clippy is a **small buddy** by default and only grows a window when there's
 something to read — as tall as that thing needs, no more. **Click him** and a
 menu drops out from underneath: go to the agent's terminal, stats & token usage
 (`660k left of 1.0M · 340k used (34%)` over a progress bar, plus spend for the
-session, today and the week), a Settings submenu, and hide. Every buddy is
-**pixel art animated as GIFs** — a paperclip in your session's colour, a cat, a
-fighter, a bubble-blowing dino, an arcade ghost, a tin robot — all drawn in code
-with no image assets in the repo, and swappable from the menu.
+session, today and the week), a Settings submenu, and hide. The buddies are
+**pixel art**: Clippy himself in your session's colour and a pixel cat, both
+drawn in code with no image assets in the repo — and any sprite pack you drop
+in, swappable from the menu.
 
 ## How it works
 
@@ -197,21 +197,18 @@ know.
   to show and asks for exactly that much height (clamped to your display), so a
   long plan or a queue of approvals isn't cut off and a bare buddy isn't sitting
   in a tall pane of empty glass.
-- **Six buddies, all pixel art**: 📎 paperclip, 🐱 pixel cat, 🥋 street fighter,
-  🫧 bubble dino, 👻 arcade ghost, 🤖 tin robot. Each has a calm animation and an
-  excited one — the paperclip's brows go up and it bounces, the cat flicks an
-  ear and hops, the fighter throws a straight right, the dino blows a bubble,
-  the ghost's hem ripples, the robot's antenna lights up.
+- **Two buddies in the box, more a download away**: 📎 Clippy himself and a
+  🐱 pixel cat, both **drawn in code** — every frame is primitives in
+  `scripts/make-buddies.js`, encoded by this repo's own GIF encoder, which is
+  what lets Clippy ship with no image assets and no third-party art. Clippy is
+  built once per session colour, since a GIF can't be recoloured by CSS.
 
-  They are **originals in the arcade idiom, not sprites from any game**: every
-  frame is drawn with primitives in `scripts/make-buddies.js` and encoded by
-  this repo's own GIF encoder, which is what lets Clippy ship with no image
-  assets and no third-party art. `npm run make-buddies` rebuilds
-  `src/renderer/assets/themes/<character>/`, and
-  `node scripts/make-buddies.js --preview` prints the frames as ASCII if you
-  want to redraw one. The paperclip is the only character built per identity
-  colour, since a GIF can't be recoloured by CSS the way the old SVG could
-  (that SVG is still there as a fallback).
+  Both speak the full **six-pose vocabulary**: `idle`, `excited`, `walk`,
+  `point`, `sleep`, `cheer`. The app asks for a pose by name and gets whatever
+  that buddy has — so the walk to a prompt actually plays a walk, and standing
+  on the line plays a point. `npm run make-buddies` rebuilds them;
+  `node scripts/make-buddies.js --preview clip:walk` prints a frame as ASCII if
+  you want to redraw one.
 - **Drag Clippy** anywhere; he floats above full-screen apps on all Spaces.
 - **Got it** acknowledges everything; **Snooze 5m** pauses the nagging.
 - The red badge and the menu bar `📎 N` show how many sessions need you.
@@ -302,9 +299,11 @@ Click **📎 in the menu bar** and Clippy's settings window opens (right-click f
 the quick menu — sessions, Drive mode, quit). It's the one part of Clippy you sit
 and read, and it has four sections:
 
-- **Buddies** — every character, with each of their animations playing side by
-  side: the calm one, the excited one, and for sprite packs every other row in
-  the sheet. Click one to use it everywhere; pick a size next to it.
+- **Buddies** — every character with all of its animations playing side by
+  side, named (idle, needs you, walking, pointing, asleep, cheering) plus any
+  unclaimed rows of a sprite sheet. Click one to use it everywhere; pick a size
+  next to it. There's a link to [openpets.dev/gallery](https://openpets.dev/gallery)
+  for downloading more.
 - **What Clippy answers** — the switches, each spelling out what it means for
   Claude Code. Turn one off and that moment goes back to the terminal exactly as
   if Clippy weren't running.
@@ -341,9 +340,13 @@ src/renderer/assets/themes/my-cat/
 
 The folder name is the character id, `label` is what the menus show, and each
 strip is stepped frame by frame at `fps`. Frames must sit in one horizontal row,
-all the same size. `excited` is optional — leave it out and the calm animation is
-reused. Restart the app (or reload the bench) and the theme appears under
-**🎨 Buddy & size** and in the menu bar's **Settings ▸ Character**.
+all the same size. Only `idle` is required — anything missing falls back to
+`excited`, then `idle`. Restart the app (or reload the bench) and the theme
+appears in the settings window and in the buddy's own **🎨 Buddy & size** menu.
+
+A pack can name any of the six poses Clippy knows — `idle`, `excited`, `walk`,
+`point`, `sleep`, `cheer` — under a `poses` object, and they're used wherever
+the app needs them (the walk really does play while a buddy crosses a window).
 
 Pixel art is scaled by whole numbers only, so a 32px-wide frame lands exactly on
 the Small/Medium/Large steps (2×/3×/4×). Sheets of other sizes still work, they
@@ -355,19 +358,21 @@ art it draws itself, so the MIT licence here covers everything in the tree. To
 *publish* a theme, publish it as its own repo with its licence attached.
 
 Most desktop-pet packs ship exactly this shape — a `pet.json` next to one big
-sheet — so there's a script for it:
+sheet, as the ones on [openpets.dev/gallery](https://openpets.dev/gallery) do —
+so there's a script for it:
 
 ```bash
-npm run add-sprite-pack -- ~/Downloads/miso            # a folder from the zip
-npm run add-sprite-pack -- ~/Downloads/fox --excited 4:5   # pick another row
+npm run add-sprite-pack -- ~/Downloads/miso     # a folder from the zip
+npm run add-sprite-pack -- ~/Downloads/fox --walk 1:8 --sleep 5:8 --cheer 2:8
 ```
 
 It reads the sheet's size from the image header, works out the frame size from
 `--grid` (default `8x9`), copies the sheet into place and writes the
-`theme.json`. Defaults: `--idle 0:6` (row 0, six frames) and `--excited 3:4`.
-Rows differ between packs, so play a couple and pick the ones that read as
-"calm" and "look at me" — with the pet packs above, row 0 is a sitting idle and
-row 3 is a wave.
+`theme.json`. Defaults: `--idle 0:6` and `--excited 3:4`; the other poses take
+`--walk ROW:FRAMES` and friends. Rows differ between packs — the settings window
+shows every unclaimed row, so you can look through a sheet and come back for the
+good ones. (With the [openpets](https://openpets.dev/gallery) packs: row 0 is a
+sitting idle, row 1 a walk, row 3 a wave, row 5 a sleep.)
 
 **On other people's art.** Check what you're allowed to do with a pack before
 using it, and note that "free to download" is not the same as "free to

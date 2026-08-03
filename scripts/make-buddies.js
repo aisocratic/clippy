@@ -63,6 +63,37 @@ function blob(g, x0, y0, x1, y1, c, r = 1) {
   }
 }
 
+/**
+ * Lean a drawing over: rows near the top slide sideways, the base stays put.
+ * Cheaper than redrawing a whole pose, and it's what sells a walk cycle.
+ */
+function lean(g, px) {
+  if (!px) return g;
+  const out = grid();
+  for (let y = 0; y < H; y++) {
+    const shift = Math.round(px * (1 - y / H));
+    for (let x = 0; x < W; x++) {
+      if (g[y * W + x]) put(out, x + shift, y, g[y * W + x]);
+    }
+  }
+  return out;
+}
+
+/** Sleep marks, drifting up and to the right. `n` grows them frame by frame. */
+function zzz(g, n, colour) {
+  const marks = [
+    [23, 8, 3],
+    [26, 4, 4],
+    [21, 2, 3],
+  ];
+  for (let i = 0; i < Math.min(n, marks.length); i++) {
+    const [x, y, size] = marks[i];
+    rect(g, x, y, x + size - 1, y, colour); // top bar
+    rect(g, x, y + size - 1, x + size - 1, y + size - 1, colour); // bottom bar
+    for (let j = 0; j < size; j++) put(g, x + size - 1 - j, y + j, colour); // diagonal
+  }
+}
+
 /** An upward triangle: an ear. */
 function ear(g, x, y, w, h, c) {
   for (let i = 0; i < h; i++) {
@@ -128,6 +159,10 @@ const TAIL_POSES = [
  * @param {boolean} opts.wide   excited: wide eyes, ears up
  * @param {number} opts.breathe 1 = head settles a pixel lower (breathing)
  * @param {boolean} opts.twitch flick one ear, the way cats do at rest
+ * @param {number} opts.paw     0 = down, 1..2 = a front paw raised, higher each step
+ * @param {boolean} opts.happy  eyes closed and curved up
+ * @param {number} opts.sleeping how many sleep marks are floating (0 = awake)
+ * @param {number} opts.tilt    lean the whole cat sideways
  */
 function drawCat({
   tail = 0,
@@ -136,6 +171,10 @@ function drawCat({
   wide = false,
   breathe = 0,
   twitch = false,
+  paw = 0,
+  happy = false,
+  sleeping = 0,
+  tilt = 0,
 } = {}) {
   const g = grid();
   const dy = BASE_Y - lift;
@@ -157,9 +196,18 @@ function drawCat({
 
   // Front legs, with floor between them so they read as two legs.
   rect(g, 11, 24 + dy, 14, 32 + dy, CREAM);
-  rect(g, 17, 24 + dy, 20, 32 + dy, CREAM);
   put(g, 12, 32 + dy, INK); // toe split
-  put(g, 19, 32 + dy, INK);
+  if (paw) {
+    // One paw up: pointing at something, or waving for attention.
+    const up = 6 + paw * 3;
+    rect(g, 17, 24 + dy - up, 20, 30 + dy - up, CREAM);
+    blob(g, 16, 21 + dy - up, 21, 26 + dy - up, CREAM, 1); // the paw itself
+    put(g, 18, 22 + dy - up, PINK); // toe beans
+    put(g, 19, 22 + dy - up, PINK);
+  } else {
+    rect(g, 17, 24 + dy, 20, 32 + dy, CREAM);
+    put(g, 19, 32 + dy, INK);
+  }
 
   // Ears sit on top of a head that's smaller than the body it sits on.
   const earTop = (wide ? 0 : 1) + hy;
@@ -182,7 +230,14 @@ function drawCat({
   // Eyes: big and round with a fat pupil and a bright glint — cute beats
   // realistic at this size, and a slit pupil just reads as a scowl.
   const eyeTop = 9 + hy;
-  if (blink) {
+  if (happy) {
+    // Eyes closed and curved *up* — content, not asleep.
+    for (const x0 of [9, 17]) {
+      rect(g, x0 + 1, eyeTop + 1, x0 + 4, eyeTop + 1, INK);
+      put(g, x0, eyeTop + 2, INK);
+      put(g, x0 + 5, eyeTop + 2, INK);
+    }
+  } else if (blink) {
     // A happy closed-eye arc rather than a flat line.
     rect(g, 10, eyeTop + 2, 13, eyeTop + 2, INK);
     rect(g, 18, eyeTop + 2, 21, eyeTop + 2, INK);
@@ -215,6 +270,71 @@ function drawCat({
     rect(g, 5, y + hy, 6, y + hy, INK);
     rect(g, W - 7, y + hy, W - 6, y + hy, INK);
   }
+
+  if (sleeping) zzz(g, sleeping, INK);
+  return tilt ? lean(g, tilt) : g;
+}
+
+/**
+ * The same cat from the side, mid-stride: this is the one pose a sitting sprite
+ * can't fake, and it's what plays while the buddy walks across a window.
+ *
+ * @param {number} opts.step  0-3 through the walk cycle
+ * @param {number} opts.bob   1 = the body rises on the passing stride
+ * @param {boolean} opts.blink
+ */
+function drawCatWalk({ step = 0, bob = 0, blink = false } = {}) {
+  const g = grid();
+  const dy = -bob; // the body rises on the passing stride; the feet don't
+
+  // Legs first, so the body covers their tops. Four of them, two pairs out of
+  // phase: front legs lead, back legs answer. Narrow and spaced, or they read
+  // as one block.
+  const reach = [
+    [-2, 2],
+    [0, 0],
+    [2, -2],
+    [0, 0],
+  ][step % 4];
+  const LEGS = [
+    [7, 0],
+    [11, 1],
+    [18, 1],
+    [22, 0],
+  ];
+  for (const [x, phase] of LEGS) {
+    const swing = reach[phase];
+    rect(g, x, 26 + dy, x + 1, 31, FUR); // thigh, hanging from the body
+    rect(g, x + swing, 31, x + 1 + swing, 34, FUR); // shin, swinging
+    rect(g, x + swing - 1, 34, x + 2 + swing, 35, CREAM); // paw
+  }
+
+  blob(g, 5, 15 + dy, 25, 28 + dy, FUR, 4); // barrel body
+  blob(g, 8, 22 + dy, 22, 28 + dy, CREAM, 2); // belly
+  rect(g, 11, 16 + dy, 12, 18 + dy, DARK); // two tabby stripes over the back
+  rect(g, 16, 15 + dy, 17, 18 + dy, DARK);
+
+  // Tail up and curling — a walking cat carries it high.
+  for (const [x, y] of [[24, 20], [26, 17], [27, 13], [26, 10]]) {
+    rect(g, x, y + dy, x + 1, y + 2 + dy, FUR);
+  }
+  rect(g, 26, 9 + dy, 27, 10 + dy, DARK); // dipped tip
+
+  // Head at the front, in profile: one ear, one eye, a nose at the tip.
+  blob(g, 3, 13 + dy, 14, 24 + dy, FUR, 3);
+  ear(g, 5, 8 + dy, 6, 6, FUR);
+  ear(g, 6, 10 + dy, 3, 3, PINK);
+  blob(g, 2, 18 + dy, 8, 23 + dy, CREAM, 1); // muzzle
+  put(g, 2, 20 + dy, PINK); // nose
+
+  if (blink) rect(g, 6, 17 + dy, 9, 17 + dy, INK);
+  else {
+    blob(g, 5, 15 + dy, 10, 19 + dy, EYE, 1);
+    rect(g, 7, 16 + dy, 8, 18 + dy, INK);
+  }
+
+  outline(g);
+  rect(g, 10, 20 + dy, 12, 20 + dy, INK); // a whisker, over the outline
   return g;
 }
 
@@ -250,7 +370,17 @@ const clipPalette = ({ color, dark }) => [
  * @param {number} opts.look   -1, 0 or 1: which way the pupils drift
  * @param {boolean} opts.brows eyebrows up (excited)
  */
-function drawClip({ bob = 0, lift = 0, blink = false, look = 0, brows = false } = {}) {
+function drawClip({
+  bob = 0,
+  lift = 0,
+  blink = false,
+  look = 0,
+  lookDown = 0,
+  brows = false,
+  happy = false,
+  tilt = 0,
+  sleeping = 0,
+} = {}) {
   const g = grid();
   const dy = BASE_Y + bob - lift;
 
@@ -292,15 +422,26 @@ function drawClip({ bob = 0, lift = 0, blink = false, look = 0, brows = false } 
   if (blink) {
     rect(g, 6, eyeTop + 3, 11, eyeTop + 3, CINK);
     rect(g, 20, eyeTop + 3, 25, eyeTop + 3, CINK);
+  } else if (happy) {
+    // Closed and curved up — the difference between asleep and delighted.
+    for (const x0 of [6, 20]) {
+      rect(g, x0 + 1, eyeTop + 2, x0 + 4, eyeTop + 2, CINK);
+      put(g, x0, eyeTop + 3, CINK);
+      put(g, x0 + 5, eyeTop + 3, CINK);
+    }
   } else {
     blob(g, 6, eyeTop, 11, eyeTop + 6, WHITE, 2);
     blob(g, 20, eyeTop, 25, eyeTop + 6, WHITE, 2);
     const px = look; // -1 left, 0 centre, 1 right
-    rect(g, 8 + px, eyeTop + 2, 9 + px, eyeTop + 4, PUPIL);
-    rect(g, 22 + px, eyeTop + 2, 23 + px, eyeTop + 4, PUPIL);
+    const py = lookDown; // 1-2 = looking down at the prompt
+    rect(g, 8 + px, eyeTop + 2 + py, 9 + px, eyeTop + 4 + py, PUPIL);
+    rect(g, 22 + px, eyeTop + 2 + py, 23 + px, eyeTop + 4 + py, PUPIL);
   }
-  return g;
+
+  if (sleeping) zzz(g, sleeping, CINK);
+  return tilt ? lean(g, tilt) : g;
 }
+
 
 /* ---------------- The arcade cast ----------------
  *
@@ -603,20 +744,100 @@ function drawRobot({ lift = 0, lamp = false, armsUp = false, look = 0, blink = f
   return g;
 }
 
-const CLIP_IDLE = [
-  { indices: drawClip({ bob: 0, look: 0 }), delayMs: 420 },
-  { indices: drawClip({ bob: 1, look: 1 }), delayMs: 420 },
-  { indices: drawClip({ bob: 1, blink: true }), delayMs: 120 },
-  { indices: drawClip({ bob: 1, look: -1 }), delayMs: 420 },
-  { indices: drawClip({ bob: 0, look: 0 }), delayMs: 420 },
-];
+/* ---------------- Animations ----------------
+ *
+ * Every character speaks the same six-word vocabulary, so the app can ask for a
+ * pose by name and get one from whoever is on duty — a drawn buddy or a sprite
+ * pack (see POSES in src/characters.js).
+ *
+ *   idle     quiet, nothing to do
+ *   excited  this session wants you
+ *   walk     on the move — played while walking to a prompt
+ *   point    standing at the prompt, pointing at the line
+ *   sleep    nothing has happened in a while
+ *   cheer    a turn finished cleanly
+ */
 
-const CLIP_EXCITED = [
-  { indices: drawClip({ lift: 0, brows: true }), delayMs: 110 },
-  { indices: drawClip({ lift: 3, brows: true, look: 1 }), delayMs: 110 },
-  { indices: drawClip({ lift: 5, brows: true }), delayMs: 140 },
-  { indices: drawClip({ lift: 2, brows: true, look: -1 }), delayMs: 110 },
-];
+const CLIP_POSES = {
+  idle: [
+    { indices: drawClip({ bob: 0, look: 0 }), delayMs: 420 },
+    { indices: drawClip({ bob: 1, look: 1 }), delayMs: 420 },
+    { indices: drawClip({ bob: 1, blink: true }), delayMs: 120 },
+    { indices: drawClip({ bob: 1, look: -1 }), delayMs: 420 },
+    { indices: drawClip({ bob: 0, look: 0 }), delayMs: 420 },
+  ],
+  excited: [
+    { indices: drawClip({ lift: 0, brows: true }), delayMs: 110 },
+    { indices: drawClip({ lift: 3, brows: true, look: 1 }), delayMs: 110 },
+    { indices: drawClip({ lift: 5, brows: true }), delayMs: 140 },
+    { indices: drawClip({ lift: 2, brows: true, look: -1 }), delayMs: 110 },
+  ],
+  // A clip has no legs, so it walks the way a clip would: leaning into each
+  // step and rocking over its own base.
+  walk: [
+    { indices: drawClip({ bob: 0, tilt: -2, look: -1 }), delayMs: 150 },
+    { indices: drawClip({ lift: 2, tilt: 0, look: -1 }), delayMs: 150 },
+    { indices: drawClip({ bob: 0, tilt: 2, look: -1 }), delayMs: 150 },
+    { indices: drawClip({ lift: 2, tilt: 0, look: -1 }), delayMs: 150 },
+  ],
+  // Leaning over the line it wants you to type on, eyes down.
+  point: [
+    { indices: drawClip({ tilt: -2, lookDown: 2, look: -1, brows: true }), delayMs: 260 },
+    { indices: drawClip({ tilt: -3, lookDown: 2, look: -1, brows: true, lift: 1 }), delayMs: 260 },
+  ],
+  sleep: [
+    { indices: drawClip({ bob: 0, blink: true, sleeping: 1 }), delayMs: 620 },
+    { indices: drawClip({ bob: 1, blink: true, sleeping: 2 }), delayMs: 620 },
+    { indices: drawClip({ bob: 1, blink: true, sleeping: 3 }), delayMs: 620 },
+  ],
+  cheer: [
+    { indices: drawClip({ lift: 0, happy: true, brows: true }), delayMs: 130 },
+    { indices: drawClip({ lift: 4, happy: true, brows: true, tilt: -2 }), delayMs: 130 },
+    { indices: drawClip({ lift: 6, happy: true, brows: true }), delayMs: 160 },
+    { indices: drawClip({ lift: 4, happy: true, brows: true, tilt: 2 }), delayMs: 130 },
+  ],
+};
+
+const CAT_POSES = {
+  // Breathing throughout, the tail swishing over it, with a blink and an ear
+  // flick dropped in so he never looks like a still image.
+  idle: [
+    { indices: drawCat({ tail: 0, breathe: 0 }), delayMs: 500 },
+    { indices: drawCat({ tail: 1, breathe: 1 }), delayMs: 500 },
+    { indices: drawCat({ tail: 2, breathe: 0, blink: true }), delayMs: 130 },
+    { indices: drawCat({ tail: 2, breathe: 0 }), delayMs: 380 },
+    { indices: drawCat({ tail: 1, breathe: 1 }), delayMs: 500 },
+    { indices: drawCat({ tail: 0, breathe: 0, twitch: true }), delayMs: 200 },
+  ],
+  // A proper hop — squash, up, hang, land — tail up and eyes wide.
+  excited: [
+    { indices: drawCat({ tail: 3, lift: 0, wide: true, breathe: 1 }), delayMs: 110 },
+    { indices: drawCat({ tail: 3, lift: 3, wide: true }), delayMs: 110 },
+    { indices: drawCat({ tail: 3, lift: 5, wide: true }), delayMs: 140 },
+    { indices: drawCat({ tail: 3, lift: 2, wide: true }), delayMs: 110 },
+  ],
+  walk: [
+    { indices: drawCatWalk({ step: 0, bob: 0 }), delayMs: 160 },
+    { indices: drawCatWalk({ step: 1, bob: 1 }), delayMs: 160 },
+    { indices: drawCatWalk({ step: 2, bob: 0 }), delayMs: 160 },
+    { indices: drawCatWalk({ step: 3, bob: 1, blink: true }), delayMs: 160 },
+  ],
+  point: [
+    { indices: drawCat({ tail: 3, paw: 1, wide: true }), delayMs: 240 },
+    { indices: drawCat({ tail: 3, paw: 2, wide: true }), delayMs: 240 },
+  ],
+  sleep: [
+    { indices: drawCat({ tail: 0, breathe: 1, happy: true, sleeping: 1 }), delayMs: 620 },
+    { indices: drawCat({ tail: 0, breathe: 0, happy: true, sleeping: 2 }), delayMs: 620 },
+    { indices: drawCat({ tail: 1, breathe: 1, happy: true, sleeping: 3 }), delayMs: 620 },
+  ],
+  cheer: [
+    { indices: drawCat({ tail: 3, lift: 0, happy: true, paw: 1 }), delayMs: 130 },
+    { indices: drawCat({ tail: 3, lift: 4, happy: true, paw: 2, tilt: -2 }), delayMs: 130 },
+    { indices: drawCat({ tail: 3, lift: 6, happy: true, paw: 2 }), delayMs: 160 },
+    { indices: drawCat({ tail: 3, lift: 3, happy: true, paw: 1, tilt: 2 }), delayMs: 130 },
+  ],
+};
 
 function toAscii(g) {
   const rows = [];
@@ -628,111 +849,31 @@ function toAscii(g) {
   return rows.join('\n');
 }
 
-// Idle: breathing throughout, the tail swishing over it, with a blink and an
-// ear flick dropped in so he never looks like a still image.
-const IDLE = [
-  { indices: drawCat({ tail: 0, breathe: 0 }), delayMs: 500 },
-  { indices: drawCat({ tail: 1, breathe: 1 }), delayMs: 500 },
-  { indices: drawCat({ tail: 2, breathe: 0, blink: true }), delayMs: 130 },
-  { indices: drawCat({ tail: 2, breathe: 0 }), delayMs: 380 },
-  { indices: drawCat({ tail: 1, breathe: 1 }), delayMs: 500 },
-  { indices: drawCat({ tail: 0, breathe: 0, twitch: true }), delayMs: 200 },
-];
-
-// Excited: a proper hop — squash, up, hang, land — tail up and eyes wide.
-const EXCITED = [
-  { indices: drawCat({ tail: 3, lift: 0, wide: true, breathe: 1 }), delayMs: 110 },
-  { indices: drawCat({ tail: 3, lift: 3, wide: true }), delayMs: 110 },
-  { indices: drawCat({ tail: 3, lift: 5, wide: true }), delayMs: 140 },
-  { indices: drawCat({ tail: 3, lift: 2, wide: true }), delayMs: 110 },
-];
-
-/* ---------------- Animations ---------------- */
-
-// Idle animations breathe and fidget; excited ones are a four-frame hop, so
-// every character switches moods with the same rhythm.
-const FIGHTER_IDLE = [
-  { indices: drawFighter({ breathe: 0, tails: 0 }), delayMs: 420 },
-  { indices: drawFighter({ breathe: 1, tails: 1 }), delayMs: 420 },
-  { indices: drawFighter({ breathe: 1, tails: 0, blink: true }), delayMs: 130 },
-  { indices: drawFighter({ breathe: 0, tails: 1 }), delayMs: 420 },
-];
-
-const FIGHTER_EXCITED = [
-  { indices: drawFighter({ lift: 0, tails: 1 }), delayMs: 110 },
-  { indices: drawFighter({ lift: 3, punch: true, tails: 0 }), delayMs: 130 },
-  { indices: drawFighter({ lift: 5, punch: true, tails: 1 }), delayMs: 140 },
-  { indices: drawFighter({ lift: 1, tails: 0 }), delayMs: 110 },
-];
-
-const DINO_IDLE = [
-  { indices: drawDino({ bubble: 0, breathe: 0 }), delayMs: 400 },
-  { indices: drawDino({ bubble: 1, breathe: 1 }), delayMs: 380 },
-  { indices: drawDino({ bubble: 2, breathe: 0 }), delayMs: 380 },
-  { indices: drawDino({ bubble: 3, breathe: 1, blink: true }), delayMs: 200 },
-  { indices: drawDino({ bubble: 0, breathe: 0 }), delayMs: 420 },
-];
-
-const DINO_EXCITED = [
-  { indices: drawDino({ lift: 0, wide: true, bubble: 1 }), delayMs: 110 },
-  { indices: drawDino({ lift: 3, wide: true, bubble: 2 }), delayMs: 110 },
-  { indices: drawDino({ lift: 5, wide: true, bubble: 3 }), delayMs: 140 },
-  { indices: drawDino({ lift: 2, wide: true, bubble: 0 }), delayMs: 110 },
-];
-
-const GHOST_IDLE = [
-  { indices: drawGhost({ wave: 0, look: 0, drift: 0 }), delayMs: 380 },
-  { indices: drawGhost({ wave: 1, look: 1, drift: 1 }), delayMs: 380 },
-  { indices: drawGhost({ wave: 0, look: 1, blink: true, drift: 1 }), delayMs: 130 },
-  { indices: drawGhost({ wave: 1, look: -1, drift: 0 }), delayMs: 380 },
-];
-
-const GHOST_EXCITED = [
-  { indices: drawGhost({ wave: 0, drift: 0, wide: true }), delayMs: 110 },
-  { indices: drawGhost({ wave: 1, drift: 3, wide: true, look: 1 }), delayMs: 110 },
-  { indices: drawGhost({ wave: 0, drift: 5, wide: true }), delayMs: 140 },
-  { indices: drawGhost({ wave: 1, drift: 2, wide: true, look: -1 }), delayMs: 110 },
-];
-
-const ROBOT_IDLE = [
-  { indices: drawRobot({ look: 0 }), delayMs: 420 },
-  { indices: drawRobot({ look: 1 }), delayMs: 420 },
-  { indices: drawRobot({ look: 0, blink: true }), delayMs: 120 },
-  { indices: drawRobot({ look: -1 }), delayMs: 420 },
-];
-
-const ROBOT_EXCITED = [
-  { indices: drawRobot({ lift: 0, lamp: true, armsUp: true }), delayMs: 110 },
-  { indices: drawRobot({ lift: 3, lamp: true, armsUp: true, look: 1 }), delayMs: 110 },
-  { indices: drawRobot({ lift: 5, lamp: false, armsUp: true }), delayMs: 140 },
-  { indices: drawRobot({ lift: 2, lamp: true, armsUp: true, look: -1 }), delayMs: 110 },
-];
-
 const gif = (palette, frames) =>
   encodeGif({ width: W, height: H, palette, frames, transparentIndex: 0 });
 
-// One folder per character — `themes/<id>/idle.gif` and `excited.gif` — which
+// One folder per character, one GIF per pose — `themes/<id>/<pose>.gif`, which
 // is exactly what the renderer asks for (see buddyArt in clippy.js).
 const THEMES = [
-  { id: 'cat', palette: PALETTE, idle: IDLE, excited: EXCITED },
-  { id: 'fighter', palette: FIGHTER_PALETTE, idle: FIGHTER_IDLE, excited: FIGHTER_EXCITED },
-  { id: 'dino', palette: DINO_PALETTE, idle: DINO_IDLE, excited: DINO_EXCITED },
-  { id: 'ghost', palette: GHOST_PALETTE, idle: GHOST_IDLE, excited: GHOST_EXCITED },
-  { id: 'robot', palette: ROBOT_PALETTE, idle: ROBOT_IDLE, excited: ROBOT_EXCITED },
+  { id: 'cat', palette: PALETTE, poses: CAT_POSES },
+  { id: 'clip', poses: CLIP_POSES, perColour: true },
 ];
 
 function build() {
   const assets = {};
   for (const theme of THEMES) {
-    assets[`themes/${theme.id}/idle.gif`] = gif(theme.palette, theme.idle);
-    assets[`themes/${theme.id}/excited.gif`] = gif(theme.palette, theme.excited);
-  }
-  // The paperclip is the one character built per identity colour: a GIF can't
-  // be recoloured by CSS the way the old SVG could, so the palette is baked in.
-  for (const identity of IDENTITY_COLOURS) {
-    const slug = identity.color.replace('#', '');
-    assets[`themes/clip/${slug}-idle.gif`] = gif(clipPalette(identity), CLIP_IDLE);
-    assets[`themes/clip/${slug}-excited.gif`] = gif(clipPalette(identity), CLIP_EXCITED);
+    for (const [pose, frames] of Object.entries(theme.poses)) {
+      if (!theme.perColour) {
+        assets[`themes/${theme.id}/${pose}.gif`] = gif(theme.palette, frames);
+        continue;
+      }
+      // Clippy himself is built per identity colour: a GIF can't be recoloured
+      // by CSS the way the old SVG could, so the palette is baked in.
+      for (const identity of IDENTITY_COLOURS) {
+        const slug = identity.color.replace('#', '');
+        assets[`themes/${theme.id}/${slug}-${pose}.gif`] = gif(clipPalette(identity), frames);
+      }
+    }
   }
   return assets;
 }
@@ -744,16 +885,18 @@ function main() {
   if (process.argv.includes('--if-missing') && fs.existsSync(path.join(dir, 'themes'))) return;
 
   if (process.argv.includes('--preview')) {
-    console.log(`clip, idle\n${toAscii(CLIP_IDLE[0].indices)}\n`);
+    const only = process.argv[process.argv.indexOf('--preview') + 1];
     for (const theme of THEMES) {
-      console.log(`${theme.id}, idle\n${toAscii(theme.idle[0].indices)}\n`);
-      console.log(`${theme.id}, excited\n${toAscii(theme.excited[2].indices)}\n`);
+      for (const [pose, frames] of Object.entries(theme.poses)) {
+        if (only && !only.startsWith('--') && `${theme.id}:${pose}` !== only) continue;
+        console.log(`${theme.id}, ${pose}\n${toAscii(frames[Math.min(1, frames.length - 1)].indices)}\n`);
+      }
     }
   }
   // Clear out what *this script* generated, so a renamed character doesn't
   // leave its old GIFs behind forever — but never touch a sprite-sheet theme
   // someone dropped in next to them.
-  for (const theme of [...THEMES.map((t) => t.id), 'clip']) {
+  for (const theme of THEMES.map((t) => t.id)) {
     fs.rmSync(path.join(dir, 'themes', theme), { recursive: true, force: true });
   }
   for (const stale of fs.existsSync(dir) ? fs.readdirSync(dir) : []) {
@@ -769,18 +912,4 @@ function main() {
 
 if (require.main === module) main();
 
-module.exports = {
-  drawCat,
-  drawClip,
-  drawFighter,
-  drawDino,
-  drawGhost,
-  drawRobot,
-  toAscii,
-  build,
-  THEMES,
-  PALETTE,
-  clipPalette,
-  W,
-  H,
-};
+module.exports = { drawCat, drawCatWalk, drawClip, toAscii, build, THEMES, PALETTE, clipPalette, W, H };

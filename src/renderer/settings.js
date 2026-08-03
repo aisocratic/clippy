@@ -84,35 +84,47 @@ function poseArt(character, pose, height = 64) {
   return el;
 }
 
+// What each pose is for, in the order they're worth looking at.
+const POSE_LABEL = {
+  idle: 'idle',
+  excited: 'needs you',
+  walk: 'walking',
+  point: 'pointing',
+  sleep: 'asleep',
+  cheer: 'cheering',
+};
+
 /**
- * Every animation a character has. The drawn ones have exactly two moods; a
- * sprite pack usually ships more rows than Clippy uses, so the extras are shown
- * too — they're there, and picking better ones is a `theme.json` edit away.
+ * Every animation a character has: the named poses first, then — for a sprite
+ * pack — any rows of the sheet nobody has claimed yet, so you can see what else
+ * is in there and name it in `theme.json`.
  */
 function posesOf(character) {
   if (!character.sheet) {
-    // The paperclip is drawn per session colour; show it in the colour of the
-    // first session that has reported in, or the default steel.
+    // Clippy is drawn per session colour; show him in the colour of the first
+    // session that has reported in, or the default steel.
     const colour = ((state.sessions[0] || {}).color || '#9aa3ad').replace('#', '');
-    const art = (mood) =>
+    const art = (pose) =>
       character.id === 'clip'
-        ? `assets/themes/clip/${colour}-${mood}.gif`
-        : `assets/themes/${character.id}/${mood}.gif`;
-    return [
-      { label: 'calm', file: art('idle'), mood: true },
-      { label: 'excited', file: art('excited'), mood: true },
-    ];
+        ? `assets/themes/clip/${colour}-${pose}.gif`
+        : `assets/themes/${character.id}/${pose}.gif`;
+    return (character.poses || ['idle', 'excited']).map((pose) => ({
+      label: POSE_LABEL[pose] || pose,
+      file: art(pose),
+      named: true,
+    }));
   }
 
-  const { idle, excited, rows } = character.sheet;
-  const poses = [
-    { ...idle, label: 'calm', mood: true },
-    { ...excited, label: 'excited', mood: true },
-  ];
-  const used = new Set([idle.row, excited.row]);
+  const { poses: named, rows } = character.sheet;
+  const poses = [];
+  const claimed = new Set();
+  for (const [name, pose] of Object.entries(named)) {
+    poses.push({ ...pose, label: POSE_LABEL[name] || name, named: true });
+    claimed.add(pose.row);
+  }
   for (let row = 0; row < rows; row++) {
-    if (used.has(row)) continue;
-    poses.push({ ...idle, row, label: `row ${row}` });
+    if (claimed.has(row)) continue;
+    poses.push({ ...named.idle, row, label: `row ${row}` });
   }
   return poses;
 }
@@ -145,7 +157,7 @@ function renderCast() {
     poses.className = 'poses';
     for (const pose of posesOf(character)) {
       const cell = document.createElement('div');
-      cell.className = `pose${pose.mood ? ' mood' : ''}`;
+      cell.className = `pose${pose.named ? ' mood' : ''}`;
       const art = document.createElement('div');
       art.className = 'pose-art';
       art.appendChild(poseArt(character, pose));
@@ -333,6 +345,14 @@ function render() {
   const text = document.getElementById('server-text');
   text.textContent = state.port ? `listening on 127.0.0.1:${state.port}` : 'hook server';
   text.title = 'Where the Claude Code hooks report in';
+}
+
+// Anything linked out of here opens in the browser, not in this window.
+for (const link of document.querySelectorAll('a[href^="https://"]')) {
+  link.addEventListener('click', (e) => {
+    e.preventDefault();
+    window.clippySettings.openExternal(link.href);
+  });
 }
 
 window.clippySettings.onState((next) => {

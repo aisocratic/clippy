@@ -4,6 +4,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const { encodeGif } = require('../src/gif');
 const { build, drawCat, drawClip, THEMES, W, H } = require('../scripts/make-buddies');
+const { POSES } = require('../src/characters');
 
 /* ---------- A just-enough GIF reader, so the encoder is checked by a decoder ---------- */
 
@@ -160,19 +161,26 @@ test('long runs and repeated patterns survive the LZW round-trip', () => {
 test('every buddy asset is a looping, transparent, multi-frame GIF', () => {
   const assets = build();
 
-  // Every character has a calm and an excited animation, in its own folder…
+  // Every character speaks the whole pose vocabulary…
   for (const theme of THEMES) {
-    assert.ok(assets[`themes/${theme.id}/idle.gif`], `${theme.id} needs an idle animation`);
-    assert.ok(assets[`themes/${theme.id}/excited.gif`], `${theme.id} needs an excited one`);
+    for (const pose of POSES) {
+      assert.ok(theme.poses[pose], `${theme.id} is missing the ${pose} animation`);
+      if (!theme.perColour) {
+        assert.ok(assets[`themes/${theme.id}/${pose}.gif`], `${theme.id}/${pose}.gif`);
+      }
+    }
   }
-  // …and the paperclip has a pair per identity colour on top of that.
-  assert.equal(Object.keys(assets).filter((n) => n.startsWith('themes/clip/')).length, 16);
+  // …and Clippy is built once per identity colour, for each of them.
+  assert.equal(
+    Object.keys(assets).filter((n) => n.startsWith('themes/clip/')).length,
+    8 * POSES.length
+  );
 
   for (const [name, bytes] of Object.entries(assets)) {
     const gif = decodeGif(bytes);
     assert.deepEqual([gif.width, gif.height], [W, H], name);
     assert.equal(gif.loops, 0, name);
-    assert.ok(gif.frames.length >= 4, `${name} should animate`);
+    assert.ok(gif.frames.length >= 2, `${name} should animate, not sit still`);
     for (const frame of gif.frames) {
       assert.equal(frame.transparentIndex, 0, `${name} keeps its background clear`);
       assert.equal(frame.indices.length, W * H, name);
@@ -186,9 +194,9 @@ test('no character is drawn off the edge of its canvas', () => {
   const rowUsed = (indices, y) => indices.slice(y * W, (y + 1) * W).some((c) => c !== 0);
 
   for (const theme of THEMES) {
-    for (const [mood, frames] of [['idle', theme.idle], ['excited', theme.excited]]) {
+    for (const [pose, frames] of Object.entries(theme.poses)) {
       for (const [i, frame] of frames.entries()) {
-        const where = `${theme.id} ${mood} frame ${i}`;
+        const where = `${theme.id} ${pose} frame ${i}`;
         // The bottom row is the one that matters: the canvas has headroom at
         // the top on purpose (the cat's ears reach row 0 mid-hop), but anything
         // reaching the last row has already had its feet sliced off.
