@@ -23,6 +23,7 @@ const { DriveSession } = require('./sdk-session');
 const { checkDrift } = require('../bin/clippy-hooks');
 const { identityFor } = require('./identity');
 const { SIZES, sizeList, allCharacters } = require('./characters');
+const { ACTIONS } = require('./actions');
 const { windowActionFor } = require('./visibility');
 const {
   terminalFromHeaders,
@@ -111,7 +112,7 @@ function setSetting(key, value) {
   } catch (err) {
     console.error('clippy: could not save settings', err);
   }
-  tray?.setContextMenu(trayMenu());
+  pushSettingsState();
   sendSettings();
   // A different buddy size is a different window; the renderer will also ask
   // for a new height once it has re-measured, but this keeps the bare buddy
@@ -142,6 +143,67 @@ function compactSize() {
 function replaceAll() {
   for (const buddy of buddies.values()) {
     if (!buddy.win.isDestroyed()) placeBuddy(buddy, buddy.mode || 'compact');
+  }
+}
+
+/* ---------------- Settings window ---------------- */
+
+let settingsWin = null;
+
+/**
+ * The window behind the 📎 in the menu bar: who the buddies are, what they're
+ * allowed to answer, and what they do with a session. A normal window — this is
+ * the one part of Clippy you sit and read.
+ */
+function openSettingsWindow() {
+  if (settingsWin && !settingsWin.isDestroyed()) {
+    settingsWin.show();
+    settingsWin.focus();
+    return settingsWin;
+  }
+
+  settingsWin = new BrowserWindow({
+    width: 940,
+    height: 700,
+    minWidth: 720,
+    minHeight: 480,
+    title: 'Clippy',
+    titleBarStyle: 'hiddenInset', // the rail is the title bar
+    backgroundColor: '#101217',
+    show: false,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload-settings.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+
+  settingsWin.loadFile(path.join(__dirname, 'renderer', 'settings.html'));
+  settingsWin.once('ready-to-show', () => settingsWin.show());
+  settingsWin.on('closed', () => {
+    settingsWin = null;
+  });
+  return settingsWin;
+}
+
+/** Everything the settings window draws itself from. */
+function settingsState() {
+  return {
+    ...settingsPayload(),
+    actions: ACTIONS,
+    port: PORT,
+    sessions: tracker.list().map((s) => ({
+      sessionId: s.sessionId,
+      name: s.name,
+      color: identityFor(s.sessionId, s.name).color,
+      status: s.status,
+    })),
+  };
+}
+
+function pushSettingsState() {
+  if (settingsWin && !settingsWin.isDestroyed()) {
+    settingsWin.webContents.send('clippy-settings-state', settingsState());
   }
 }
 
@@ -235,7 +297,7 @@ function buddyFor(key, name = '') {
 
   const buddy = { win, slot, name: identity.name, sessionId: key, pinned: false, dock: null };
   buddies.set(key, buddy);
-  tray?.setContextMenu(trayMenu());
+  pushSettingsState();
   return buddy;
 }
 
@@ -259,7 +321,7 @@ function closeBuddy(key) {
   if (buddy.dock) clearInterval(buddy.dock.timer);
   buddies.delete(key);
   if (!buddy.win.isDestroyed()) buddy.win.destroy();
-  tray?.setContextMenu(trayMenu());
+  pushSettingsState();
 }
 
 /**
@@ -700,6 +762,8 @@ function trayMenu() {
   }));
 
   return Menu.buildFromTemplate([
+    { label: 'Settings…', click: () => openSettingsWindow() },
+    { type: 'separator' },
     {
       label: buddies.size ? `Show all (${buddies.size})` : 'No sessions yet',
       enabled: buddies.size > 0,
@@ -720,8 +784,8 @@ function trayMenu() {
       ? { label: `Stop Clippy-driven session (${drive.name})`, click: stopDriveSession }
       : { label: 'New Clippy-driven session…', click: startDriveSession },
     { type: 'separator' },
-    // Everything that applies to every buddy, in one place.
-    { label: 'Settings', submenu: globalSettingsMenu() },
+    // The quick switches stay a click away; the window has the rest.
+    { label: 'Quick settings', submenu: globalSettingsMenu() },
     { type: 'separator' },
     ...(hookDrift
       ? [
@@ -794,8 +858,12 @@ function createTray() {
   // without shipping icon assets.
   tray = new Tray(nativeImage.createEmpty());
   tray.setTitle('📎');
-  tray.setToolTip('Clippy for Claude Code');
-  tray.setContextMenu(trayMenu());
+  tray.setToolTip('Clippy for Claude Code — click for settings');
+  // Click opens the settings window; right-click (or ctrl-click) drops the
+  // menu. The menu is *not* attached with setContextMenu, because on macOS that
+  // makes the icon swallow left-clicks and we'd never see one.
+  tray.on('click', () => openSettingsWindow());
+  tray.on('right-click', () => tray.popUpContextMenu(trayMenu()));
 }
 
 function updateTray() {
@@ -828,7 +896,7 @@ async function startDriveSession() {
     id: DRIVE_KEY,
     send: (event) => sendTo(DRIVE_KEY, { ...event, name: event.name || drive?.name }),
   });
-  tray?.setContextMenu(trayMenu());
+  pushSettingsState();
   sendTo(DRIVE_KEY, { kind: 'drive-open', name: drive.name, cwd: drive.cwd });
   // A Clippy-driven session *is* the UI, so it stays up until the user hides it.
   showBuddy(DRIVE_KEY, { pin: true });
@@ -850,7 +918,7 @@ function stopDriveSession() {
   if (!drive) return;
   drive.stop();
   drive = null;
-  tray?.setContextMenu(trayMenu());
+  pushSettingsState();
   sendTo(DRIVE_KEY, { kind: 'drive-close' });
   hideBuddy(DRIVE_KEY, { unpin: true });
 }
@@ -1212,6 +1280,15 @@ app.whenReady().then(async () => {
   ipcMain.on('clippy-open-window', (e, opts) => {
     const buddy = buddyForSender(e.sender);
     if (buddy) openSessionWindow(buddy.sessionId, { point: Boolean(opts && opts.point) });
+  });
+  ipcMain.on('clippy-settings-ready', (e) => {
+    // The window is up and asking for its first paint of the world.
+    if (settingsWin && !settingsWin.isDestroyed()) {
+      e.sender.send('clippy-settings-state', settingsState());
+    }
+  });
+  ipcMain.on('clippy-settings-show', (_e, sessionId) => {
+    if (sessionId) showBuddy(String(sessionId), { pin: true });
   });
   ipcMain.on('clippy-point', (e) => {
     // "You have to answer this in the terminal" — walk over and show them where.

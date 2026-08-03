@@ -30,6 +30,7 @@ const path = require('node:path');
 const { describeToolCall, activityLabel, toHookResponse } = require('../src/decisions');
 const { PALETTE } = require('../src/identity');
 const { allCharacters, sizeList } = require('../src/characters');
+const { ACTIONS } = require('../src/actions');
 
 const args = process.argv.slice(2);
 const argv = (flag, fallback) => {
@@ -672,24 +673,20 @@ function sendJson(res, data, code = 200) {
 }
 
 /**
- * The renderer's own index.html, with the preload bridge swapped for the demo
- * stub. Serving it rather than copying it is the whole point: what you click in
- * the browser is the same markup Electron loads.
+ * A real page from `src/renderer/`, with its Electron bridge swapped for the
+ * matching browser stub. Serving it rather than copying it is the whole point:
+ * what you click in the browser is the same markup Electron loads.
  */
-function serveRendererIndex(res) {
-  fs.readFile(path.join(RENDERER_DIR, 'index.html'), 'utf8', (err, html) => {
+function servePage(res, page, script, stub) {
+  fs.readFile(path.join(RENDERER_DIR, page), 'utf8', (err, html) => {
     if (err) {
       res.writeHead(500, { 'Content-Type': 'text/plain' });
-      res.end('cannot read renderer index.html');
+      res.end(`cannot read ${page}`);
       return;
     }
-    const patched = html.replace(
-      '<script src="clippy.js"></script>',
-      '<script src="stub-api.js"></script>\n  <script src="clippy.js"></script>'
-    );
-    if (patched === html) {
-      console.warn('⚠ could not find the clippy.js script tag — did index.html change?');
-    }
+    const tag = `<script src="${script}"></script>`;
+    const patched = html.replace(tag, `<script src="${stub}"></script>\n  ${tag}`);
+    if (patched === html) console.warn(`⚠ no ${script} script tag in ${page} — did it change?`);
     res.writeHead(200, { 'Content-Type': MIME['.html'], 'Cache-Control': 'no-store' });
     res.end(patched);
   });
@@ -742,11 +739,46 @@ const server = http.createServer(async (req, res) => {
     });
   }
 
+  // The settings window, with its own bridge stubbed the same way.
+  if (pathname === '/api/settings-state') {
+    return sendJson(res, {
+      approvals: true,
+      reviewOnStop: true,
+      answerQuestions: true,
+      autoPerch: true,
+      character: 'clip',
+      size: 'medium',
+      characters: allCharacters(),
+      sizes: sizeList(),
+      actions: ACTIONS,
+      port: 43117,
+      sessions: [
+        { sessionId: 'demo-1', name: NAME, color: '#4fa3d1', status: 'working' },
+        { sessionId: 'demo-2', name: 'clippy', color: '#6cbf6c', status: 'waiting' },
+      ],
+    });
+  }
+  if (pathname === '/settings') {
+    // Without the trailing slash the page's own assets resolve against /.
+    res.writeHead(302, { Location: '/settings/' });
+    return res.end();
+  }
+  if (pathname === '/settings/') {
+    return servePage(res, 'settings.html', 'settings.js', 'settings-stub.js');
+  }
+  if (pathname === '/settings/settings-stub.js') {
+    return sendFile(res, path.join(DEMO_DIR, 'settings-stub.js'));
+  }
+  if (pathname.startsWith('/settings/')) {
+    const file = safeJoin(RENDERER_DIR, pathname.slice('/settings/'.length));
+    return file ? sendFile(res, file) : sendJson(res, { error: 'bad path' }, 400);
+  }
+
   if (pathname === '/renderer' ) {
     res.writeHead(302, { Location: '/renderer/' });
     return res.end();
   }
-  if (pathname === '/renderer/') return serveRendererIndex(res);
+  if (pathname === '/renderer/') return servePage(res, 'index.html', 'clippy.js', 'stub-api.js');
 
   if (pathname === '/renderer/stub-api.js') {
     return sendFile(res, path.join(DEMO_DIR, 'stub-api.js'));

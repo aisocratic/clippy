@@ -1,0 +1,360 @@
+'use strict';
+
+/**
+ * Clippy's settings window.
+ *
+ * Everything on the page is built from what main sends: the cast (with each
+ * character's animations playing live), the switches that decide what Clippy
+ * answers, the catalogue of what it does with a session, and the sessions
+ * currently reporting in. Nothing here has its own copy of that knowledge.
+ */
+
+const SWITCHES = [
+  {
+    key: 'approvals',
+    title: 'Permission requests',
+    desc: 'Answer <b>Allow / Deny</b> from Clippy when Claude Code would show a permission prompt.',
+  },
+  {
+    key: 'answerQuestions',
+    title: 'Questions',
+    desc: "Turn Claude's multiple-choice questions into buttons, and feed your pick straight back.",
+  },
+  {
+    key: 'reviewOnStop',
+    title: 'Review when Claude finishes',
+    desc: 'Offer a short review box before a turn ends — typed feedback sends Claude back to work.',
+  },
+  {
+    key: 'autoPerch',
+    title: "Perch on the session's window",
+    desc: 'Appear on the terminal a session runs in, follow it around, and point at its prompt ' +
+      'when something needs answering there.',
+  },
+];
+
+const SIZE_LABEL = { small: 'Small', medium: 'Medium', large: 'Large' };
+const STATUS_TEXT = {
+  idle: 'idle',
+  working: 'working…',
+  waiting: 'finished — your turn',
+  needs_permission: 'needs your permission',
+};
+
+// One flat object, exactly as main sends it: the settings themselves plus the
+// rosters and catalogue the page is drawn from.
+let state = { characters: [], sizes: [], actions: [], sessions: [] };
+const sheetTimers = [];
+
+/* ---------- Buddies ---------- */
+
+/**
+ * Draw one animation. Generated characters are GIFs that animate themselves;
+ * sprite-sheet packs are stepped here, one frame at a time.
+ */
+function poseArt(character, pose, height = 64) {
+  if (!character.sheet) {
+    const img = document.createElement('img');
+    img.src = pose.file;
+    img.alt = '';
+    img.style.height = `${height}px`;
+    return img;
+  }
+
+  const { frameWidth, frameHeight, columns, rows, fps } = character.sheet;
+  const scale = height / frameHeight;
+  const w = Math.round(frameWidth * scale);
+  const h = Math.round(frameHeight * scale);
+
+  const el = document.createElement('div');
+  el.className = 'sheet';
+  el.style.width = `${w}px`;
+  el.style.height = `${h}px`;
+  el.style.backgroundImage = `url("${pose.file}")`;
+  el.style.backgroundSize = `${w * columns}px ${h * rows}px`;
+  el.style.backgroundRepeat = 'no-repeat';
+
+  let frame = 0;
+  const step = () => {
+    el.style.backgroundPosition = `-${frame * w}px -${(pose.row || 0) * h}px`;
+    frame = (frame + 1) % pose.frames;
+  };
+  step();
+  if (pose.frames > 1) sheetTimers.push(setInterval(step, Math.round(1000 / (fps || 6))));
+  return el;
+}
+
+/**
+ * Every animation a character has. The drawn ones have exactly two moods; a
+ * sprite pack usually ships more rows than Clippy uses, so the extras are shown
+ * too — they're there, and picking better ones is a `theme.json` edit away.
+ */
+function posesOf(character) {
+  if (!character.sheet) {
+    // The paperclip is drawn per session colour; show it in the colour of the
+    // first session that has reported in, or the default steel.
+    const colour = ((state.sessions[0] || {}).color || '#9aa3ad').replace('#', '');
+    const art = (mood) =>
+      character.id === 'clip'
+        ? `assets/themes/clip/${colour}-${mood}.gif`
+        : `assets/themes/${character.id}/${mood}.gif`;
+    return [
+      { label: 'calm', file: art('idle'), mood: true },
+      { label: 'excited', file: art('excited'), mood: true },
+    ];
+  }
+
+  const { idle, excited, rows } = character.sheet;
+  const poses = [
+    { ...idle, label: 'calm', mood: true },
+    { ...excited, label: 'excited', mood: true },
+  ];
+  const used = new Set([idle.row, excited.row]);
+  for (let row = 0; row < rows; row++) {
+    if (used.has(row)) continue;
+    poses.push({ ...idle, row, label: `row ${row}` });
+  }
+  return poses;
+}
+
+function renderCast() {
+  const host = document.getElementById('cast');
+  host.replaceChildren();
+
+  for (const character of state.characters) {
+    const card = document.createElement('div');
+    card.className = `buddy-card${character.id === state.character ? ' on' : ''}`;
+    card.title = `Use ${character.label}`;
+
+    const pick = document.createElement('span');
+    pick.className = 'pick';
+
+    const name = document.createElement('div');
+    name.className = 'buddy-name';
+    name.textContent = character.label;
+
+    const origin = document.createElement('div');
+    origin.className = 'buddy-origin';
+    origin.textContent = character.sheet
+      ? `sprite pack · ${character.sheet.frameWidth}×${character.sheet.frameHeight} frames`
+      : character.id === 'clip'
+      ? 'drawn in code · one per session colour'
+      : 'drawn in code';
+
+    const poses = document.createElement('div');
+    poses.className = 'poses';
+    for (const pose of posesOf(character)) {
+      const cell = document.createElement('div');
+      cell.className = `pose${pose.mood ? ' mood' : ''}`;
+      const art = document.createElement('div');
+      art.className = 'pose-art';
+      art.appendChild(poseArt(character, pose));
+      const label = document.createElement('div');
+      label.className = 'pose-label';
+      label.textContent = pose.label;
+      cell.append(art, label);
+      poses.appendChild(cell);
+    }
+
+    card.append(pick, name, origin, poses);
+    card.addEventListener('click', () => set('character', character.id));
+    host.appendChild(card);
+  }
+}
+
+function renderSizes() {
+  const host = document.getElementById('sizes');
+  host.replaceChildren();
+  for (const size of state.sizes) {
+    const btn = document.createElement('button');
+    btn.className = size.id === state.size ? 'on' : '';
+    btn.textContent = SIZE_LABEL[size.id] || size.id;
+    btn.title = `${size.buddy}px`;
+    btn.addEventListener('click', () => set('size', size.id));
+    host.appendChild(btn);
+  }
+}
+
+/* ---------- Switches ---------- */
+
+function renderSwitches() {
+  const host = document.getElementById('switches');
+  host.replaceChildren();
+
+  for (const item of SWITCHES) {
+    const on = Boolean(state[item.key]);
+    const row = document.createElement('div');
+    row.className = 'switch';
+
+    const text = document.createElement('div');
+    text.className = 'switch-text';
+    const title = document.createElement('div');
+    title.className = 'switch-title';
+    title.textContent = item.title;
+    const desc = document.createElement('div');
+    desc.className = 'switch-desc';
+    desc.innerHTML = item.desc; // fixed copy from the list above, never user input
+    text.append(title, desc);
+
+    const toggle = document.createElement('button');
+    toggle.className = `toggle${on ? ' on' : ''}`;
+    toggle.setAttribute('role', 'switch');
+    toggle.setAttribute('aria-checked', String(on));
+    toggle.setAttribute('aria-label', item.title);
+    toggle.addEventListener('click', () => set(item.key, !state[item.key]));
+
+    row.append(text, toggle);
+    host.appendChild(row);
+  }
+}
+
+/* ---------- What Clippy can do ---------- */
+
+function renderActions() {
+  const host = document.getElementById('action-list');
+  host.replaceChildren();
+
+  for (const action of state.actions) {
+    const card = document.createElement('div');
+    card.className = 'action';
+
+    const head = document.createElement('div');
+    head.className = 'action-head';
+    const icon = document.createElement('span');
+    icon.className = 'action-icon';
+    icon.textContent = action.icon;
+    const title = document.createElement('span');
+    title.className = 'action-title';
+    title.textContent = action.title;
+    head.append(icon, title);
+
+    if (action.hook) {
+      const tag = document.createElement('span');
+      tag.className = 'tag';
+      tag.textContent = action.hook;
+      tag.title = 'the Claude Code hook that triggers this';
+      head.appendChild(tag);
+    }
+    // Say plainly when a switch on this page has this turned off.
+    if (action.setting && !state[action.setting]) {
+      const off = document.createElement('span');
+      off.className = 'tag off';
+      off.textContent = 'off';
+      off.title = 'turned off in "What Clippy answers"';
+      head.appendChild(off);
+    }
+
+    const dl = document.createElement('dl');
+    for (const [term, value] of [['When', action.when], ['You see', action.shows]]) {
+      if (!value) continue;
+      const dt = document.createElement('dt');
+      dt.textContent = term;
+      const dd = document.createElement('dd');
+      dd.textContent = value;
+      dl.append(dt, dd);
+    }
+
+    card.append(head, dl);
+
+    if (action.choices) {
+      const choices = document.createElement('div');
+      choices.className = 'choices';
+      for (const choice of action.choices) {
+        const row = document.createElement('div');
+        row.className = 'choice';
+        const label = document.createElement('span');
+        label.className = 'choice-label';
+        label.textContent = choice.label;
+        const effect = document.createElement('span');
+        effect.className = 'choice-effect';
+        effect.textContent = `— ${choice.effect}`;
+        const json = document.createElement('code');
+        json.className = `choice-json${choice.json === '{}' ? ' empty' : ''}`;
+        json.textContent =
+          choice.json === '{}' ? '{}  · no opinion, Claude Code carries on as normal' : choice.json;
+        row.append(label, effect, json);
+        choices.appendChild(row);
+      }
+      card.appendChild(choices);
+    }
+
+    host.appendChild(card);
+  }
+}
+
+/* ---------- Sessions ---------- */
+
+function renderSessions() {
+  const host = document.getElementById('session-list');
+  host.replaceChildren();
+
+  if (!state.sessions.length) {
+    const empty = document.createElement('div');
+    empty.className = 'empty-note';
+    empty.textContent =
+      'No sessions yet. Start Claude Code in a project and its buddy appears here.';
+    host.appendChild(empty);
+    return;
+  }
+
+  for (const session of state.sessions) {
+    const row = document.createElement('button');
+    row.className = 'session';
+    const dot = document.createElement('span');
+    dot.className = 'dot';
+    dot.style.background = session.color || '#9aa3ad';
+    const name = document.createElement('span');
+    name.className = 'session-name';
+    name.textContent = session.name;
+    const status = document.createElement('span');
+    status.className = 'session-status';
+    status.textContent = STATUS_TEXT[session.status] || session.status || '';
+    row.append(dot, name, status);
+    row.addEventListener('click', () => window.clippySettings.showBuddy(session.sessionId));
+    host.appendChild(row);
+  }
+}
+
+/* ---------- Wiring ---------- */
+
+function set(key, value) {
+  state = { ...state, [key]: value };
+  render(); // answer the click now; main confirms with the next state push
+  window.clippySettings.setSetting(key, value);
+}
+
+function render() {
+  renderSizes();
+  renderCast();
+  renderSwitches();
+  renderActions();
+  renderSessions();
+
+  const text = document.getElementById('server-text');
+  text.textContent = state.port ? `listening on 127.0.0.1:${state.port}` : 'hook server';
+  text.title = 'Where the Claude Code hooks report in';
+}
+
+window.clippySettings.onState((next) => {
+  // Sprite animations are re-created on every render; drop the old timers.
+  while (sheetTimers.length) clearInterval(sheetTimers.pop());
+  state = { ...state, ...next };
+  render();
+});
+
+// The rail follows whichever section you're reading.
+const links = [...document.querySelectorAll('.rail-link')];
+const spy = new IntersectionObserver(
+  (entries) => {
+    for (const entry of entries) {
+      if (!entry.isIntersecting) continue;
+      for (const link of links) {
+        link.classList.toggle('on', link.getAttribute('href') === `#${entry.target.id}`);
+      }
+    }
+  },
+  { rootMargin: '-10% 0px -75% 0px' }
+);
+for (const panel of document.querySelectorAll('.panel')) spy.observe(panel);
+
+window.clippySettings.ready();

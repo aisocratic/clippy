@@ -186,10 +186,9 @@ know.
   — a card appearing never shrinks or grows him. Small/Medium/Large are 2×, 3×
   and 4× the 32×40 sprite (pixel art only looks right at whole multiples), and
   the choice sticks across restarts.
-- **The menu bar has the global settings**: 📎 → *Settings* holds the same
-  switches plus **Character** and **Size** for every buddy at once, and the
-  Accessibility fix. Per-session things (show, perch, open window) stay on each
-  session's own submenu above it.
+- **The menu bar**: click 📎 for the settings window (above); right-click for the
+  quick menu — per-session actions (show, perch, open window), Drive mode, the
+  same switches under *Quick settings*, and quit.
 - **go to terminal ↗** (on every card) or **open session ↗** (hover below
   Clippy) does the same as the menu's first item: raises that session's window
   and keeps Clippy perched on it as a small happy paperclip until you send it
@@ -296,6 +295,26 @@ auth:
   `ANTHROPIC_API_KEY`. **Billing note:** subscription-plan SDK usage draws from
   a separate Agent SDK credit; an API key bills per token. Watch mode (hooks)
   has no such cost — it's just your normal terminal sessions.
+
+## The settings window
+
+Click **📎 in the menu bar** and Clippy's settings window opens (right-click for
+the quick menu — sessions, Drive mode, quit). It's the one part of Clippy you sit
+and read, and it has four sections:
+
+- **Buddies** — every character, with each of their animations playing side by
+  side: the calm one, the excited one, and for sprite packs every other row in
+  the sheet. Click one to use it everywhere; pick a size next to it.
+- **What Clippy answers** — the switches, each spelling out what it means for
+  Claude Code. Turn one off and that moment goes back to the terminal exactly as
+  if Clippy weren't running.
+- **What Clippy can do** — the full catalogue: what triggers each behaviour,
+  which hook it rides on, what you see, and — for anything that answers on your
+  behalf — **the exact JSON Claude Code receives** for each button. Those strings
+  come from the same `toHookResponse` the app answers with (`src/actions.js`), so
+  the page can't drift from the behaviour, and a test asserts it.
+- **Sessions** — everything reporting in right now; click one to bring its buddy
+  to the front.
 
 ## Bring your own buddy (sprite-sheet themes)
 
@@ -466,6 +485,8 @@ Two things worth knowing before changing the UI:
 - `src/identity.js` — per-session name and colour, hashed from the project name
 - `src/characters.js` — the cast and the three buddy sizes, shared by the main
   process, the renderer's menu and the web test bench
+- `src/actions.js` — what Clippy does with a session, as data, with the real
+  hook JSON for every button; the settings window is rendered from it
 - `src/visibility.js` — when a buddy is allowed on screen (done/asking) and
   when it hides again
 - `src/terminal.js` — finds a session's terminal window (hook-reported tty for
@@ -482,7 +503,9 @@ Two things worth knowing before changing the UI:
   the cards, the menu, and the sprite the window is built around
 - `bin/clippy-hooks.js` — hook installer/uninstaller for `~/.claude/settings.json`
 - `scripts/mock-session.js` — mock Claude Code session (above)
-- `scripts/demo-web.js` + `demo/` — the browser test bench (above)
+- `scripts/demo-web.js` + `demo/` — the browser test bench (above); it also
+  serves the settings window at `/settings/` so that can be worked on in a
+  browser too
 - `scripts/add-sprite-pack.js` — install a downloaded sprite pack as a character
 - `scripts/cdp-eval.js` — drive the renderer over CDP for e2e checks
   (`npx electron . --remote-debugging-port=9333`)

@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'" />
+  <title>Clippy</title>
+  <link rel="stylesheet" href="settings.css" />
+</head>
+<body>
+  <nav id="rail">
+    <div id="brand">
+      <span id="brand-mark">📎</span>
+      <span id="brand-name">Clippy<small>for Claude Code</small></span>
+    </div>
+    <a class="rail-link on" href="#buddies">Buddies</a>
+    <a class="rail-link" href="#answering">What Clippy answers</a>
+    <a class="rail-link" href="#actions">What Clippy can do</a>
+    <a class="rail-link" href="#sessions">Sessions</a>
+    <div id="rail-foot">
+      <span id="server-dot"></span><span id="server-text">hook server</span>
+    </div>
+  </nav>
+
+  <main id="page">
+    <section id="buddies" class="panel">
+      <header class="panel-head">
+        <h1>Buddies</h1>
+        <p>One buddy per Claude Code session, in the colour of that session. Pick who
+           they are and how big they're drawn — every session uses the same choice.</p>
+      </header>
+
+      <div class="field-row">
+        <div class="field">
+          <label>Size</label>
+          <div id="sizes" class="segmented"></div>
+        </div>
+        <p class="field-note">Sprites are scaled by whole numbers, so they stay crisp.
+           The buddy keeps this size whether or not a card is open.</p>
+      </div>
+
+      <div id="cast" class="cast"></div>
+
+      <p class="drop-hint">
+        Drop a sprite pack into <code>src/renderer/assets/themes/</code> with a
+        <code>theme.json</code> and it shows up here — <code>npm run add-sprite-pack</code>
+        does it for you. Packs stay on this machine and keep their own licence.
+      </p>
+    </section>
+
+    <section id="answering" class="panel">
+      <header class="panel-head">
+        <h1>What Clippy answers</h1>
+        <p>Each switch decides whether Clippy holds a hook open for you. Turn one off
+           and that moment goes back to the terminal, exactly as if Clippy weren't running.</p>
+      </header>
+      <div id="switches" class="switches"></div>
+    </section>
+
+    <section id="actions" class="panel">
+      <header class="panel-head">
+        <h1>What Clippy can do</h1>
+        <p>Everything a buddy does with a session, what triggers it, and — where it
+           answers on your behalf — the exact JSON Claude Code receives.</p>
+      </header>
+      <div id="action-list" class="actions"></div>
+    </section>
+
+    <section id="sessions" class="panel">
+      <header class="panel-head">
+        <h1>Sessions</h1>
+        <p>Every Claude Code session that has reported in. Click one to bring its buddy
+           to the front.</p>
+      </header>
+      <div id="session-list" class="sessions"></div>
+    </section>
+  </main>
+
+  <script src="settings.js"></script>
+</body>
+</html>
