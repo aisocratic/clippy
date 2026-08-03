@@ -114,7 +114,9 @@ let settings = {
   autoPerch: true,
   character: 'clip',
   size: 'medium',
-  characters: [{ id: 'clip', label: '📎 Paperclip' }],
+  // Enough of a roster to paint the default buddy correctly on the very first
+  // frame; main replaces all of it a moment later.
+  characters: [{ id: 'clip', label: '📎 Clippy', perColour: true }],
   sizes: [{ id: 'medium', buddy: 96 }],
 };
 const SIZE_LABEL = { small: 'S', medium: 'M', large: 'L' };
@@ -177,8 +179,10 @@ function applyIdentity() {
  */
 function buddyArt(pose) {
   const who = settings.character || 'clip';
-  if (who === 'clip') return `assets/themes/clip/${me.color.replace('#', '')}-${pose}.gif`;
-  return `assets/themes/${who}/${pose}.gif`;
+  const character = (settings.characters || []).find((c) => c.id === who);
+  // The clips are drawn per session colour; everyone else has one set of art.
+  const tint = character && character.perColour ? `${me.color.replace('#', '')}-` : '';
+  return `assets/themes/${who}/${tint}${pose}.gif`;
 }
 
 /** The pose that fits what's happening — falling back to what this buddy has. */

@@ -779,6 +779,97 @@ function drawRobot({ lift = 0, lamp = false, armsUp = false, look = 0, blink = f
   return g;
 }
 
+/**
+ * Clippy the way the original SVG drew him — and the way everyone pictures him:
+ * one continuous wire, tall and narrow, round over the top, with the inner hook
+ * left open at the bottom. The first pixel clip squared all that off into two
+ * concentric loops; this one keeps the silhouette.
+ *
+ * Same parameters as `drawClip`, so both wear every pose.
+ */
+function drawClassicClip({
+  bob = 0,
+  lift = 0,
+  blink = false,
+  look = 0,
+  lookDown = 0,
+  brows = false,
+  happy = false,
+  tilt = 0,
+  sleeping = 0,
+  worried = false,
+  sweat = 0,
+} = {}) {
+  const g = grid();
+  const dy = BASE_Y + bob - lift;
+
+  /** A closed wire bend: a rounded rectangle with its middle hollowed out. */
+  const loop = (x0, y0, x1, y1, { radius, thickness, openBottom = 0 }) => {
+    blob(g, x0, y0 + dy, x1, y1 + dy, WIRE, radius);
+    blob(
+      g,
+      x0 + thickness,
+      y0 + thickness + dy,
+      x1 - thickness,
+      y1 - thickness + dy,
+      CT,
+      Math.max(1, radius - thickness)
+    );
+    // Cutting the bottom out of the inner bend is what turns a ring into a clip.
+    if (openBottom) rect(g, x0 + thickness, y1 - openBottom + dy, x1 - thickness, y1 + dy, CT);
+  };
+
+  loop(6, 0, 25, 31, { radius: 7, thickness: 3 }); // outer bend, tall and round
+  loop(11, 6, 20, 25, { radius: 4, thickness: 3, openBottom: 4 }); // inner hook
+
+  // A shaded pixel down the right of each stroke stops the wire reading flat.
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W - 1; x++) {
+      if (at(g, x, y) === WIRE && at(g, x + 1, y) !== WIRE) put(g, x, y, WIRE_DARK);
+    }
+  }
+
+  outline(g, { exteriorOnly: true });
+
+  // Eyebrows above the eyes — up when excited, pinched in when it's going badly.
+  const browY = (brows ? 5 : 7) + dy;
+  if (worried) {
+    rect(g, 6, browY, 8, browY, CINK);
+    rect(g, 9, browY + 1, 11, browY + 1, CINK);
+    rect(g, 23, browY, 25, browY, CINK);
+    rect(g, 20, browY + 1, 22, browY + 1, CINK);
+  } else {
+    rect(g, 6, browY + 1, 8, browY + 1, CINK);
+    rect(g, 9, browY, 11, browY, CINK);
+    rect(g, 23, browY + 1, 25, browY + 1, CINK);
+    rect(g, 20, browY, 22, browY, CINK);
+  }
+
+  // Eyes: tall ovals sitting *over* the wire, the way the SVG had them — outline
+  // first so they read against whatever they cover.
+  const eyeTop = 9 + dy;
+  for (const x0 of [6, 19]) {
+    if (blink) {
+      rect(g, x0 + 1, eyeTop + 3, x0 + 5, eyeTop + 3, CINK);
+      continue;
+    }
+    blob(g, x0, eyeTop, x0 + 6, eyeTop + 7, CINK, 2);
+    blob(g, x0 + 1, eyeTop + 1, x0 + 5, eyeTop + 6, WHITE, 1);
+    if (happy) {
+      // Closed and curved up: delighted, not asleep.
+      rect(g, x0 + 2, eyeTop + 4, x0 + 4, eyeTop + 4, CINK);
+      put(g, x0 + 1, eyeTop + 5, CINK);
+      put(g, x0 + 5, eyeTop + 5, CINK);
+    } else {
+      rect(g, x0 + 2 + look, eyeTop + 3 + lookDown, x0 + 3 + look, eyeTop + 5 + lookDown, PUPIL);
+    }
+  }
+
+  if (sleeping) zzz(g, sleeping, CINK);
+  if (sweat) drop(g, 26, 2 + sweat * 3 + dy, WHITE, CINK);
+  return tilt ? lean(g, tilt) : g;
+}
+
 /* ---------------- Animations ----------------
  *
  * Every character speaks the same six-word vocabulary, so the app can ask for a
@@ -793,7 +884,7 @@ function drawRobot({ lift = 0, lamp = false, armsUp = false, look = 0, blink = f
  *   cheer    a turn finished cleanly
  */
 
-const CLIP_POSES = {
+const clipPoses = (drawClip) => ({
   idle: [
     { indices: drawClip({ bob: 0, look: 0 }), delayMs: 420 },
     { indices: drawClip({ bob: 1, look: 1 }), delayMs: 420 },
@@ -853,7 +944,7 @@ const CLIP_POSES = {
     { indices: drawClip({ tilt: 3, happy: true }), delayMs: 200 },
     { indices: drawClip({ tilt: 0, happy: true, lift: 1 }), delayMs: 200 },
   ],
-};
+});
 
 const CAT_POSES = {
   // Breathing throughout, the tail swishing over it, with a blink and an ear
@@ -934,7 +1025,8 @@ const gif = (palette, frames) =>
 // is exactly what the renderer asks for (see buddyArt in clippy.js).
 const THEMES = [
   { id: 'cat', palette: PALETTE, poses: CAT_POSES },
-  { id: 'clip', poses: CLIP_POSES, perColour: true },
+  { id: 'clip', poses: clipPoses(drawClip), perColour: true },
+  { id: 'classic', poses: clipPoses(drawClassicClip), perColour: true },
 ];
 
 function build() {

@@ -105,9 +105,7 @@ function posesOf(character) {
     // session that has reported in, or the default steel.
     const colour = ((state.sessions[0] || {}).color || '#9aa3ad').replace('#', '');
     const art = (pose) =>
-      character.id === 'clip'
-        ? `assets/themes/clip/${colour}-${pose}.gif`
-        : `assets/themes/${character.id}/${pose}.gif`;
+      `assets/themes/${character.id}/${character.perColour ? `${colour}-` : ''}${pose}.gif`;
     return (character.poses || ['idle', 'excited']).map((pose) => ({
       label: POSE_LABEL[pose] || pose,
       file: art(pose),

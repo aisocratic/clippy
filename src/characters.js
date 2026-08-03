@@ -36,6 +36,7 @@ const POSES = [
 
 const CHARACTERS = [
   { id: 'clip', label: '📎 Clippy', poses: POSES, perColour: true },
+  { id: 'classic', label: '🖇 Clippy (classic)', poses: POSES, perColour: true },
   { id: 'cat', label: '🐱 Pixel cat', poses: POSES },
 ];
 

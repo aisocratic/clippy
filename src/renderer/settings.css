@@ -686,3 +686,8 @@ code {
   border: 1px dashed var(--line);
   border-radius: var(--radius);
 }
+
+/* Every panel toggles this; without it they only *look* hidden when empty. */
+.hidden {
+  display: none !important;
+}

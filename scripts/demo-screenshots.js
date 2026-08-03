@@ -2,8 +2,9 @@
 
 /**
  * Drives the real Clippy UI through a staged Claude Code session story and
- * captures screenshots of each state. Used for docs/demos and for verifying
- * the renderer headlessly (run under xvfb on Linux):
+ * captures screenshots of each state — the buddy, then the settings window.
+ * Used for docs/demos and for verifying the renderer headlessly (run under xvfb
+ * on Linux):
  *
  *   npx electron scripts/demo-screenshots.js
  *
@@ -11,7 +12,7 @@
  * app's transparent window) so the captures are viewable.
  */
 
-const { app, BrowserWindow } = require('electron');
+const { app, BrowserWindow, ipcMain } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
 const { SessionTracker } = require('../src/sessions');
@@ -217,6 +218,60 @@ app.whenReady().then(async () => {
   });
   await sleep(700);
   await shot('13-answer-card.png');
+
+  // The settings window, driven by the same fake state the app would send.
+  const settings = new BrowserWindow({
+    width: 1000,
+    height: 760,
+    show: true,
+    backgroundColor: '#101217',
+    webPreferences: {
+      preload: path.join(__dirname, '..', 'src', 'preload-settings.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+  const { allCharacters, sizeList } = require('../src/characters');
+  const { ACTIONS } = require('../src/actions');
+  ipcMain.on('clippy-settings-ready', (e) =>
+    e.sender.send('clippy-settings-state', {
+      approvals: true,
+      reviewOnStop: true,
+      answerQuestions: true,
+      autoPerch: true,
+      character: 'clip',
+      characterMode: 'same',
+      characterByProject: { 'billing-api': 'miso' },
+      size: 'medium',
+      characters: allCharacters(),
+      characterModes: require('../src/characters').CHARACTER_MODES,
+      sizes: sizeList(),
+      actions: ACTIONS,
+      port: 43117,
+      windowAccess: true,
+      sessions: [
+        { sessionId: 'a', name: 'my-app', color: '#4fa3d1', status: 'working', character: 'clip' },
+        { sessionId: 'b', name: 'billing-api', color: '#e0803a', status: 'waiting', character: 'miso' },
+      ],
+    })
+  );
+  await settings.loadFile(path.join(__dirname, '..', 'src', 'renderer', 'settings.html'));
+  await sleep(1200);
+  for (const [name, section] of [
+    ['14-settings-buddies.png', 'buddies'],
+    ['15-settings-actions.png', 'actions'],
+  ]) {
+    await settings.webContents.executeJavaScript(
+      `document.getElementById('${section}').scrollIntoView(); true`
+    );
+    await sleep(500);
+    await settings.webContents.executeJavaScript(
+      'new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)))'
+    );
+    const img = await settings.webContents.capturePage();
+    fs.writeFileSync(path.join(OUT_DIR, name), img.toPNG());
+    console.log('captured', name);
+  }
 
   app.quit();
 });
