@@ -28,6 +28,13 @@
       push();
     },
     showBuddy: (sessionId) => console.log('would show the buddy for', sessionId),
+    assign: (name, character) => {
+      const byProject = { ...(state.characterByProject || {}) };
+      if (character) byProject[name] = character;
+      else delete byProject[name];
+      state = { ...state, characterByProject: byProject };
+      push();
+    },
     openExternal: (url) => window.open(url, '_blank', 'noopener'),
   };
 })();

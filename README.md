@@ -175,6 +175,10 @@ know.
   - **⚙ Settings…** — opens the settings window (everything that applies to all
     buddies lives there, not here).
   - **× Hide Clippy**.
+- **Messages you have to act on stay put**: "macOS blocked me from driving that
+  window" and friends no longer fade after four seconds — they sit there with an
+  **Open Settings ↗** button that takes you straight to Privacy & Security →
+  Accessibility (and Clippy opens that pane for you when it hits the wall).
 - **“Answer here”**: when a card goes back to the terminal — you clicked
   **Ask me in terminal ↗**, **Move to terminal ↗** or **Answer in terminal ✓**,
   or the hold timed out — and Clippy is already perched on that window, he walks
@@ -311,10 +315,13 @@ Click **📎 in the menu bar** and Clippy's settings window opens (right-click f
 the quick menu — sessions, Drive mode, quit). It's the one part of Clippy you sit
 and read, and it has four sections:
 
-- **Buddies** — every character with all of its animations playing side by
-  side, named (idle, needs you, walking, pointing, asleep, cheering) plus any
-  unclaimed rows of a sprite sheet, and a size picker. **Who each session gets**
-  is a choice of three:
+- **Sessions** — everything reporting in right now, each with the buddy it's
+  wearing and a picker to **give that project a buddy of its own**. That choice
+  is kept against the project name, so the same repo looks the same tomorrow,
+  and it outranks whichever mode is set below.
+- **Buddies** — every character with all nine of its animations playing side by
+  side (the same layout as the test bench's workbench), and a size picker.
+  **Who each session gets** is a choice of three:
   - **Same for all** — every session uses the buddy you click.
   - **One per project** — Clippy picks from the cast using the project name, so
     the same repo always gets the same buddy and parallel agents rarely match.
@@ -330,8 +337,7 @@ and read, and it has four sections:
   behalf — **the exact JSON Claude Code receives** for each button. Those strings
   come from the same `toHookResponse` the app answers with (`src/actions.js`), so
   the page can't drift from the behaviour, and a test asserts it.
-- **Sessions** — everything reporting in right now; click one to bring its buddy
-  to the front.
+(Clicking a session's name brings its buddy to the front.)
 
 ## Bring your own buddy (sprite-sheet themes)
 

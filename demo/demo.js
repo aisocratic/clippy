@@ -183,6 +183,9 @@ function runAction(action) {
     case 'walk-to-prompt':
       walkToPrompt();
       break;
+    case 'poke-menu':
+      send('poke-menu', { item: action.item });
+      break;
   }
 }
 
@@ -372,6 +375,10 @@ window.addEventListener('message', async (e) => {
     case 'point':
       log('in', 'pointAtPrompt', 'show me where to answer');
       walkToPrompt();
+      break;
+
+    case 'fix':
+      log('in', 'fix', `would open macOS ${p.what} settings`);
       break;
 
     case 'open-settings':

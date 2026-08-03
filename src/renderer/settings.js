@@ -132,40 +132,43 @@ function posesOf(character) {
 function renderCast() {
   const host = document.getElementById('cast');
   host.replaceChildren();
+  const picking = (state.characterMode || 'same') === 'same';
 
   for (const character of state.characters) {
-    const picking = (state.characterMode || 'same') === 'same';
-    const card = document.createElement('div');
-    card.className = `buddy-card${picking && character.id === state.character ? ' on' : ''}${
-      picking ? '' : ' gallery'
-    }`;
-    card.title = picking
-      ? `Use ${character.label}`
-      : `Clippy is choosing for you — switch to "Same for all" to pick ${character.label}`;
+    const row = document.createElement('div');
+    row.className = `cast-row${picking && character.id === state.character ? ' on' : ''}`;
 
-    const pick = document.createElement('span');
-    pick.className = 'pick';
-
-    const name = document.createElement('div');
-    name.className = 'buddy-name';
+    const who = document.createElement('button');
+    who.className = 'cast-who';
+    who.title = picking
+      ? `Use ${character.label} for every session`
+      : `Switch to "Same for all" and use ${character.label}`;
+    const name = document.createElement('span');
+    name.className = 'cast-name';
     name.textContent = character.label;
-
-    const origin = document.createElement('div');
-    origin.className = 'buddy-origin';
+    const origin = document.createElement('span');
+    origin.className = 'cast-origin';
     origin.textContent = character.sheet
-      ? `sprite pack · ${character.sheet.frameWidth}×${character.sheet.frameHeight} frames`
-      : character.id === 'clip'
-      ? 'drawn in code · one per session colour'
+      ? `sprite pack · ${character.sheet.frameWidth}×${character.sheet.frameHeight}`
+      : character.perColour
+      ? 'drawn in code · per session colour'
       : 'drawn in code';
+    who.append(name, origin);
+    // Picking a face also means "and use that one" — the friendliest read of
+    // clicking one while Clippy is choosing for you.
+    who.addEventListener('click', () => {
+      if (!picking) set('characterMode', 'same');
+      set('character', character.id);
+    });
 
     const poses = document.createElement('div');
-    poses.className = 'poses';
+    poses.className = 'cast-poses';
     for (const pose of posesOf(character)) {
       const cell = document.createElement('div');
-      cell.className = `pose${pose.named ? ' mood' : ''}`;
+      cell.className = 'pose';
       const art = document.createElement('div');
       art.className = 'pose-art';
-      art.appendChild(poseArt(character, pose));
+      art.appendChild(poseArt(character, pose, 44));
       const label = document.createElement('div');
       label.className = 'pose-label';
       label.textContent = pose.label;
@@ -173,14 +176,8 @@ function renderCast() {
       poses.appendChild(cell);
     }
 
-    card.append(pick, name, origin, poses);
-    // Picking a character also means "and use that one" — the friendliest read
-    // of clicking a face while Clippy is choosing at random.
-    card.addEventListener('click', () => {
-      if (!picking) set('characterMode', 'same');
-      set('character', character.id);
-    });
-    host.appendChild(card);
+    row.append(who, poses);
+    host.appendChild(row);
   }
 }
 
@@ -337,24 +334,60 @@ function renderSessions() {
   }
 
   for (const session of state.sessions) {
-    const row = document.createElement('button');
+    const row = document.createElement('div');
     row.className = 'session';
+
     const dot = document.createElement('span');
     dot.className = 'dot';
     dot.style.background = session.color || '#9aa3ad';
-    const name = document.createElement('span');
-    name.className = 'session-name';
-    name.textContent = session.name;
+
+    const show = document.createElement('button');
+    show.className = 'session-name';
+    show.textContent = session.name;
+    show.title = 'Bring this buddy to the front';
+    show.addEventListener('click', () => window.clippySettings.showBuddy(session.sessionId));
+
     const status = document.createElement('span');
     status.className = 'session-status';
     status.textContent = STATUS_TEXT[session.status] || session.status || '';
-    row.append(dot, name, status);
-    row.addEventListener('click', () => window.clippySettings.showBuddy(session.sessionId));
+
+    // A buddy of its own, kept against the project name so the same repo looks
+    // the same tomorrow.
+    const assigned = (state.characterByProject || {})[session.name] || '';
+    const pick = document.createElement('select');
+    pick.className = 'session-pick';
+    pick.title = 'Which buddy this project gets';
+    const auto = document.createElement('option');
+    auto.value = '';
+    auto.textContent = `Auto (${labelFor(session.character)})`;
+    pick.appendChild(auto);
+    for (const character of state.characters) {
+      const option = document.createElement('option');
+      option.value = character.id;
+      option.textContent = character.label;
+      pick.appendChild(option);
+    }
+    pick.value = assigned;
+    pick.addEventListener('change', () =>
+      window.clippySettings.assign(session.name, pick.value)
+    );
+
+    const art = document.createElement('span');
+    art.className = 'session-art';
+    const character = state.characters.find((c) => c.id === (assigned || session.character));
+    if (character) art.appendChild(poseArt(character, posesOf(character)[0], 28));
+
+    row.append(dot, show, status, art, pick);
     host.appendChild(row);
   }
 }
 
 /* ---------- Wiring ---------- */
+
+const labelFor = (id) => {
+  const character = (state.characters || []).find((c) => c.id === id);
+  return character ? character.label.replace(/^\S+\s/, '') : 'whoever is on duty';
+};
 
 function set(key, value) {
   state = { ...state, [key]: value };

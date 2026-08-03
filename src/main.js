@@ -80,6 +80,7 @@ const settings = {
   autoPerch: true, // appear on the session's own window, not the screen corner
   character: 'clip', // which buddy you get — see CHARACTERS
   characterMode: 'same', // how each session's buddy is chosen — see CHARACTER_MODES
+  characterByProject: {}, // project name -> character id, when you've picked one
   size: 'medium', // how big that buddy is drawn, and stays
 };
 
@@ -101,19 +102,36 @@ function loadSettings() {
   }
 }
 
+/** Give one project a buddy of its own (or '' to let the mode decide again). */
+function assignCharacter(name, character) {
+  if (!name) return;
+  const next = { ...settings.characterByProject };
+  if (character && CHOICES.character().includes(character)) next[name] = character;
+  else delete next[name];
+  settings.characterByProject = next;
+  saveSettings();
+  recast();
+  pushSettingsState();
+  sendSettings();
+}
+
+function saveSettings() {
+  try {
+    fs.writeFileSync(settingsFile(), JSON.stringify(settings, null, 2));
+  } catch (err) {
+    console.error('clippy: could not save settings', err);
+  }
+}
+
 function setSetting(key, value) {
-  if (!(key in settings)) return;
+  if (!(key in settings) || key === 'characterByProject') return;
   if (CHOICES[key]) {
     if (!CHOICES[key]().includes(value)) return;
     settings[key] = value;
   } else {
     settings[key] = Boolean(value);
   }
-  try {
-    fs.writeFileSync(settingsFile(), JSON.stringify(settings, null, 2));
-  } catch (err) {
-    console.error('clippy: could not save settings', err);
-  }
+  saveSettings();
   // Who each buddy is depends on both of these, so redo the casting first.
   if (key === 'character' || key === 'characterMode') recast();
   pushSettingsState();
@@ -217,6 +235,9 @@ function settingsState() {
       name: s.name,
       color: identityFor(s.sessionId, s.name).color,
       status: s.status,
+      // Who this session's buddy is right now — which is what "Auto" means in
+      // the picker next to it.
+      character: buddies.get(s.sessionId)?.character || characterFor(settings, s.name),
     })),
   };
 }
@@ -490,7 +511,12 @@ async function perchOn(key, { raise = false, auto = false, mode = null } = {}) {
   const term = tracker.terminalFor(key);
   if (!term) {
     if (!auto) {
-      tellBuddy(key, "I don't know which window this session is in — re-run `npm run hooks:install`.");
+      tellBuddy(
+        key,
+        "I don't know which window this session is in. Re-run `npm run hooks:install`, " +
+          'then restart that Claude Code session so its hooks report the terminal.',
+        { sticky: true }
+      );
     }
     return false;
   }
@@ -511,9 +537,10 @@ async function perchOn(key, { raise = false, auto = false, mode = null } = {}) {
           key,
           appPid && isRunning(appPid)
             ? `“${buddy.name}” is running but macOS won't show me its windows. ` +
-                'Check Clippy (Electron) under System Settings → Privacy & Security → ' +
-                'Accessibility — switching it off and on again fixes a stale one.'
-            : "I couldn't find that session's window — is the terminal still open?"
+                'Check Clippy (Electron) under Privacy & Security → Accessibility — ' +
+                'switching it off and on again fixes a stale one.'
+            : "I couldn't find that session's window — is the terminal still open?",
+          { sticky: true, fix: appPid && isRunning(appPid) ? 'accessibility' : null }
         );
       }
       return false;
@@ -530,13 +557,9 @@ async function perchOn(key, { raise = false, auto = false, mode = null } = {}) {
   } catch (err) {
     // osascript exits non-zero when macOS hasn't granted control of the app.
     console.warn('clippy: could not reach the terminal window:', err.message);
-    if (!auto) {
-      tellBuddy(
-        key,
-        'macOS blocked me from driving that window — allow Clippy under ' +
-          'System Settings → Privacy & Security → Accessibility / Automation.'
-      );
-    }
+    // osascript exits non-zero when macOS hasn't granted control — which is
+    // something you can actually fix, so open the pane rather than just saying so.
+    if (!auto) askForWindowAccess(key);
     return false;
   }
 }
@@ -573,8 +596,10 @@ function askForWindowAccess(key) {
   if (key) {
     tellBuddy(
       key,
-      'macOS has to let me control other apps first: tick Clippy (Electron) under ' +
-        'System Settings → Privacy & Security → Accessibility, then try again.'
+      'macOS has to let me control other apps first. I opened the right pane: ' +
+        'tick Clippy (Electron) under Privacy & Security → Accessibility, then ' +
+        'try again.',
+      { sticky: true, fix: 'accessibility' }
     );
   }
 }
@@ -774,11 +799,19 @@ function send(buddy, event) {
 }
 
 /** Say something in a buddy's bubble (used for "that didn't work" news). */
-function tellBuddy(key, message) {
+/**
+ * Say something in the buddy's speech bubble.
+ *
+ * `sticky` is for the messages you have to act on — a permission macOS won't
+ * grant, a window we can't find. Those used to fade after four seconds, which
+ * is exactly long enough to read half of it and not long enough to do anything
+ * about it, so they now sit there until dismissed.
+ */
+function tellBuddy(key, message, { sticky = false, fix = null } = {}) {
   const buddy = buddies.get(key);
   if (!buddy || buddy.win.isDestroyed()) return;
   placeBuddy(buddy, 'full');
-  buddy.win.webContents.send('clippy-event', { kind: 'info', message });
+  buddy.win.webContents.send('clippy-event', { kind: 'info', message, sticky, fix });
   buddy.win.showInactive();
 }
 
@@ -1359,10 +1392,19 @@ app.whenReady().then(async () => {
     }
   });
   ipcMain.on('clippy-open-settings', () => openSettingsWindow());
+  ipcMain.on('clippy-fix', (e, what) => {
+    // The "fix it" button on a sticky message.
+    const buddy = buddyForSender(e.sender);
+    if (what === 'accessibility') askForWindowAccess(buddy?.sessionId || null);
+  });
   ipcMain.on('clippy-open-external', (_e, url) => {
     // Only ever hand the OS an https link — this window must not become a
     // browser, and it must not be talked into opening anything else.
     if (typeof url === 'string' && url.startsWith('https://')) shell.openExternal(url);
+  });
+  ipcMain.on('clippy-settings-assign', (_e, payload) => {
+    const { name, character } = payload || {};
+    assignCharacter(String(name || ''), String(character || ''));
   });
   ipcMain.on('clippy-settings-show', (_e, sessionId) => {
     if (sessionId) showBuddy(String(sessionId), { pin: true });

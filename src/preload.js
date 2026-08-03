@@ -20,6 +20,8 @@ contextBridge.exposeInMainWorld('clippyAPI', {
   pointAtPrompt: () => ipcRenderer.send('clippy-point'),
   // Everything that isn't about this one session lives in the settings window.
   openSettings: () => ipcRenderer.send('clippy-open-settings'),
+  // The "Open Settings" button on a message you have to act on.
+  fix: (what) => ipcRenderer.send('clippy-fix', what),
   // Grow to fit a card (as tall as its contents need), or shrink back to a
   // bare paperclip.
   setMode: (mode, height) => ipcRenderer.send('clippy-mode', { mode, height }),

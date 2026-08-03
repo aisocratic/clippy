@@ -183,7 +183,8 @@ function allCharacters() {
 /**
  * Which character this session's buddy should be.
  *
- * @param {object} settings  the app's settings (mode + the picked character)
+ * @param {object} settings  the app's settings (mode, the picked character, and
+ *                           any per-project assignments)
  * @param {string} name      the project name — what "one per project" hashes on
  * @param {function} [random] injectable for tests
  */
@@ -191,6 +192,11 @@ function characterFor(settings, name, random = Math.random) {
   const cast = allCharacters();
   const has = (id) => cast.some((c) => c.id === id);
   const mode = settings.characterMode || 'same';
+
+  // A buddy assigned to this project by hand outranks every mode: you asked for
+  // that one, on that repo, and it should stay put.
+  const assigned = (settings.characterByProject || {})[name];
+  if (assigned && has(assigned)) return assigned;
 
   if (mode === 'random') return cast[Math.floor(random() * cast.length)].id;
   if (mode === 'default') return cast[hash(String(name || 'clippy')) % cast.length].id;

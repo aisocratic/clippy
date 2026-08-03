@@ -223,100 +223,90 @@ code {
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
 }
 
-/* ---------- The cast ---------- */
+/* ---------- The cast ----------
+   Same shape as the workbench in the test bench: a row per character, every
+   pose it knows playing side by side. */
 
 .cast {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(228px, 1fr));
-  align-items: start; /* a card with fewer poses shouldn't stretch to match */
-  gap: 12px;
-}
-
-.buddy-card {
-  position: relative;
-  padding: 14px;
-  background: var(--surface);
+  display: flex;
+  flex-direction: column;
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  cursor: pointer;
-  transition: border-color 0.14s ease, background 0.14s ease, transform 0.14s ease;
+  overflow: hidden;
 }
 
-.buddy-card:hover {
-  background: #1d2129;
-  transform: translateY(-1px);
+.cast-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  background: var(--surface);
+  border-top: 1px solid var(--line);
 }
 
-.buddy-card.gallery .pick {
-  display: none; /* nothing to pick while Clippy is choosing */
+.cast-row:first-child {
+  border-top: 0;
 }
 
-.buddy-card.on {
-  border-color: var(--accent);
+.cast-row.on {
   background: #1b212c;
-  box-shadow: 0 0 0 1px var(--accent) inset;
+  box-shadow: inset 3px 0 0 var(--accent);
 }
 
-.buddy-card .pick {
-  position: absolute;
-  top: 12px;
-  right: 12px;
-  width: 17px;
-  height: 17px;
-  border-radius: 50%;
-  border: 1.5px solid var(--line);
-  color: #0d0f13;
-  font-size: 10px;
-  line-height: 15px;
-  text-align: center;
+.cast-who {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 150px;
+  flex: none;
+  padding: 4px 6px;
+  margin-left: -6px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
 }
 
-.buddy-card.on .pick {
-  background: var(--accent);
-  border-color: var(--accent);
+.cast-who:hover {
+  background: #232833;
 }
 
-.buddy-card.on .pick::after {
-  content: '✓';
-  font-weight: 700;
-}
-
-.buddy-name {
-  font-size: 13px;
+.cast-name {
+  font-size: 12.5px;
   font-weight: 600;
-  margin-bottom: 2px;
 }
 
-.buddy-origin {
-  font-size: 10.5px;
+.cast-origin {
+  font-size: 10px;
   color: var(--faint);
-  margin-bottom: 12px;
 }
 
-/* Each animation the character has, side by side and playing. */
-.poses {
+.cast-poses {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 5px;
 }
 
 .pose {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 5px;
-  padding: 8px 6px 6px;
-  min-width: 74px;
+  gap: 3px;
+  padding: 5px 3px 3px;
+  min-width: 54px;
   background: var(--surface-2);
   border: 1px solid var(--line-soft);
-  border-radius: 9px;
+  border-radius: 8px;
 }
 
 .pose-art {
   display: flex;
   align-items: flex-end;
   justify-content: center;
-  height: 72px;
+  height: 46px;
 }
 
 .pose-art img,
@@ -325,14 +315,10 @@ code {
 }
 
 .pose-label {
-  font-size: 9.5px;
-  letter-spacing: 0.03em;
+  font-size: 9px;
+  letter-spacing: 0.04em;
   color: var(--faint);
   text-transform: uppercase;
-}
-
-.pose.mood .pose-label {
-  color: var(--muted);
 }
 
 .drop-hint {
@@ -565,19 +551,53 @@ code {
   align-items: center;
   gap: 11px;
   width: 100%;
-  padding: 12px 14px;
+  padding: 10px 14px;
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius);
   color: var(--text);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-  transition: background 0.12s ease;
 }
 
-.session:hover {
-  background: #1d2129;
+.session-name {
+  flex: 1;
+  padding: 3px 6px;
+  margin-left: -6px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.session-name:hover {
+  background: #232833;
+}
+
+.session-art {
+  display: flex;
+  align-items: flex-end;
+  height: 30px;
+}
+
+.session-art img,
+.session-art .sheet {
+  image-rendering: pixelated;
+}
+
+.session-pick {
+  flex: none;
+  max-width: 190px;
+  padding: 4px 7px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 11.5px;
 }
 
 .session .dot {
@@ -585,12 +605,6 @@ code {
   height: 9px;
   border-radius: 50%;
   flex: none;
-}
-
-.session-name {
-  font-size: 12.5px;
-  font-weight: 600;
-  flex: 1;
 }
 
 .session-status {

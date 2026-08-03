@@ -19,6 +19,8 @@ document.documentElement.style.setProperty('--clip', me.color);
 const clippyEl = document.getElementById('clippy');
 const bubbleEl = document.getElementById('bubble');
 const bubbleText = document.getElementById('bubble-text');
+const btnFix = document.getElementById('btn-fix');
+let bubbleFix = null; // what the "fix it" button on this message would do
 const badgeEl = document.getElementById('badge');
 const statusEl = document.getElementById('statusline');
 
@@ -303,8 +305,10 @@ buddyEl.addEventListener('error', () => {
   console.warn(`clippy: missing ${buddyEl.src} — run \`npm run make-buddies\``);
 });
 
-function showBubble(text) {
+function showBubble(text, { fix = null } = {}) {
   bubbleText.textContent = text;
+  bubbleFix = fix;
+  btnFix.classList.toggle('hidden', !fix);
   usageEl.classList.add('hidden'); // news wins over the token panel
   menuEl.classList.add('hidden');
   bubbleEl.classList.remove('hidden');
@@ -931,16 +935,22 @@ function handleEvent(evt) {
     }
     case 'info':
       // "Now watching …" — say hello.
-      greetingUntil = Date.now() + 2600;
-      refreshPose();
-      setTimeout(refreshPose, 2700);
+      if (!evt.sticky) {
+        greetingUntil = Date.now() + 2600;
+        refreshPose();
+        setTimeout(refreshPose, 2700);
+      }
       if (!activeRequestId) {
-        showBubble(evt.message);
-        setTimeout(() => {
-          if (!activeRequestId && ![...pending.values()].some((p) => !p.acknowledged)) {
-            hideBubble();
-          }
-        }, 4000);
+        showBubble(evt.message, { fix: evt.fix });
+        // Something you have to act on stays until you dismiss it; ordinary
+        // chatter gets out of the way on its own.
+        if (!evt.sticky) {
+          setTimeout(() => {
+            if (!activeRequestId && ![...pending.values()].some((p) => !p.acknowledged)) {
+              hideBubble();
+            }
+          }, 4000);
+        }
       }
       break;
   }
@@ -1042,6 +1052,10 @@ document.getElementById('btn-qok').addEventListener('click', () => {
 // Same question, other screen: raise the terminal where the picker is waiting,
 // then stand on the prompt.
 btnQgoto.addEventListener('click', () => window.clippyAPI.openWindow({ point: true }));
+
+btnFix.addEventListener('click', () => {
+  if (bubbleFix) window.clippyAPI.fix(bubbleFix);
+});
 
 document.getElementById('btn-ok').addEventListener('click', () => {
   for (const p of pending.values()) p.acknowledged = true;

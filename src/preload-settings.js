@@ -12,6 +12,8 @@ contextBridge.exposeInMainWorld('clippySettings', {
   ready: () => ipcRenderer.send('clippy-settings-ready'),
   setSetting: (key, value) => ipcRenderer.send('clippy-set-setting', { key, value }),
   showBuddy: (sessionId) => ipcRenderer.send('clippy-settings-show', sessionId),
+  // Give one project a buddy of its own; '' hands it back to the mode.
+  assign: (name, character) => ipcRenderer.send('clippy-settings-assign', { name, character }),
   // Links open in the user's browser, never inside this window.
   openExternal: (url) => ipcRenderer.send('clippy-open-external', url),
 });

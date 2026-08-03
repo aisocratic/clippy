@@ -200,6 +200,19 @@ function SHOW_RUN() {
   });
   at(6500, { ref: 'stop', event: evt({ kind: 'request-closed', outcome: 'timeout', timedOut: true }) });
 
+  at(700, {
+    note: "Something you have to act on — it stays until you dismiss it",
+    event: evt({
+      kind: 'info',
+      sticky: true,
+      fix: 'accessibility',
+      message:
+        'macOS has to let me control other apps first. I opened the right pane: ' +
+        'tick Clippy (Electron) under Privacy & Security → Accessibility, then try again.',
+    }),
+  });
+  at(5000, { action: { do: 'poke-menu', item: 'btn-ok' } });
+
   at(700, { note: 'Click the buddy: stats & token usage', action: { do: 'usage' } });
   at(4500, { action: { do: 'usage-close' } });
 
@@ -773,6 +786,7 @@ const server = http.createServer(async (req, res) => {
       autoPerch: true,
       character: 'clip',
       characterMode: 'same',
+      characterByProject: {},
       size: 'medium',
       characters: allCharacters(),
       characterModes: CHARACTER_MODES,
@@ -780,8 +794,8 @@ const server = http.createServer(async (req, res) => {
       actions: ACTIONS,
       port: 43117,
       sessions: [
-        { sessionId: 'demo-1', name: NAME, color: '#4fa3d1', status: 'working' },
-        { sessionId: 'demo-2', name: 'clippy', color: '#6cbf6c', status: 'waiting' },
+        { sessionId: 'demo-1', name: NAME, color: '#4fa3d1', status: 'working', character: 'clip' },
+        { sessionId: 'demo-2', name: 'clippy', color: '#6cbf6c', status: 'waiting', character: 'cat' },
       ],
     });
   }
