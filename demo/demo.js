@@ -372,6 +372,11 @@ window.addEventListener('message', async (e) => {
       walkToPrompt();
       break;
 
+    case 'open-settings':
+      log('in', 'openSettings', 'would open the settings window (/settings/ here)');
+      window.open('/settings/', '_blank', 'noopener');
+      break;
+
     case 'hide':
       log('in', 'hide', 'would hide the window (kept visible here so you can carry on)');
       break;

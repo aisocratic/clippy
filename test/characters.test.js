@@ -5,7 +5,14 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { CHARACTERS, SIZES, sizeList, customThemes } = require('../src/characters');
+const {
+  CHARACTERS,
+  SIZES,
+  sizeList,
+  customThemes,
+  allCharacters,
+  characterFor,
+} = require('../src/characters');
 
 const tmpThemes = (themes) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clippy-themes-'));
@@ -29,6 +36,30 @@ test('the drawn cast and the sizes line up with what the menus need', () => {
   );
   // Whole-number scaling only: pixel art at 1.5x is mush.
   for (const s of sizeList()) assert.equal(s.buddy % 32, 0, `${s.id} is not a whole multiple`);
+});
+
+test('each mode decides who a session gets', () => {
+  const cast = allCharacters().map((c) => c.id);
+  const picked = { character: 'cat', characterMode: 'same' };
+
+  assert.equal(characterFor(picked, 'billing-api'), 'cat', 'same: everyone gets your pick');
+
+  // One per project: stable for a name, and derived from it rather than the
+  // session id, so restarting a session doesn't change who shows up.
+  const byProject = { ...picked, characterMode: 'default' };
+  const first = characterFor(byProject, 'billing-api');
+  assert.equal(characterFor(byProject, 'billing-api'), first);
+  assert.ok(cast.includes(first));
+
+  // Random: whatever the roll lands on.
+  const random = { ...picked, characterMode: 'random' };
+  assert.equal(characterFor(random, 'x', () => 0), cast[0]);
+  assert.equal(characterFor(random, 'x', () => 0.999), cast[cast.length - 1]);
+
+  // A character that has since been deleted (a sprite pack you removed) must
+  // not leave a buddy with no art at all.
+  assert.ok(cast.includes(characterFor({ character: 'gone', characterMode: 'same' }, 'x')));
+  assert.ok(cast.includes(characterFor({}, 'x')), 'and no mode at all still works');
 });
 
 test('a dropped-in sprite sheet becomes a character', () => {

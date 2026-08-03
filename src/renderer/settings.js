@@ -134,9 +134,14 @@ function renderCast() {
   host.replaceChildren();
 
   for (const character of state.characters) {
+    const picking = (state.characterMode || 'same') === 'same';
     const card = document.createElement('div');
-    card.className = `buddy-card${character.id === state.character ? ' on' : ''}`;
-    card.title = `Use ${character.label}`;
+    card.className = `buddy-card${picking && character.id === state.character ? ' on' : ''}${
+      picking ? '' : ' gallery'
+    }`;
+    card.title = picking
+      ? `Use ${character.label}`
+      : `Clippy is choosing for you — switch to "Same for all" to pick ${character.label}`;
 
     const pick = document.createElement('span');
     pick.className = 'pick';
@@ -169,9 +174,31 @@ function renderCast() {
     }
 
     card.append(pick, name, origin, poses);
-    card.addEventListener('click', () => set('character', character.id));
+    // Picking a character also means "and use that one" — the friendliest read
+    // of clicking a face while Clippy is choosing at random.
+    card.addEventListener('click', () => {
+      if (!picking) set('characterMode', 'same');
+      set('character', character.id);
+    });
     host.appendChild(card);
   }
+}
+
+function renderModes() {
+  const host = document.getElementById('modes');
+  const note = document.getElementById('mode-note');
+  const modes = state.characterModes || [];
+  host.replaceChildren();
+
+  for (const mode of modes) {
+    const btn = document.createElement('button');
+    btn.className = mode.id === state.characterMode ? 'on' : '';
+    btn.textContent = mode.label;
+    btn.addEventListener('click', () => set('characterMode', mode.id));
+    host.appendChild(btn);
+  }
+  const current = modes.find((m) => m.id === state.characterMode);
+  note.textContent = current ? current.note : '';
 }
 
 function renderSizes() {
@@ -336,6 +363,7 @@ function set(key, value) {
 }
 
 function render() {
+  renderModes();
   renderSizes();
   renderCast();
   renderSwitches();

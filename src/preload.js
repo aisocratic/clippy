@@ -18,6 +18,8 @@ contextBridge.exposeInMainWorld('clippyAPI', {
   undock: () => ipcRenderer.send('clippy-undock'),
   // "Show me where": walk over to this session's prompt and point at it.
   pointAtPrompt: () => ipcRenderer.send('clippy-point'),
+  // Everything that isn't about this one session lives in the settings window.
+  openSettings: () => ipcRenderer.send('clippy-open-settings'),
   // Grow to fit a card (as tall as its contents need), or shrink back to a
   // bare paperclip.
   setMode: (mode, height) => ipcRenderer.send('clippy-mode', { mode, height }),

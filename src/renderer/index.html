@@ -93,8 +93,8 @@
     </div>
 
     <!-- Click the buddy and the menu drops out from under him: what you can do
-         with this session first, then how it looks — the long lists (character,
-         size, switches) fold away in submenus so the top level stays short. -->
+         with *this* session, then the app itself. Everything that applies to
+         every buddy lives in the settings window (📎 in the menu bar). -->
     <div id="menu" class="hidden">
       <div id="menu-head">
         <span id="menu-name">session</span><span id="menu-status">idle</span>
@@ -103,7 +103,10 @@
       <button id="menu-waiting" class="menu-item hidden"><span class="mi">📨</span>See what's waiting</button>
       <button id="menu-goto" class="menu-item hidden"
               title="Bring this session's terminal window to the front and perch Clippy on it"><span
-              class="mi">↗</span>Go to the agent's terminal</button>
+              class="mi">↗</span>Go to the terminal</button>
+      <button id="menu-point" class="menu-item hidden"
+              title="Walk over to this session's prompt and point at the line to type on"><span
+              class="mi">👇</span>Show me the prompt</button>
       <button id="menu-undock" class="menu-item hidden"
               title="Stop riding this window and go back to the screen corner"><span
               class="mi">📌</span>Let go of this window</button>
@@ -111,26 +114,7 @@
 
       <div class="menu-sep"></div>
 
-      <button id="menu-answering" class="menu-item" aria-expanded="false"><span
-              class="mi">⚙</span>What Clippy answers<span class="caret">▸</span></button>
-      <div id="toggles" class="submenu hidden">
-        <button id="toggle-approvals" title="Answer permission requests from Clippy instead of the terminal">approvals</button>
-        <button id="toggle-review" title="Offer a review box when Claude finishes a turn">review</button>
-        <button id="toggle-questions" title="Answer Claude's multiple-choice questions from Clippy instead of the terminal">questions</button>
-        <button id="toggle-perch" title="Show up on this session's own terminal window instead of the corner of the screen">perch</button>
-      </div>
-
-      <button id="menu-look" class="menu-item" aria-expanded="false"><span
-              class="mi">🎨</span>Buddy &amp; size<span class="caret">▸</span></button>
-      <div id="look" class="submenu hidden">
-        <div class="submenu-label">Character</div>
-        <div id="characters" class="chips"></div>
-        <div class="submenu-label">Size</div>
-        <div id="sizes" class="chips"></div>
-      </div>
-
-      <div class="menu-sep"></div>
-
+      <button id="menu-settings" class="menu-item"><span class="mi">⚙</span>Settings…</button>
       <button id="menu-hide" class="menu-item dim"><span class="mi">×</span>Hide Clippy</button>
     </div>
 

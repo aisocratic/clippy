@@ -158,11 +158,13 @@ know.
   window its session runs in (its editor or terminal), follows it around, and
   leaves when you've answered. Turn it off with `perch` in the click menu's Settings, or the menu bar
   if you'd rather they always sit in the screen corner.
-- **Click Clippy** (or right-click — either button) and a menu drops out from
-  under him, with what you can *do* first and how he *looks* below it:
+- **Click Clippy** (or right-click — either button) and a short menu drops out
+  from under him, about *this* session:
   - **📨 See what's waiting** — re-open the latest message, when there is one.
-  - **↗ Go to the agent's terminal** — raises the window that session runs in
-    and sends Clippy over to perch on it.
+  - **↗ Go to the terminal** — raises the window that session runs in and sends
+    Clippy over to perch on it.
+  - **👇 Show me the prompt** — he walks to that session's input line and points
+    at it. From the corner he goes there first.
   - **📌 Let go of this window** — unperch (only while riding a window).
   - **📊 Stats & token usage** — how much context is **left** (progress bar
     turning amber past 60% and red past 85%, 1M window detected automatically),
@@ -170,9 +172,8 @@ know.
     across every session on the machine. Those are *spend* numbers — Claude Code
     keeps your 5-hour and weekly allowances server-side, so ask it for `/usage`
     to see what remains.
-  - **⚙ What Clippy answers** — a submenu of switches: `approvals`, `review`,
-    `questions`, `perch`.
-  - **🎨 Buddy & size** — pick a character and one of three sizes.
+  - **⚙ Settings…** — opens the settings window (everything that applies to all
+    buddies lives there, not here).
   - **× Hide Clippy**.
 - **“Answer here”**: when a card goes back to the terminal — you clicked
   **Ask me in terminal ↗**, **Move to terminal ↗** or **Answer in terminal ✓**,
@@ -301,9 +302,15 @@ and read, and it has four sections:
 
 - **Buddies** — every character with all of its animations playing side by
   side, named (idle, needs you, walking, pointing, asleep, cheering) plus any
-  unclaimed rows of a sprite sheet. Click one to use it everywhere; pick a size
-  next to it. There's a link to [openpets.dev/gallery](https://openpets.dev/gallery)
-  for downloading more.
+  unclaimed rows of a sprite sheet, and a size picker. **Who each session gets**
+  is a choice of three:
+  - **Same for all** — every session uses the buddy you click.
+  - **One per project** — Clippy picks from the cast using the project name, so
+    the same repo always gets the same buddy and parallel agents rarely match.
+  - **Random** — a fresh buddy per session, drawn when it first reports in.
+
+  There's a link to [openpets.dev/gallery](https://openpets.dev/gallery) for
+  downloading more.
 - **What Clippy answers** — the switches, each spelling out what it means for
   Claude Code. Turn one off and that moment goes back to the terminal exactly as
   if Clippy weren't running.

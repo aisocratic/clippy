@@ -247,6 +247,10 @@ code {
   transform: translateY(-1px);
 }
 
+.buddy-card.gallery .pick {
+  display: none; /* nothing to pick while Clippy is choosing */
+}
+
 .buddy-card.on {
   border-color: var(--accent);
   background: #1b212c;

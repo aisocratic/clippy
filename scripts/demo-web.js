@@ -29,7 +29,7 @@ const path = require('node:path');
 
 const { describeToolCall, activityLabel, toHookResponse } = require('../src/decisions');
 const { PALETTE } = require('../src/identity');
-const { allCharacters, sizeList } = require('../src/characters');
+const { allCharacters, sizeList, CHARACTER_MODES } = require('../src/characters');
 const { ACTIONS } = require('../src/actions');
 
 const args = process.argv.slice(2);
@@ -747,8 +747,10 @@ const server = http.createServer(async (req, res) => {
       answerQuestions: true,
       autoPerch: true,
       character: 'clip',
+      characterMode: 'same',
       size: 'medium',
       characters: allCharacters(),
+      characterModes: CHARACTER_MODES,
       sizes: sizeList(),
       actions: ACTIONS,
       port: 43117,

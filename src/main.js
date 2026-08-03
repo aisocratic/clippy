@@ -22,7 +22,7 @@ const { DecisionBroker, toHookResponse, describeToolCall } = require('./decision
 const { DriveSession } = require('./sdk-session');
 const { checkDrift } = require('../bin/clippy-hooks');
 const { identityFor } = require('./identity');
-const { SIZES, sizeList, allCharacters } = require('./characters');
+const { SIZES, sizeList, allCharacters, characterFor, CHARACTER_MODES } = require('./characters');
 const { ACTIONS } = require('./actions');
 const { windowActionFor } = require('./visibility');
 const {
@@ -79,6 +79,7 @@ const settings = {
   answerQuestions: true, // answer AskUserQuestion from the Clippy UI
   autoPerch: true, // appear on the session's own window, not the screen corner
   character: 'clip', // which buddy you get — see CHARACTERS
+  characterMode: 'same', // how each session's buddy is chosen — see CHARACTER_MODES
   size: 'medium', // how big that buddy is drawn, and stays
 };
 
@@ -87,6 +88,7 @@ const settings = {
 // `src/renderer/assets/themes/` is selectable without touching the code.
 const CHOICES = {
   character: () => allCharacters().map((c) => c.id),
+  characterMode: () => CHARACTER_MODES.map((m) => m.id),
   size: () => Object.keys(SIZES),
 };
 const settingsFile = () => path.join(app.getPath('userData'), 'clippy-settings.json');
@@ -112,6 +114,8 @@ function setSetting(key, value) {
   } catch (err) {
     console.error('clippy: could not save settings', err);
   }
+  // Who each buddy is depends on both of these, so redo the casting first.
+  if (key === 'character' || key === 'characterMode') recast();
   pushSettingsState();
   sendSettings();
   // A different buddy size is a different window; the renderer will also ask
@@ -121,16 +125,32 @@ function setSetting(key, value) {
 }
 
 /**
- * What the renderer gets: the settings plus the menus it has to build out of
- * them, so the cast and the size steps are defined in exactly one place.
+ * What a renderer gets: the settings plus the rosters it builds menus from, so
+ * the cast and the size steps are defined in exactly one place.
+ *
+ * A buddy is told which character *it* is rather than which one is selected —
+ * with "one per project" or "random" they aren't the same thing.
  */
-function settingsPayload() {
-  return { ...settings, characters: allCharacters(), sizes: sizeList() };
+function settingsPayload(buddy) {
+  return {
+    ...settings,
+    character: buddy ? buddy.character : settings.character,
+    characters: allCharacters(),
+    characterModes: CHARACTER_MODES,
+    sizes: sizeList(),
+  };
 }
 
 function sendSettings() {
-  for (const { win } of buddies.values()) {
-    win.webContents.send('clippy-settings', settingsPayload());
+  for (const buddy of buddies.values()) {
+    buddy.win.webContents.send('clippy-settings', settingsPayload(buddy));
+  }
+}
+
+/** Re-cast every buddy — the mode (or the pick) changed under them. */
+function recast() {
+  for (const buddy of buddies.values()) {
+    buddy.character = characterFor(settings, buddy.name);
   }
 }
 
@@ -286,7 +306,7 @@ function buddyFor(key, name = '') {
     },
   });
   win.webContents.on('did-finish-load', () => {
-    win.webContents.send('clippy-settings', settingsPayload());
+    win.webContents.send('clippy-settings', settingsPayload(buddies.get(key)));
     // Only offer "open the session's window" when we actually know where it is.
     win.webContents.send('clippy-event', {
       kind: 'can-open',
@@ -295,7 +315,17 @@ function buddyFor(key, name = '') {
   });
   win.on('closed', () => buddies.delete(key));
 
-  const buddy = { win, slot, name: identity.name, sessionId: key, pinned: false, dock: null };
+  const buddy = {
+    win,
+    slot,
+    name: identity.name,
+    sessionId: key,
+    pinned: false,
+    dock: null,
+    // Drawn once, when this session first reports in: a random buddy that
+    // re-rolled on every settings change would be nobody in particular.
+    character: characterFor(settings, identity.name),
+  };
   buddies.set(key, buddy);
   pushSettingsState();
   return buddy;
@@ -445,7 +475,14 @@ async function perchOn(key, { raise = false, auto = false, mode = null } = {}) {
     if (raise) {
       buddy.dock.auto = false; // now it's a perch you asked for
       buddy.pinned = true;
-      revealWindow(buddy.dock.target).catch(() => {});
+      const bounds = await revealTarget(buddy, key);
+      if (bounds) buddy.dock.bounds = bounds;
+      else {
+        // The perch is riding a window we can no longer raise — let go and try
+        // again from scratch rather than pretending the click did something.
+        undock(buddy);
+        return perchOn(key, { raise, auto, mode });
+      }
     }
     return true;
   }
@@ -464,13 +501,7 @@ async function perchOn(key, { raise = false, auto = false, mode = null } = {}) {
   }
 
   try {
-    // The process-tree walk only has to happen once per session. The project
-    // name goes along for the ride: an editor with several project windows
-    // open titles each one after its folder, which is how we pick the right
-    // one instead of guessing.
-    const hint = path.basename(tracker.cwdFor(key) || '') || buddy.name;
-    const target = (buddy.target ||= await resolveTarget(term, hint));
-    const bounds = target && (raise ? await revealWindow(target) : await windowBounds(target));
+    const bounds = raise ? await revealTarget(buddy, key) : await measureTarget(buddy, key);
     if (!bounds) {
       if (!auto) {
         // The app is running but shows no windows at all — either it really has
@@ -613,6 +644,46 @@ function undock(buddy) {
   buddy.dock = null;
   placeBuddy(buddy, buddy.mode || 'compact');
 }
+
+/**
+ * Find this session's window, raise it, and report where it ended up.
+ *
+ * The resolved target (app pid, tty) is cached because the process-tree walk
+ * isn't free — but a cached target goes stale the moment you close that
+ * terminal and open another, and a stale one fails *silently*: AppleScript
+ * happily does nothing to a window that isn't there. That's why "go to
+ * terminal" would sometimes just… not. So: try the cache, and if that comes
+ * back empty, throw it away and resolve again before giving up.
+ */
+async function revealTarget(buddy, key, { measureOnly = false } = {}) {
+  const hint = path.basename(tracker.cwdFor(key) || '') || buddy.name;
+  let lastError = null;
+
+  for (const fresh of [false, true]) {
+    if (fresh) buddy.target = null;
+    const term = tracker.terminalFor(key);
+    if (!term) return null;
+
+    try {
+      // The project name goes along for the ride: an editor with several
+      // project windows open titles each one after its folder, which is how we
+      // pick the right one instead of guessing.
+      buddy.target ||= await resolveTarget(term, hint);
+      if (!buddy.target) continue;
+      const bounds = measureOnly
+        ? await windowBounds(buddy.target)
+        : await revealWindow(buddy.target);
+      if (bounds) return bounds;
+    } catch (err) {
+      lastError = err;
+    }
+  }
+
+  if (lastError) throw lastError;
+  return null;
+}
+
+const measureTarget = (buddy, key) => revealTarget(buddy, key, { measureOnly: true });
 
 /* ---------------- Walking over to point at the prompt ---------------- */
 
@@ -1287,6 +1358,7 @@ app.whenReady().then(async () => {
       e.sender.send('clippy-settings-state', settingsState());
     }
   });
+  ipcMain.on('clippy-open-settings', () => openSettingsWindow());
   ipcMain.on('clippy-open-external', (_e, url) => {
     // Only ever hand the OS an https link — this window must not become a
     // browser, and it must not be talked into opening anything else.

@@ -2,6 +2,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const { hash } = require('./identity');
 
 /**
  * Who Clippy can be, and how big.
@@ -26,6 +27,29 @@ const POSES = ['idle', 'excited', 'walk', 'point', 'sleep', 'cheer'];
 const CHARACTERS = [
   { id: 'clip', label: '📎 Clippy', poses: POSES, perColour: true },
   { id: 'cat', label: '🐱 Pixel cat', poses: POSES },
+];
+
+/**
+ * How each session's buddy gets its character. With more than one agent running
+ * at a time, "who is this one?" matters as much as what it says.
+ */
+const CHARACTER_MODES = [
+  {
+    id: 'same',
+    label: 'Same for all',
+    note: 'Every session uses the buddy you pick below.',
+  },
+  {
+    id: 'default',
+    label: 'One per project',
+    note: 'Clippy picks from the cast using the project name — the same project ' +
+      'always gets the same buddy, and parallel agents rarely match.',
+  },
+  {
+    id: 'random',
+    label: 'Random',
+    note: 'A fresh buddy for every session, drawn when it first reports in.',
+  },
 ];
 
 /**
@@ -146,4 +170,32 @@ function allCharacters() {
   return [...CHARACTERS, ...custom];
 }
 
-module.exports = { CHARACTERS, POSES, SIZES, sizeList, customThemes, allCharacters, THEMES_DIR };
+/**
+ * Which character this session's buddy should be.
+ *
+ * @param {object} settings  the app's settings (mode + the picked character)
+ * @param {string} name      the project name — what "one per project" hashes on
+ * @param {function} [random] injectable for tests
+ */
+function characterFor(settings, name, random = Math.random) {
+  const cast = allCharacters();
+  const has = (id) => cast.some((c) => c.id === id);
+  const mode = settings.characterMode || 'same';
+
+  if (mode === 'random') return cast[Math.floor(random() * cast.length)].id;
+  if (mode === 'default') return cast[hash(String(name || 'clippy')) % cast.length].id;
+  // 'same', and the safety net for a character that has since been removed.
+  return has(settings.character) ? settings.character : cast[0].id;
+}
+
+module.exports = {
+  CHARACTERS,
+  CHARACTER_MODES,
+  POSES,
+  SIZES,
+  sizeList,
+  customThemes,
+  allCharacters,
+  characterFor,
+  THEMES_DIR,
+};

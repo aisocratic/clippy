@@ -44,10 +44,6 @@ const driveTitle = document.getElementById('drive-title');
 const driveTranscript = document.getElementById('drive-transcript');
 const driveActivity = document.getElementById('drive-activity');
 const driveInput = document.getElementById('drive-input');
-const toggleApprovals = document.getElementById('toggle-approvals');
-const toggleReview = document.getElementById('toggle-review');
-const toggleQuestions = document.getElementById('toggle-questions');
-const togglePerch = document.getElementById('toggle-perch');
 const buddyEl = document.getElementById('buddy');
 
 const btnOpen = document.getElementById('btn-open');
@@ -65,12 +61,7 @@ const menuStatus = document.getElementById('menu-status');
 const menuWaiting = document.getElementById('menu-waiting');
 const menuGoto = document.getElementById('menu-goto');
 const menuUndock = document.getElementById('menu-undock');
-const menuAnswering = document.getElementById('menu-answering');
-const menuLook = document.getElementById('menu-look');
-const togglesEl = document.getElementById('toggles');
-const lookEl = document.getElementById('look');
-const charactersEl = document.getElementById('characters');
-const sizesEl = document.getElementById('sizes');
+const menuPoint = document.getElementById('menu-point');
 
 const sheetEl = document.getElementById('buddy-sheet');
 let sheetTimer = null;
@@ -231,7 +222,6 @@ function applyCharacter() {
   if (!sheet) stopSheet();
   applySize();
   setPose(pose);
-  renderChips();
 }
 
 /**
@@ -280,23 +270,6 @@ function applySize() {
   document.documentElement.style.setProperty('--buddy', `${buddyPx()}px`);
 }
 
-/** Character and size pickers, built from the roster main sent us. */
-function renderChips() {
-  const fill = (host, items, current, key, label) => {
-    host.replaceChildren();
-    for (const item of items) {
-      const btn = document.createElement('button');
-      btn.className = `chip${item.id === current ? ' on' : ''}`;
-      btn.textContent = label(item);
-      btn.title = label(item);
-      btn.addEventListener('click', () => window.clippyAPI.setSetting(key, item.id));
-      host.appendChild(btn);
-    }
-  };
-  fill(charactersEl, settings.characters || [], settings.character, 'character', (c) => c.label);
-  fill(sizesEl, settings.sizes || [], settings.size, 'size', (s) => SIZE_LABEL[s.id] || s.id);
-}
-
 // The art is generated, so a missing file means the build didn't run — show
 // nothing rather than a broken-image icon, and say why in the console.
 buddyEl.addEventListener('error', () => {
@@ -329,6 +302,7 @@ function syncMenuItems() {
   const waiting = [...pending.values()].some((p) => !p.acknowledged);
   menuWaiting.classList.toggle('hidden', !waiting);
   menuGoto.classList.toggle('hidden', !canOpen);
+  menuPoint.classList.toggle('hidden', !canOpen);
   menuUndock.classList.toggle('hidden', !docked);
   menuName.textContent = me.name;
   menuStatus.textContent = SHORT_STATUS[myStatus] || myStatus;
@@ -343,17 +317,6 @@ function openMenu() {
 function closeMenu() {
   if (!menuOpen()) return;
   menuEl.classList.add('hidden');
-  // Next open starts from the short list again.
-  showSubmenu(menuAnswering, togglesEl, false);
-  showSubmenu(menuLook, lookEl, false);
-  syncMode();
-}
-
-/** Submenus open in place — the window grows around them. */
-function showSubmenu(item, panel, on) {
-  panel.classList.toggle('hidden', !on);
-  item.setAttribute('aria-expanded', String(on));
-  item.querySelector('.caret').textContent = on ? '▾' : '▸';
   syncMode();
 }
 
@@ -380,17 +343,6 @@ function render() {
   // Perching, a terminal we can find, a message waiting: all of it can change
   // while the menu is on screen.
   if (menuOpen()) syncMenuItems();
-
-  const SWITCHES = [
-    [toggleApprovals, settings.approvals, 'answer permission requests'],
-    [toggleReview, settings.reviewOnStop, 'review when Claude finishes'],
-    [toggleQuestions, settings.answerQuestions, "answer Claude's questions"],
-    [togglePerch, settings.autoPerch, "perch on the session's window"],
-  ];
-  for (const [el, on, label] of SWITCHES) {
-    el.classList.toggle('on', Boolean(on));
-    el.textContent = `${on ? '✓' : '✗'} ${label}`;
-  }
 
   syncMode();
 }
@@ -993,19 +945,6 @@ document.getElementById('btn-qok').addEventListener('click', () => {
 // then stand on the prompt.
 btnQgoto.addEventListener('click', () => window.clippyAPI.openWindow({ point: true }));
 
-toggleApprovals.addEventListener('click', () => {
-  window.clippyAPI.setSetting('approvals', !settings.approvals);
-});
-toggleReview.addEventListener('click', () => {
-  window.clippyAPI.setSetting('reviewOnStop', !settings.reviewOnStop);
-});
-toggleQuestions.addEventListener('click', () => {
-  window.clippyAPI.setSetting('answerQuestions', !settings.answerQuestions);
-});
-togglePerch.addEventListener('click', () => {
-  window.clippyAPI.setSetting('autoPerch', !settings.autoPerch);
-});
-
 document.getElementById('btn-ok').addEventListener('click', () => {
   for (const p of pending.values()) p.acknowledged = true;
   hideBubble();
@@ -1068,12 +1007,17 @@ menuGoto.addEventListener('click', () => {
   window.clippyAPI.openWindow();
 });
 
-menuAnswering.addEventListener('click', () => {
-  showSubmenu(menuAnswering, togglesEl, togglesEl.classList.contains('hidden'));
+// Walk over to this session's prompt and point at it — from perched, that's
+// just the walk; from the corner, go there first.
+menuPoint.addEventListener('click', () => {
+  closeMenu();
+  if (docked) window.clippyAPI.pointAtPrompt();
+  else window.clippyAPI.openWindow({ point: true });
 });
 
-menuLook.addEventListener('click', () => {
-  showSubmenu(menuLook, lookEl, lookEl.classList.contains('hidden'));
+document.getElementById('menu-settings').addEventListener('click', () => {
+  closeMenu();
+  window.clippyAPI.openSettings();
 });
 
 document.getElementById('menu-stats').addEventListener('click', () => {
