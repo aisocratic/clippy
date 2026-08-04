@@ -29,7 +29,7 @@ const path = require('node:path');
 
 const { describeToolCall, activityLabel, toHookResponse } = require('../src/decisions');
 const { PALETTE } = require('../src/identity');
-const { allCharacters, sizeList, CHARACTER_MODES } = require('../src/characters');
+const { allCharacters, sizeList } = require('../src/characters');
 const { ACTIONS } = require('../src/actions');
 const { PLANS, SESSION_WINDOW_MS, WEEK_WINDOW_MS } = require('../src/usage');
 
@@ -214,7 +214,10 @@ function SHOW_RUN() {
   });
   at(5000, { action: { do: 'poke-menu', item: 'btn-ok' } });
 
-  at(700, { note: 'Click the buddy: stats & token usage', action: { do: 'usage' } });
+  at(700, {
+    note: 'Click the buddy: one panel — status, token usage, and a box to reply in',
+    action: { do: 'usage' },
+  });
   at(4500, { action: { do: 'usage-close' } });
 
   // Perched on the session's own window, Clippy walks down to the input line
@@ -901,14 +904,11 @@ const server = http.createServer(async (req, res) => {
       reviewOnStop: true,
       answerQuestions: true,
       autoPerch: true,
-      character: 'clip',
-      characterMode: 'same',
       characterByProject: {},
       size: 'medium',
       plan: 'unknown', // the default the panel has to degrade honestly to
       planLimits: {},
       characters: allCharacters(),
-      characterModes: CHARACTER_MODES,
       sizes: sizeList(),
       plans: PLANS,
       actions: ACTIONS,

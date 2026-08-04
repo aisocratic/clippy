@@ -23,7 +23,7 @@ const { DecisionBroker, toHookResponse, describeToolCall } = require('./decision
 const { DriveSession } = require('./sdk-session');
 const { checkDrift } = require('../bin/clippy-hooks');
 const { identityFor } = require('./identity');
-const { SIZES, sizeList, allCharacters, characterFor, CHARACTER_MODES } = require('./characters');
+const { SIZES, sizeList, allCharacters, characterFor } = require('./characters');
 const { ACTIONS } = require('./actions');
 const { windowActionFor } = require('./visibility');
 const {
@@ -33,8 +33,11 @@ const {
   windowBounds,
   dockPosition,
   promptPosition,
+  typeAndSubmit,
 } = require('./terminal');
-const { sessionUsage, usageWindows, planLimitsFor, cleanLimits, PLANS } = require('./usage');
+const { sessionUsage, lastAssistantText, usageWindows, planLimitsFor, cleanLimits, PLANS } =
+  require('./usage');
+const { DEV_SESSION, eventsFor, storyList, devUsage } = require('./dev-scenarios');
 
 const PORT = Number(process.env.CLIPPY_PORT || 43117);
 
@@ -79,8 +82,6 @@ const settings = {
   reviewOnStop: true, // offer a review box when Claude finishes a turn
   answerQuestions: true, // answer AskUserQuestion from the Clippy UI
   autoPerch: true, // appear on the session's own window, not the screen corner
-  character: 'clip', // which buddy you get — see CHARACTERS
-  characterMode: 'same', // how each session's buddy is chosen — see CHARACTER_MODES
   characterByProject: {}, // project name -> character id, when you've picked one
   size: 'medium', // how big that buddy is drawn, and stays
   plan: 'unknown', // which plan's allowance the usage bars are measured against
@@ -88,29 +89,35 @@ const settings = {
 };
 
 // Settings that aren't simple on/off switches, with the values they accept.
-// The cast is read fresh each time so a sprite theme dropped into
-// `src/renderer/assets/themes/` is selectable without touching the code.
 const CHOICES = {
-  character: () => allCharacters().map((c) => c.id),
-  characterMode: () => CHARACTER_MODES.map((m) => m.id),
   size: () => Object.keys(SIZES),
   plan: () => PLANS.map((p) => p.id),
 };
+
+// The cast is read fresh each time so a sprite theme dropped into
+// `src/renderer/assets/themes/` can be assigned without touching the code.
+const characterIds = () => allCharacters().map((c) => c.id);
+
 const settingsFile = () => path.join(app.getPath('userData'), 'clippy-settings.json');
 
 function loadSettings() {
   try {
-    Object.assign(settings, JSON.parse(fs.readFileSync(settingsFile(), 'utf8')));
+    const saved = JSON.parse(fs.readFileSync(settingsFile(), 'utf8'));
+    // Only the keys this build still has. A file written by an older one can
+    // carry retired settings — `characterMode` and the single `character` it
+    // picked, from when you chose *how* buddies were cast — and copying those
+    // back in would keep writing them out forever.
+    for (const key of Object.keys(settings)) if (key in saved) settings[key] = saved[key];
   } catch {
     // first run / unreadable -> defaults
   }
 }
 
-/** Give one project a buddy of its own (or '' to let the mode decide again). */
+/** Give one project a buddy of its own (or '' to go back to the automatic one). */
 function assignCharacter(name, character) {
   if (!name) return;
   const next = { ...settings.characterByProject };
-  if (character && CHOICES.character().includes(character)) next[name] = character;
+  if (character && characterIds().includes(character)) next[name] = character;
   else delete next[name];
   settings.characterByProject = next;
   saveSettings();
@@ -139,8 +146,6 @@ function setSetting(key, value) {
     settings[key] = Boolean(value);
   }
   saveSettings();
-  // Who each buddy is depends on both of these, so redo the casting first.
-  if (key === 'character' || key === 'characterMode') recast();
   pushSettingsState();
   sendSettings();
   // A different buddy size is a different window; the renderer will also ask
@@ -153,15 +158,15 @@ function setSetting(key, value) {
  * What a renderer gets: the settings plus the rosters it builds menus from, so
  * the cast and the size steps are defined in exactly one place.
  *
- * A buddy is told which character *it* is rather than which one is selected —
- * with "one per project" or "random" they aren't the same thing.
+ * A buddy is told which character *it* is, which is the only "selected
+ * character" the app has: every project is cast on its own, so the settings
+ * window is handed the sessions and their buddies instead.
  */
 function settingsPayload(buddy) {
   return {
     ...settings,
-    character: buddy ? buddy.character : settings.character,
+    ...(buddy ? { character: buddy.character } : null),
     characters: allCharacters(),
-    characterModes: CHARACTER_MODES,
     sizes: sizeList(),
     plans: PLANS,
   };
@@ -173,7 +178,7 @@ function sendSettings() {
   }
 }
 
-/** Re-cast every buddy — the mode (or the pick) changed under them. */
+/** Re-cast every buddy — a project was given a buddy of its own. */
 function recast() {
   for (const buddy of buddies.values()) {
     buddy.character = characterFor(settings, buddy.name);
@@ -197,14 +202,16 @@ function replaceAll() {
 let settingsWin = null;
 
 /**
- * The window behind the 📎 in the menu bar: who the buddies are, what they're
- * allowed to answer, and what they do with a session. A normal window — this is
- * the one part of Clippy you sit and read.
+ * The window behind the 📎 in the menu bar: who the buddies are, what they cost
+ * you in tokens, and what they do with a session. A normal window — this is the
+ * one part of Clippy you sit and read. The on/off switches stay in the tray's
+ * Quick settings, where they're reachable without opening anything.
  */
-function openSettingsWindow() {
+function openSettingsWindow(section) {
   if (settingsWin && !settingsWin.isDestroyed()) {
     settingsWin.show();
     settingsWin.focus();
+    if (section) settingsWin.webContents.executeJavaScript(`location.hash = ${JSON.stringify(`#${section}`)};`);
     return settingsWin;
   }
 
@@ -224,7 +231,10 @@ function openSettingsWindow() {
     },
   });
 
-  settingsWin.loadFile(path.join(__dirname, 'renderer', 'settings.html'));
+  settingsWin.loadFile(
+    path.join(__dirname, 'renderer', 'settings.html'),
+    section ? { hash: section } : undefined
+  );
   settingsWin.once('ready-to-show', () => settingsWin.show());
   settingsWin.on('closed', () => {
     settingsWin = null;
@@ -280,8 +290,15 @@ const buddies = new Map();
 
 /**
  * Bottom-right first, then leftwards, wrapping onto a row above. Windows are
- * anchored by their bottom-right corner, so growing from paperclip to card
- * keeps Clippy himself exactly where he was.
+ * anchored by their bottom-right corner: the bottom keeps his feet on the same
+ * line, and the right edge is what lets a 268px panel open at all down here —
+ * a paperclip tucked into the corner has nowhere near half a panel's width of
+ * screen to his right, so the panel has to grow leftwards and he slides with
+ * it. Preserving his centre instead (the way `draggedSpot` does, where the spot
+ * is arbitrary and there is room on both sides) would mean parking the idle
+ * buddy ~80px in from the corner he is meant to tuck into, which is a worse
+ * trade than a shift while a card is open. The perch in `dockPosition` hugs the
+ * terminal's own top-right corner for the same reason.
  */
 function cornerBounds(slot, width, height) {
   const { workArea } = screen.getPrimaryDisplay();
@@ -293,6 +310,40 @@ function cornerBounds(slot, width, height) {
   // A tall card must not push the window off the top of the screen — that's
   // what used to cut the head off long plans on a short display.
   return { x: right - width, y: Math.max(workArea.y, bottom - height) };
+}
+
+/**
+ * The one door in and out of moving a buddy's window. `lastPlaced` is what
+ * tells the `moved` listener a bounds change was ours, not your hand on the
+ * paperclip — so every programmatic move, including mid-walk, has to go
+ * through here to keep that in sync.
+ */
+function setBuddyBounds(buddy, bounds) {
+  buddy.win.setBounds(bounds);
+  buddy.lastPlaced = { x: bounds.x, y: bounds.y };
+}
+
+/**
+ * Where a hand-dragged buddy grows from: his own centre line and his bottom
+ * edge — so a card or the menu opening never yanks him back to the corner or
+ * the perch he was moved away from, it just grows around wherever he is.
+ *
+ * The buddy is drawn centred in his window, so it has to be the centre and not
+ * the left edge: anchoring the left edge held the *glass* still and slid the
+ * paperclip half the growth (~80px) to the right every time the window went
+ * from paperclip to panel width, which is exactly what you saw when the
+ * right-click menu opened under a buddy you'd moved by hand. Only the clamps
+ * still move him, and only far enough to keep a wide panel on screen.
+ */
+function draggedSpot(buddy, width, height, workArea) {
+  const clamp = (v, lo, hi) => Math.round(Math.max(lo, Math.min(hi, v)));
+  const current = buddy.win.getBounds();
+  const centre = current.x + current.width / 2;
+  const bottom = current.y + current.height;
+  return {
+    x: clamp(centre - width / 2, workArea.x, workArea.x + workArea.width - width),
+    y: clamp(bottom - height, workArea.y, workArea.y + workArea.height - height),
+  };
 }
 
 function nextFreeSlot() {
@@ -349,6 +400,10 @@ function buddyFor(key, name = '') {
       color: identity.color,
     },
   });
+  // CLIPPY_DEVTOOLS=1 npm start opens an inspector per buddy, detached so it
+  // never fights the transparent always-on-top window for space — the fast
+  // way to iterate on the cards/menu/bubble without a real Claude Code turn.
+  if (process.env.CLIPPY_DEVTOOLS) win.webContents.openDevTools({ mode: 'detach' });
   win.webContents.on('did-finish-load', () => {
     win.webContents.send('clippy-settings', settingsPayload(buddies.get(key)));
     // Only offer "open the session's window" when we actually know where it is.
@@ -358,6 +413,19 @@ function buddyFor(key, name = '') {
     });
   });
   win.on('closed', () => buddies.delete(key));
+  // Every reposition we do ourselves goes through placeBuddy, which records
+  // exactly where it put the window. A `moved` that lands anywhere else is
+  // you dragging him by hand — from then on his own spot outranks the corner
+  // or the perch anchor, until you explicitly ask him to go somewhere (go to
+  // terminal, unperch).
+  win.on('moved', () => {
+    const b = buddies.get(key);
+    if (!b) return;
+    const [x, y] = win.getPosition();
+    const placed = b.lastPlaced;
+    if (placed && x === placed.x && y === placed.y) return;
+    b.dragged = true;
+  });
 
   const buddy = {
     win,
@@ -366,8 +434,10 @@ function buddyFor(key, name = '') {
     sessionId: key,
     pinned: false,
     dock: null,
-    // Drawn once, when this session first reports in: a random buddy that
-    // re-rolled on every settings change would be nobody in particular.
+    dragged: false, // moved by hand — placeBuddy grows around that spot instead
+    lastPlaced: { x, y }, // matches the constructor's own placement, above
+    // Cast once, when this session first reports in, and only re-cast when you
+    // give the project a buddy by hand.
     character: characterFor(settings, identity.name),
   };
   buddies.set(key, buddy);
@@ -481,7 +551,9 @@ function placeBuddy(buddy, mode, wantHeight) {
         Math.max(compactH, Math.min(buddy.wantHeight || WIN_H, workArea.height - WIN_GAP * 2))
       );
 
-  const spot = buddy.dock
+  const spot = buddy.dragged
+    ? draggedSpot(buddy, width, height, workArea)
+    : buddy.dock
     ? dockPosition(
         buddy.dock.bounds,
         width,
@@ -490,7 +562,7 @@ function placeBuddy(buddy, mode, wantHeight) {
       )
     : cornerBounds(buddy.slot, width, height);
 
-  buddy.win.setBounds({ ...spot, width, height });
+  setBuddyBounds(buddy, { ...spot, width, height });
   buddy.win.webContents.send('clippy-event', {
     kind: 'dock',
     docked: Boolean(buddy.dock),
@@ -519,9 +591,12 @@ async function perchOn(key, { raise = false, auto = false, mode = null } = {}) {
     if (raise) {
       buddy.dock.auto = false; // now it's a perch you asked for
       buddy.pinned = true;
+      buddy.dragged = false; // "go to terminal" means go back to the perch
       const bounds = await revealTarget(buddy, key);
-      if (bounds) buddy.dock.bounds = bounds;
-      else {
+      if (bounds) {
+        buddy.dock.bounds = bounds;
+        placeBuddy(buddy, buddy.mode || 'compact');
+      } else {
         // The perch is riding a window we can no longer raise — let go and try
         // again from scratch rather than pretending the click did something.
         undock(buddy);
@@ -555,7 +630,7 @@ async function perchOn(key, { raise = false, auto = false, mode = null } = {}) {
       if (!auto) {
         // The app is running but shows no windows at all — either it really has
         // none, or macOS is quietly withholding them from us.
-        const appPid = target?.app?.pid;
+        const appPid = buddy.target?.app?.pid;
         tellBuddy(
           key,
           appPid && isRunning(appPid)
@@ -570,8 +645,9 @@ async function perchOn(key, { raise = false, auto = false, mode = null } = {}) {
     }
     if (buddy.win.isDestroyed()) return false;
 
-    buddy.dock = { target, bounds, misses: 0, lastError: '', auto, timer: null };
+    buddy.dock = { target: buddy.target, bounds, misses: 0, lastError: '', auto, timer: null };
     if (!auto) buddy.pinned = true; // asked for by hand -> stays until dismissed
+    if (raise) buddy.dragged = false; // asked to go to the terminal -> that's where he goes
     // A held card needs the full window; a quiet perch is just the paperclip.
     placeBuddy(buddy, mode || (broker.hasPending(key) ? 'full' : 'compact'));
     buddy.win.showInactive();
@@ -608,6 +684,51 @@ const openSessionWindow = (key, { point = false } = {}) =>
     if (perched && point) hintAtTerminal(key);
     return perched;
   });
+
+// How long to let macOS settle focus on the freshly-raised terminal before
+// typing into it — keystrokes go to whichever window is key *right now*, so
+// typing into a window still mid-raise would spray text somewhere else.
+const TYPE_SETTLE_MS = 450;
+
+/**
+ * Type a prompt into this session's terminal and press Return — the closest
+ * thing to "talk to your agent from Clippy" a watch-mode session allows.
+ * There is no API into someone else's interactive CLI; raising the window
+ * and typing, like a human would, is the honest mechanism, and everything
+ * that can go wrong with it (no window, no accessibility) already has a
+ * Clippy message.
+ */
+async function sendPromptToTerminal(key, text) {
+  const buddy = buddies.get(key);
+  const prompt = String(text || '').trim();
+  if (!buddy || !prompt) return false;
+
+  if (!canDriveWindows()) {
+    askForWindowAccess(key);
+    return false;
+  }
+  try {
+    const bounds = await revealTarget(buddy, key);
+    if (!bounds) {
+      tellBuddy(key, "I couldn't find that session's window to type into — is the terminal still open?", {
+        sticky: true,
+      });
+      return false;
+    }
+    await new Promise((r) => setTimeout(r, TYPE_SETTLE_MS));
+    await typeAndSubmit(prompt);
+    return true;
+  } catch (err) {
+    console.warn('clippy: could not type into the terminal:', err.message);
+    tellBuddy(
+      key,
+      `I couldn't type into “${buddy.name}”'s window — macOS may be blocking keystrokes. ` +
+        'Check Clippy (Electron) under Privacy & Security → Accessibility.',
+      { sticky: true, fix: 'accessibility' }
+    );
+    return false;
+  }
+}
 
 const AX_PANE =
   'x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility';
@@ -757,6 +878,7 @@ function undock(buddy) {
   stopWalking(buddy);
   clearInterval(buddy.dock.timer);
   buddy.dock = null;
+  buddy.dragged = false; // letting go is its own fresh start, back in the corner
   placeBuddy(buddy, buddy.mode || 'compact');
 }
 
@@ -821,11 +943,13 @@ function pointAtPrompt(key) {
   const [w, h] = compactSize();
   const tall = h + POINT_EXTRA_H;
   const area = screen.getDisplayMatching(buddy.dock.bounds).workArea;
-  const perch = dockPosition(buddy.dock.bounds, w, h, area);
+  // Home is wherever he actually is — the perch anchor, or a spot you dragged
+  // him to — not necessarily the corner the dock math would pick.
+  const perch = buddy.dragged ? draggedSpot(buddy, w, h, area) : dockPosition(buddy.dock.bounds, w, h, area);
   const spot = promptPosition(buddy.dock.bounds, w, tall, area);
 
   buddy.walk = { phase: 'out', timer: null, hold: null };
-  buddy.win.setBounds({ ...perch, width: w, height: tall });
+  setBuddyBounds(buddy, { ...perch, width: w, height: tall });
   send(buddy, { kind: 'walk', facing: spot.x < perch.x ? 'left' : 'right' });
 
   strollTo(buddy, perch, spot, () => {
@@ -851,7 +975,7 @@ function strollTo(buddy, from, to, done) {
     i++;
     const t = i / steps;
     const ease = t < 0.5 ? 2 * t * t : 1 - (-2 * t + 2) ** 2 / 2;
-    buddy.win.setBounds({
+    setBuddyBounds(buddy, {
       x: Math.round(from.x + (to.x - from.x) * ease),
       y: Math.round(from.y + (to.y - from.y) * ease),
       width,
@@ -903,6 +1027,26 @@ function tellBuddy(key, message, { sticky = false, fix = null } = {}) {
   placeBuddy(buddy, 'full');
   buddy.win.webContents.send('clippy-event', { kind: 'info', message, sticky, fix });
   buddy.win.showInactive();
+}
+
+// Once a day at most, and only while the plan is still unset — Claude Code
+// never writes down what you're allowed, so the moment you're most likely to
+// actually go run `/usage` and come back with a number is right when a fresh
+// conversation starts.
+const PLAN_NUDGE_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+let lastPlanNudgeAt = 0;
+
+function maybeNudgePlanCalibration(payload) {
+  if (!['startup', 'clear'].includes(payload.source)) return;
+  if (settings.plan !== 'unknown') return;
+  if (Date.now() - lastPlanNudgeAt < PLAN_NUDGE_COOLDOWN_MS) return;
+  lastPlanNudgeAt = Date.now();
+  tellBuddy(
+    payload.session_id || 'unknown',
+    "New conversation — want your token bars to mean something? Run /usage, then tell me the " +
+      'number under Settings → Usage & limits.',
+    { fix: 'plan' }
+  );
 }
 
 /* ---------------- Token usage (right-click) ---------------- */
@@ -1122,6 +1266,75 @@ function stopDriveSession() {
   hideBuddy(DRIVE_KEY, { unpin: true });
 }
 
+/* ---------------- Development mode (the Electron storybook) ---------------- */
+
+// `npm run dev` — a buddy with no Claude Code behind it, plus a control window
+// listing every state it can be in. The browser bench (npm run demo:web) covers
+// the same states faster, but only Electron has the real window: placement,
+// growing to fit a card, perching, the actual preload bridge. This is where you
+// check those.
+const DEV = Boolean(process.env.CLIPPY_DEV);
+
+let storyWin = null;
+
+/**
+ * The little window of buttons. Its stories come from `src/dev-scenarios.js`
+ * and are handed over after the page loads, so the dev bridge stays down to the
+ * one method that plays one.
+ */
+function openStorybook() {
+  if (storyWin && !storyWin.isDestroyed()) {
+    storyWin.show();
+    return storyWin;
+  }
+  storyWin = new BrowserWindow({
+    width: 300,
+    height: 560,
+    title: 'Clippy storybook',
+    titleBarStyle: 'hiddenInset',
+    backgroundColor: '#13161b',
+    show: false,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload-dev.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+  storyWin.loadFile(path.join(__dirname, 'renderer', 'dev.html'));
+  storyWin.webContents.on('did-finish-load', () => {
+    storyWin.webContents.executeJavaScript(
+      `window.renderStories(${JSON.stringify(storyList())});`
+    );
+  });
+  storyWin.once('ready-to-show', () => storyWin.show());
+  storyWin.on('closed', () => {
+    storyWin = null;
+  });
+  return storyWin;
+}
+
+/**
+ * Play one story at the dev buddy. The events are the ones the real handlers
+ * send, so anything a card does afterwards — growing the window, closing on a
+ * click — is the production path. The decisions those clicks send carry made-up
+ * request ids, which the broker answers with a harmless `false`.
+ */
+function playStory(id) {
+  const now = Date.now();
+  for (const event of eventsFor(id, now)) sendTo(DEV_SESSION, event);
+}
+
+/** One buddy on screen from the moment the app starts, and the story list. */
+function startDevMode() {
+  const buddy = buddyFor(DEV_SESSION, 'storybook');
+  // Nothing will ever ask to see this one, so it has to be kept on screen the
+  // same way a user-requested buddy is.
+  buddy.pinned = true;
+  placeBuddy(buddy, 'compact');
+  buddy.win.showInactive();
+  openStorybook();
+}
+
 /* ---------------- Hook handling ---------------- */
 
 function emitPassive(reaction, { osNotification = true } = {}) {
@@ -1229,10 +1442,16 @@ async function handleStop(payload, ctx) {
   );
   ctx.onClose(() => broker.resolve(id, 'cancel'));
 
+  // What Claude actually said right before stopping, if it said anything — a
+  // turn that ends on a bare tool call has no recap, and the card just won't
+  // show one.
+  const recap = await lastAssistantText(tracker.transcriptFor(reaction.sessionId));
+
   sendTo(reaction.sessionId, {
     ...reaction,
     kind: 'review',
     message: `Claude finished in “${reaction.name}”. Looks good, or should it keep going?`,
+    detail: recap,
     counts: tracker.counts(),
     requestId: id,
     expiresAt,
@@ -1403,6 +1622,7 @@ function handleHookEvent(eventName, kind, payload, ctx) {
 
   const reaction = tracker.handle(eventName, kind, payload);
   if (reaction) emitPassive(reaction);
+  if (eventName === 'SessionStart') maybeNudgePlanCalibration(payload);
   return undefined;
 }
 
@@ -1467,7 +1687,11 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('clippy-usage', (e) => {
     const buddy = buddyForSender(e.sender);
-    return buddy ? collectUsage(buddy.sessionId) : null;
+    if (!buddy) return null;
+    // A storybook buddy has no transcript to read and no session behind it, so
+    // the panel is fed canned numbers rather than showing empty bars.
+    if (buddy.sessionId.startsWith('dev:')) return devUsage(buddy.name);
+    return collectUsage(buddy.sessionId);
   });
   ipcMain.on('clippy-mode', (e, payload) => {
     // The renderer knows whether it has anything on screen, and how tall that
@@ -1491,6 +1715,7 @@ app.whenReady().then(async () => {
     // The "fix it" button on a sticky message.
     const buddy = buddyForSender(e.sender);
     if (what === 'accessibility') askForWindowAccess(buddy?.sessionId || null, { force: true });
+    if (what === 'plan') openSettingsWindow('limits');
   });
   ipcMain.on('clippy-open-external', (_e, url) => {
     // Only ever hand the OS an https link — this window must not become a
@@ -1513,12 +1738,6 @@ app.whenReady().then(async () => {
     // "You have to answer this in the terminal" — walk over and show them where.
     const buddy = buddyForSender(e.sender);
     if (buddy) hintAtTerminal(buddy.sessionId);
-  });
-  ipcMain.on('clippy-undock', (e) => {
-    // Letting go of a window means "that's enough for now" — back to hiding
-    // until this session actually needs something.
-    const buddy = buddyForSender(e.sender);
-    if (buddy) hideBuddy(buddy.sessionId, { unpin: true });
   });
   ipcMain.on('clippy-hide', (e) => {
     // Hiding by hand also drops the pin, so ambient rules take over again.
@@ -1545,6 +1764,18 @@ app.whenReady().then(async () => {
     if (drive && typeof text === 'string' && text.trim()) drive.prompt(text.trim());
   });
   ipcMain.on('clippy-drive-stop', stopDriveSession);
+  ipcMain.on('clippy-dev-fire', (_e, id) => {
+    if (DEV) playStory(String(id || ''));
+  });
+  ipcMain.on('clippy-send-prompt', (e, text) => {
+    // The prompt composer: type what you wrote into the session's terminal.
+    const buddy = buddyForSender(e.sender);
+    if (buddy && typeof text === 'string') sendPromptToTerminal(buddy.sessionId, text);
+  });
+
+  // The hook server still comes up in development mode — a real session can
+  // report in alongside the storybook, and nothing here interferes with it.
+  if (DEV) startDevMode();
 
   const server = createHookServer({
     port: PORT,

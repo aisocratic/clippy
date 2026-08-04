@@ -3,6 +3,18 @@
    own colour), one spacing rhythm — so a card, the menu and the token panel
    read as the same object rather than three different apps. */
 
+/* Google's Pixelify Sans (OFL), bundled locally — the CSP is `default-src
+   'self'`, so a CDN @import would just be a blocked request. Used only for
+   the name plate: body text in a pixel face is charming for a minute and
+   unreadable for a day, but one loud label is exactly what it's good at. */
+@font-face {
+  font-family: 'Pixelify Sans';
+  src: url('fonts/PixelifySans-variable.woff2') format('woff2-variations');
+  font-weight: 400 700;
+  font-style: normal;
+  font-display: swap;
+}
+
 :root {
   /* Session identity, set from the query string by clippy.js. */
   --clip: #9aa3ad;
@@ -21,7 +33,6 @@
   --ok: #4aa870;
   --no: #d76b64;
   --warn: #e0b23f;
-  --radius: 12px;
   --panel-w: 258px;
 }
 
@@ -58,7 +69,10 @@ body {
   flex: none;
 }
 
-/* ---------- The shared panel look ---------- */
+/* ---------- The shared panel look: an RPG textbox, not a modal ----------
+   Square corners, a light pixel border over a dark bevel ring, and a hard,
+   unblurred drop shadow — the things that read as "pixel UI" instead of
+   "web app card" at a glance. */
 
 #card,
 #qcard,
@@ -68,43 +82,43 @@ body {
 #menu {
   -webkit-app-region: no-drag;
   width: var(--panel-w);
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.5), 0 1px 0 rgba(255, 255, 255, 0.04) inset;
+  background: linear-gradient(180deg, #232a42 0%, #12162a 100%);
+  border: 3px solid var(--text);
+  border-radius: 0;
+  box-shadow: 0 0 0 3px #0a0c16, 5px 5px 0 0 rgba(0, 0, 0, 0.55);
   color: var(--text);
 }
 
 /* Panels that sit above the buddy point down at him. */
 #card,
 #qcard,
-#bubble {
+#bubble,
+#menu {
   position: relative;
-  margin-bottom: 13px;
+  margin-bottom: 16px;
 }
 
 #card::after,
 #qcard::after,
-#bubble::after {
+#bubble::after,
+#menu::after {
   content: '';
   position: absolute;
-  bottom: -7px;
+  bottom: -13px;
   left: 50%;
-  margin-left: -7px;
-  width: 12px;
-  height: 12px;
-  background: var(--surface);
-  border-right: 1px solid var(--line);
-  border-bottom: 1px solid var(--line);
+  margin-left: -8px;
+  width: 16px;
+  height: 16px;
+  background: #12162a;
+  border-right: 3px solid var(--text);
+  border-bottom: 3px solid var(--text);
+  box-shadow: 3px 3px 0 0 #0a0c16;
   transform: rotate(45deg);
-  border-bottom-right-radius: 3px;
 }
 
-/* Whose session a panel belongs to is carried by a dot in the session's own
-   colour, so five buddies on screen stay tellable apart panel by panel. */
-#card-session::before,
-#qcard-session::before,
-#usage-session::before,
+/* Whose session the menu belongs to is carried by a dot in the session's own
+   colour — the one place left that names the session inside a panel, since
+   every other one now leans on the name plate above the buddy instead. */
 #menu-name::before {
   content: '';
   display: inline-block;
@@ -124,17 +138,24 @@ button {
   font-size: 11.5px;
   line-height: 1.3;
   padding: 5px 10px;
-  border-radius: 7px;
-  border: 1px solid var(--line);
+  border-radius: 0;
+  border: 2px solid var(--line);
   background: #262b33;
   color: var(--text);
   cursor: pointer;
+  box-shadow: 2px 2px 0 0 rgba(0, 0, 0, 0.4);
   transition: background 0.12s ease, border-color 0.12s ease, opacity 0.12s ease;
 }
 
 button:hover:not(:disabled) {
   background: #2f353f;
   border-color: #454e5c;
+}
+
+button:active:not(:disabled) {
+  /* A pixel button gets pressed, not just recoloured. */
+  transform: translate(2px, 2px);
+  box-shadow: none;
 }
 
 button:disabled {
@@ -169,24 +190,36 @@ button.dim {
 
 /* ---------- Name plate ---------- */
 
+/* Reserves its space always (so hovering never resizes the window), but stays
+   invisible until you hover the stage, or a panel is open — cards no longer
+   name the session themselves (this is the one place that does it now), so
+   whenever there's something to read, this has to be readable too. */
 #who {
   display: flex;
   align-items: center;
   gap: 5px;
   max-width: 100%;
   margin-bottom: 8px;
-  padding: 2px 9px;
-  border-radius: 9px;
+  padding: 2px 10px;
+  border-radius: 0;
   background: rgba(20, 22, 27, 0.9);
-  border: 1px solid var(--clip);
+  border: 2px solid var(--clip);
   color: #f0f2f4;
-  font-size: 10px;
+  font-family: 'Pixelify Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 14px;
   font-weight: 600;
   letter-spacing: 0.2px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   -webkit-app-region: drag; /* the name plate is a drag handle too */
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+#stage:hover #who,
+body:not(.compact) #who {
+  opacity: 1;
 }
 
 #who-dot {
@@ -240,7 +273,7 @@ button.dim {
   min-width: 18px;
   height: 18px;
   padding: 0 4px;
-  border-radius: 9px;
+  border-radius: 0;
   background: #d64545;
   color: #fff;
   font-size: 11px;
@@ -304,7 +337,7 @@ body.facing-left #buddy {
 
 #pointer-hint {
   padding: 1px 7px;
-  border-radius: 8px;
+  border-radius: 0;
   background: var(--clip);
   color: #14171b;
   font-size: 9.5px;
@@ -360,19 +393,10 @@ body.facing-left #buddy {
   margin-bottom: 6px;
 }
 
-#card-session,
-#qcard-session {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: #c3cbd5;
-}
-
 #card-queue {
   flex: none;
   padding: 0 6px;
-  border-radius: 8px;
+  border-radius: 0;
   background: rgba(224, 178, 63, 0.16);
   color: var(--warn);
   font-size: 10px;
@@ -404,7 +428,7 @@ body.facing-left #buddy {
   color: #cbd3dc;
   background: var(--surface-2);
   border: 1px solid var(--line-soft);
-  border-radius: 8px;
+  border-radius: 0;
   padding: 7px 8px;
   max-height: 132px;
   overflow: auto;
@@ -420,7 +444,7 @@ body.facing-left #buddy {
   font-size: 11.5px;
   padding: 6px 8px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 0;
   background: var(--surface-2);
   color: var(--text);
   resize: none;
@@ -535,7 +559,7 @@ button.opt.chosen::after {
   margin-left: auto;
   flex: none;
   padding: 0 6px;
-  border-radius: 8px;
+  border-radius: 0;
   background: rgba(224, 178, 63, 0.16);
   color: var(--warn);
   font-size: 9.5px;
@@ -556,7 +580,7 @@ button.opt.chosen::after {
   color: #cbd3dc;
   background: var(--surface-2);
   border: 1px solid var(--line-soft);
-  border-radius: 8px;
+  border-radius: 0;
   padding: 7px 8px;
   max-height: 140px;
   overflow: auto;
@@ -604,7 +628,7 @@ button.opt.chosen::after {
   line-height: 1.45;
   background: var(--surface-2);
   border: 1px solid var(--line-soft);
-  border-radius: 8px;
+  border-radius: 0;
   padding: 7px 8px;
   user-select: text;
 }
@@ -646,7 +670,7 @@ button.opt.chosen::after {
   font-size: 11.5px;
   padding: 6px 8px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 0;
   background: var(--surface-2);
   color: var(--text);
   resize: none;
@@ -658,11 +682,10 @@ button.opt.chosen::after {
   border-color: var(--clip);
 }
 
-/* ---------- Click menu (hangs under the buddy) ---------- */
+/* ---------- Click menu (sits above the buddy, like every other panel) ---------- */
 
 #menu {
   width: 226px;
-  margin-top: 7px;
   padding: 5px;
   overflow: hidden;
 }
@@ -704,12 +727,15 @@ button.opt.chosen::after {
   color: var(--text);
   background: transparent;
   border: 0;
-  border-radius: 7px;
+  border-radius: 0;
 }
 
+/* A left bar in the session's colour instead of a rounded highlight — the
+   pointer cursor an RPG menu shows next to the selected line. */
 .menu-item:hover:not(:disabled) {
   background: #272d36;
   border-color: transparent;
+  box-shadow: inset 3px 0 0 0 var(--clip);
 }
 
 .menu-item.dim {
@@ -804,6 +830,13 @@ button.opt.chosen::after {
   font-weight: 600;
 }
 
+/* A panel already says what's happening — this ambient line underneath would
+   just repeat it, so it's only for the bare paperclip with nothing open. */
+body:not(.compact) #activity,
+body:not(.compact) #statusline {
+  display: none;
+}
+
 /* ---------- Status line & controls ---------- */
 
 #statusline {
@@ -831,7 +864,7 @@ button.opt.chosen::after {
   background: rgba(28, 31, 38, 0.85);
 }
 
-/* ---------- Token usage ---------- */
+/* ---------- The combined panel: status, token usage, and the composer ---------- */
 
 #usage {
   padding: 9px 11px 10px;
@@ -840,19 +873,8 @@ button.opt.chosen::after {
 }
 
 #usage-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 6px;
   font-weight: 700;
   margin-bottom: 7px;
-}
-
-#usage-session {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: #c3cbd5;
 }
 
 #usage-model {
@@ -862,6 +884,15 @@ button.opt.chosen::after {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* What the agent is doing right now — the first thing you came to find out,
+   so it sits above the numbers and reads as a sentence, not a stat. */
+#usage-status {
+  margin-bottom: 7px;
+  font-size: 11px;
+  line-height: 1.35;
+  color: #dbe1e8;
 }
 
 #usage-bar {
@@ -981,9 +1012,34 @@ button.opt.chosen::after {
   color: #7f8996;
 }
 
+/* Keep talking to the agent without leaving the panel: what you type here is
+   typed into that session's terminal, exactly as the old composer did. */
+#usage-input {
+  width: 100%;
+  margin-top: 9px;
+  font-family: inherit;
+  font-size: 11.5px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 0;
+  background: var(--surface-2);
+  color: var(--text);
+  resize: none;
+  -webkit-app-region: no-drag;
+}
+
+#usage-input::placeholder {
+  color: #6f7a87;
+}
+
+#usage-input:focus {
+  outline: none;
+  border-color: var(--clip);
+}
+
 #usage-actions {
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
   gap: 6px;
   margin-top: 7px;
 }

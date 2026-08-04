@@ -11,6 +11,7 @@ const {
   parseBounds,
   dockPosition,
   promptPosition,
+  typeScript,
   TERMINAL_APP,
   ITERM_APP,
 } = require('../src/terminal');
@@ -148,4 +149,16 @@ test('promptPosition stands on the input line, bottom-left', () => {
   const off = promptPosition({ x: -400, y: 700, width: 900, height: 600 }, win.w, win.h, workArea);
   assert.equal(off.x, workArea.x);
   assert.equal(off.y, workArea.y + workArea.height - win.h);
+});
+
+test('typeScript sends one line and one Return, whatever was typed', () => {
+  const script = typeScript('fix the tests\n\n  then push');
+  // Newlines would submit the prompt early, so they collapse to spaces.
+  assert.ok(script.includes('keystroke "fix the tests then push"'));
+  // Exactly one Return — key code 36 — and only after the text.
+  assert.equal(script.match(/key code 36/g).length, 1);
+  assert.ok(script.indexOf('keystroke') < script.indexOf('key code 36'));
+
+  // Quotes and backslashes ride inside the AppleScript string, escaped.
+  assert.ok(typeScript('say "hi" \\ there').includes('keystroke "say \\"hi\\" \\\\ there"'));
 });

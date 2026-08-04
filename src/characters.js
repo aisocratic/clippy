@@ -40,29 +40,6 @@ const CHARACTERS = [
 ];
 
 /**
- * How each session's buddy gets its character. With more than one agent running
- * at a time, "who is this one?" matters as much as what it says.
- */
-const CHARACTER_MODES = [
-  {
-    id: 'same',
-    label: 'Same for all',
-    note: 'Every session uses the buddy you pick below.',
-  },
-  {
-    id: 'default',
-    label: 'One per project',
-    note: 'Clippy picks from the cast using the project name — the same project ' +
-      'always gets the same buddy, and parallel agents rarely match.',
-  },
-  {
-    id: 'random',
-    label: 'Random',
-    note: 'A fresh buddy for every session, drawn when it first reports in.',
-  },
-];
-
-/**
  * The buddy is one size all the time — this is that size, and the window that
  * holds nothing but him. Pixel art only looks right at whole multiples, so the
  * steps are 2x, 3x and 4x the 32x40 sprite.
@@ -181,32 +158,31 @@ function allCharacters() {
 }
 
 /**
- * Which character this session's buddy should be.
+ * Which character this session's buddy should be — one per project, always.
  *
- * @param {object} settings  the app's settings (mode, the picked character, and
- *                           any per-project assignments)
- * @param {string} name      the project name — what "one per project" hashes on
- * @param {function} [random] injectable for tests
+ * With several agents running at once, "who is this one?" matters as much as
+ * what it says, so the project name picks the buddy: the same repo always gets
+ * the same face, parallel agents rarely match, and nothing has to be chosen
+ * before the first session ever reports in.
+ *
+ * @param {object} settings  the app's settings (any per-project assignments)
+ * @param {string} name      the project name — what the cast is hashed on
  */
-function characterFor(settings, name, random = Math.random) {
+function characterFor(settings, name) {
   const cast = allCharacters();
-  const has = (id) => cast.some((c) => c.id === id);
-  const mode = settings.characterMode || 'same';
 
-  // A buddy assigned to this project by hand outranks every mode: you asked for
-  // that one, on that repo, and it should stay put.
+  // A buddy assigned to this project by hand outranks the hash: you asked for
+  // that one, on that repo, and it should stay put. An id that has since gone
+  // (a sprite pack you deleted) falls through to the hash rather than leaving a
+  // buddy with no art at all.
   const assigned = (settings.characterByProject || {})[name];
-  if (assigned && has(assigned)) return assigned;
+  if (assigned && cast.some((c) => c.id === assigned)) return assigned;
 
-  if (mode === 'random') return cast[Math.floor(random() * cast.length)].id;
-  if (mode === 'default') return cast[hash(String(name || 'clippy')) % cast.length].id;
-  // 'same', and the safety net for a character that has since been removed.
-  return has(settings.character) ? settings.character : cast[0].id;
+  return cast[hash(String(name || 'clippy')) % cast.length].id;
 }
 
 module.exports = {
   CHARACTERS,
-  CHARACTER_MODES,
   POSES,
   SIZES,
   sizeList,

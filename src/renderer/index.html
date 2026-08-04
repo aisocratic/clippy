@@ -9,7 +9,6 @@
   <div id="stage">
     <div id="card" class="hidden">
       <div id="card-head">
-        <span id="card-session"></span>
         <span id="card-queue" class="hidden"></span>
         <button id="btn-goto" class="dim hidden"
                 title="Bring this session's terminal window to the front">go to terminal ↗</button>
@@ -44,7 +43,7 @@
     </div>
 
     <div id="qcard" class="hidden">
-      <div id="qcard-head"><span id="qcard-session"></span><span id="qcard-tag">asking you</span></div>
+      <div id="qcard-head"><span id="qcard-tag">asking you</span></div>
       <div id="qcard-title"></div>
       <pre id="qcard-detail" class="hidden"></pre>
       <div id="qcard-actions">
@@ -54,16 +53,21 @@
       </div>
     </div>
 
+    <!-- One left click opens this: what the agent is doing, what the session
+         has spent, and a box to keep talking to it. Everything you'd otherwise
+         have to hunt for in three different places. -->
     <div id="usage" class="hidden">
-      <div id="usage-head"><span id="usage-session"></span><span id="usage-model"></span></div>
+      <div id="usage-head"><span id="usage-model"></span></div>
+      <div id="usage-status"></div>
       <div id="usage-bar"><div id="usage-bar-fill"></div></div>
       <div id="usage-context"></div>
       <div id="usage-bars"></div>
       <div id="usage-note"></div>
+      <textarea id="usage-input" rows="2" spellcheck="false"
+                placeholder="continue chatting — Enter sends it to the terminal"></textarea>
       <div id="usage-actions">
-        <button id="btn-usage-plan" class="dim"
-                title="Tell Clippy what your plan's limits are — it can measure what you spend, but only /usage knows what you are allowed">Set plan…</button>
         <button id="btn-usage-close" class="dim">Close</button>
+        <button id="btn-usage-send" class="good">Send ↵</button>
       </div>
     </div>
 
@@ -76,11 +80,30 @@
       </div>
     </div>
 
+    <!-- Right-click the buddy and the menu drops out from under him: what you
+         can do with *this* session, then the app itself. Everything that
+         applies to every buddy lives in the settings window (📎 in the menu
+         bar). Placed here, before #clippy, so — like every other panel — it
+         renders above him and leaves his own spot on screen alone. -->
+    <div id="menu" class="hidden">
+      <div id="menu-head">
+        <span id="menu-name">session</span><span id="menu-status">idle</span>
+      </div>
+
+      <button id="menu-waiting" class="menu-item hidden"><span class="mi">📨</span>See what's waiting</button>
+      <button id="menu-stats" class="menu-item"><span class="mi">📊</span>Stats &amp; token usage</button>
+
+      <div class="menu-sep"></div>
+
+      <button id="menu-settings" class="menu-item"><span class="mi">⚙</span>Settings…</button>
+      <button id="menu-hide" class="menu-item dim"><span class="mi">×</span>Hide Clippy</button>
+    </div>
+
     <div id="who" title="Which Claude Code session this Clippy is watching">
       <span id="who-dot"></span><span id="who-name">…</span>
     </div>
 
-    <div id="clippy" title="Drag me around. Click me for the menu.">
+    <div id="clippy" title="Drag me around. Click for usage, status and a box to talk to this agent; right-click for more; double-click to say hi.">
       <!-- Every character is an animated GIF built by `npm run make-buddies`:
            one calm, one excited, and the paperclip in each session colour. -->
       <img id="buddy" width="96" height="120" alt="" />
@@ -97,37 +120,11 @@
       <span id="pointer-arrow">▼</span>
     </div>
 
-    <!-- Click the buddy and the menu drops out from under him: what you can do
-         with *this* session, then the app itself. Everything that applies to
-         every buddy lives in the settings window (📎 in the menu bar). -->
-    <div id="menu" class="hidden">
-      <div id="menu-head">
-        <span id="menu-name">session</span><span id="menu-status">idle</span>
-      </div>
-
-      <button id="menu-waiting" class="menu-item hidden"><span class="mi">📨</span>See what's waiting</button>
-      <button id="menu-goto" class="menu-item hidden"
-              title="Bring this session's terminal window to the front and perch Clippy on it"><span
-              class="mi">↗</span>Go to the terminal</button>
-      <button id="menu-point" class="menu-item hidden"
-              title="Walk over to this session's prompt and point at the line to type on"><span
-              class="mi">👇</span>Show me the prompt</button>
-      <button id="menu-undock" class="menu-item hidden"
-              title="Stop riding this window and go back to the screen corner"><span
-              class="mi">📌</span>Let go of this window</button>
-      <button id="menu-stats" class="menu-item"><span class="mi">📊</span>Stats &amp; token usage</button>
-
-      <div class="menu-sep"></div>
-
-      <button id="menu-settings" class="menu-item"><span class="mi">⚙</span>Settings…</button>
-      <button id="menu-hide" class="menu-item dim"><span class="mi">×</span>Hide Clippy</button>
-    </div>
-
     <div id="activity" class="hidden"></div>
     <div id="statusline">waiting for sessions…</div>
     <div id="controls">
       <button id="btn-open" class="hidden"
-              title="Bring this session's terminal window to the front and perch on it"><span
+              title="Open this session's terminal window — brings it to the front and perches Clippy on it"><span
               class="wide">open session </span>↗</button>
       <button id="btn-hide" title="Hide (Clippy keeps running in the menu bar)"><span
               class="wide">hide</span><span class="narrow">×</span></button>

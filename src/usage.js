@@ -144,6 +144,47 @@ async function sessionUsage(transcriptPath) {
   }
 }
 
+/**
+ * The plain-text tail of the last assistant turn — what Claude actually said
+ * right before finishing, if it said anything. A turn that ends on a bare
+ * tool call has no recap to show, so this can come back empty.
+ *
+ * Read fresh rather than cached: the review card needs the exact words from
+ * the turn that just ended, not whatever the last sweep happened to see.
+ */
+async function lastAssistantText(transcriptPath, { maxChars = 600 } = {}) {
+  if (!transcriptPath) return '';
+  let text = '';
+  try {
+    text = await fs.readFile(transcriptPath, 'utf8');
+  } catch {
+    return '';
+  }
+
+  let recap = '';
+  for (const line of text.split('\n')) {
+    if (!line || line.indexOf('"assistant"') === -1) continue;
+    let entry;
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      continue; // a half-written last line
+    }
+    if (entry.type !== 'assistant' || entry.isSidechain) continue;
+    const content = entry.message && entry.message.content;
+    if (!Array.isArray(content)) continue;
+    const prose = content
+      .filter((c) => c && c.type === 'text' && c.text)
+      .map((c) => c.text)
+      .join('\n')
+      .trim();
+    // Keep walking — the last prose-bearing turn wins, and a turn that ends
+    // on a tool call rather than words leaves the recap as whatever came before.
+    if (prose) recap = prose;
+  }
+  return recap.length > maxChars ? `${recap.slice(0, maxChars).trim()}…` : recap;
+}
+
 /** Every `*.jsonl` under `~/.claude/projects`, newest first. */
 async function recentTranscripts(projectsDir, sinceMs) {
   const found = [];
@@ -402,6 +443,7 @@ module.exports = {
   contextLimitFor,
   contextOf,
   sessionUsage,
+  lastAssistantText,
   recentTranscripts,
   rollingWindow,
   emptyWindow,

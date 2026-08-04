@@ -50,28 +50,26 @@ test('every character in the menus has art drawn for it', () => {
   assert.ok(!ids.includes('classic'), 'the duplicate paperclip is gone');
 });
 
-test('each mode decides who a session gets', () => {
+test('every project gets a buddy of its own, and a hand-picked one wins', () => {
   const cast = allCharacters().map((c) => c.id);
-  const picked = { character: 'cat', characterMode: 'same' };
 
-  assert.equal(characterFor(picked, 'billing-api'), 'cat', 'same: everyone gets your pick');
+  // A buddy you assigned to that repo outranks the automatic pick.
+  const assigned = { characterByProject: { 'billing-api': 'cat' } };
+  assert.equal(characterFor(assigned, 'billing-api'), 'cat');
+  // …and only for that repo: everyone else is still cast automatically.
+  assert.ok(cast.includes(characterFor(assigned, 'my-app')));
 
-  // One per project: stable for a name, and derived from it rather than the
-  // session id, so restarting a session doesn't change who shows up.
-  const byProject = { ...picked, characterMode: 'default' };
-  const first = characterFor(byProject, 'billing-api');
-  assert.equal(characterFor(byProject, 'billing-api'), first);
+  // The automatic pick is stable for a name, and derived from it rather than
+  // the session id, so restarting a session doesn't change who shows up.
+  const first = characterFor({}, 'billing-api');
+  assert.equal(characterFor({}, 'billing-api'), first);
+  assert.equal(characterFor({ characterByProject: {} }, 'billing-api'), first);
   assert.ok(cast.includes(first));
-
-  // Random: whatever the roll lands on.
-  const random = { ...picked, characterMode: 'random' };
-  assert.equal(characterFor(random, 'x', () => 0), cast[0]);
-  assert.equal(characterFor(random, 'x', () => 0.999), cast[cast.length - 1]);
 
   // A character that has since been deleted (a sprite pack you removed) must
   // not leave a buddy with no art at all.
-  assert.ok(cast.includes(characterFor({ character: 'gone', characterMode: 'same' }, 'x')));
-  assert.ok(cast.includes(characterFor({}, 'x')), 'and no mode at all still works');
+  assert.ok(cast.includes(characterFor({ characterByProject: { x: 'gone' } }, 'x')));
+  assert.ok(cast.includes(characterFor({}, '')), 'and a nameless session still works');
 });
 
 test('a dropped-in sprite sheet becomes a character', () => {
