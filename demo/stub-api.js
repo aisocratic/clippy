@@ -52,12 +52,13 @@
     setSetting: (key, value) => post('set-setting', { key, value }),
     drivePrompt: (text) => post('drive-prompt', { text }),
     driveStop: () => post('drive-stop'),
+    sendPrompt: (text) => post('send-prompt', { text }),
     openWindow: (opts) => post('open-window', opts || {}),
-    undock: () => post('undock'),
     pointAtPrompt: () => post('point'),
     openSettings: () => post('open-settings'),
     fix: (what) => post('fix', { what }),
     setMode: (mode, height) => post('mode', { mode, height }),
+    context: async () => ({ session: usageData?.session }),
     // main answers this over IPC invoke; here the panel pushes the data ahead
     // of time and we just hand back whatever it last set.
     usage: async () => usageData,

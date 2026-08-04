@@ -360,9 +360,9 @@ window.addEventListener('message', async (e) => {
       send('event', { kind: 'drive-status', status: 'ended' });
       break;
 
-    case 'undock':
-      log('in', 'undock', 'let go of the terminal window');
-      setDocked(false);
+    case 'send-prompt':
+      log('in', 'sendPrompt', `would type into the terminal: ${p.text}`);
+      setDocked(true);
       break;
 
     case 'open-window':

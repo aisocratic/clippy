@@ -38,6 +38,7 @@ const {
 const { sessionUsage, lastAssistantText, usageWindows, planLimitsFor, cleanLimits, PLANS } =
   require('./usage');
 const { DEV_SESSION, eventsFor, storyList, devUsage } = require('./dev-scenarios');
+const { startCompletionPoll, coalesceAsync } = require('./async-control');
 
 const PORT = Number(process.env.CLIPPY_PORT || 43117);
 
@@ -412,7 +413,10 @@ function buddyFor(key, name = '') {
       value: Boolean(tracker.terminalFor(key)),
     });
   });
-  win.on('closed', () => buddies.delete(key));
+  win.on('closed', () => {
+    buddies.get(key)?.dock?.poll?.cancel();
+    buddies.delete(key);
+  });
   // Every reposition we do ourselves goes through placeBuddy, which records
   // exactly where it put the window. A `moved` that lands anywhere else is
   // you dragging him by hand — from then on his own spot outranks the corner
@@ -462,7 +466,7 @@ function sendTo(sessionId, event) {
 function closeBuddy(key) {
   const buddy = buddies.get(key);
   if (!buddy) return;
-  if (buddy.dock) clearInterval(buddy.dock.timer);
+  buddy.dock?.poll?.cancel();
   buddies.delete(key);
   if (!buddy.win.isDestroyed()) buddy.win.destroy();
   pushSettingsState();
@@ -645,13 +649,16 @@ async function perchOn(key, { raise = false, auto = false, mode = null } = {}) {
     }
     if (buddy.win.isDestroyed()) return false;
 
-    buddy.dock = { target: buddy.target, bounds, misses: 0, lastError: '', auto, timer: null };
+    const dock = { target: buddy.target, bounds, misses: 0, lastError: '', auto, poll: null };
+    buddy.dock = dock;
     if (!auto) buddy.pinned = true; // asked for by hand -> stays until dismissed
     if (raise) buddy.dragged = false; // asked to go to the terminal -> that's where he goes
     // A held card needs the full window; a quiet perch is just the paperclip.
     placeBuddy(buddy, mode || (broker.hasPending(key) ? 'full' : 'compact'));
     buddy.win.showInactive();
-    buddy.dock.timer = setInterval(() => followWindow(key), DOCK_POLL_MS);
+    dock.poll = startCompletionPoll(() => followWindow(key, dock), DOCK_POLL_MS, {
+      onError: (err) => console.warn('clippy: could not follow the terminal window:', err.message),
+    });
     return true;
   } catch (err) {
     console.warn('clippy: could not reach the terminal window:', err.message);
@@ -831,17 +838,24 @@ function isRunning(pid) {
 }
 
 /** Keep up with a window that the user moved, resized, or closed. */
-async function followWindow(key) {
+async function followWindow(key, expectedDock = null) {
   const buddy = buddies.get(key);
-  if (!buddy || !buddy.dock || buddy.win.isDestroyed()) return;
+  if (
+    !buddy ||
+    !buddy.dock ||
+    (expectedDock && buddy.dock !== expectedDock) ||
+    buddy.win.isDestroyed()
+  )
+    return;
+  const dock = buddy.dock;
   let bounds = null;
   try {
-    bounds = await windowBounds(buddy.dock.target);
+    bounds = await windowBounds(dock.target);
   } catch (err) {
     // permission revoked, app quit, or a transient AppleEvent error
-    buddy.dock.lastError = err.message;
+    dock.lastError = err.message;
   }
-  if (!buddy.dock) return; // undocked while we were asking
+  if (buddy.dock !== dock) return; // undocked (or re-docked) while we were asking
   if (!bounds) {
     // Minimised, on another Space, or the app is mid-redraw: hold the perch
     // where it is. Only an app that has actually quit ends it.
@@ -876,7 +890,7 @@ async function followWindow(key) {
 function undock(buddy) {
   if (!buddy?.dock) return;
   stopWalking(buddy);
-  clearInterval(buddy.dock.timer);
+  buddy.dock.poll?.cancel();
   buddy.dock = null;
   buddy.dragged = false; // letting go is its own fresh start, back in the corner
   placeBuddy(buddy, buddy.mode || 'compact');
@@ -1054,6 +1068,7 @@ function maybeNudgePlanCalibration(payload) {
 const PROJECTS_DIR = path.join(os.homedir(), '.claude', 'projects');
 const USAGE_CACHE_MS = 60 * 1000;
 let usageCache = { at: 0, windows: null };
+const refreshUsageWindows = coalesceAsync((now) => usageWindows(PROJECTS_DIR, now));
 
 /**
  * What this session (and the machine) has spent. Session context comes straight
@@ -1070,7 +1085,7 @@ async function collectUsage(key) {
   const session = await sessionUsage(tracker.transcriptFor(key));
   const now = Date.now();
   if (now - usageCache.at > USAGE_CACHE_MS) {
-    usageCache = { at: now, windows: await usageWindows(PROJECTS_DIR, now) };
+    usageCache = { at: now, windows: await refreshUsageWindows(now) };
   }
   const plan = PLANS.find((p) => p.id === settings.plan) || PLANS[0];
   return {
@@ -1685,6 +1700,14 @@ app.whenReady().then(async () => {
   createTray();
   setInterval(sweepStaleSessions, SWEEP_INTERVAL_MS).unref?.();
 
+  ipcMain.handle('clippy-context', async (e) => {
+    const buddy = buddyForSender(e.sender);
+    if (!buddy) return null;
+    if (buddy.sessionId.startsWith('dev:')) {
+      return { session: devUsage(buddy.name).session };
+    }
+    return { session: await sessionUsage(tracker.transcriptFor(buddy.sessionId)) };
+  });
   ipcMain.handle('clippy-usage', (e) => {
     const buddy = buddyForSender(e.sender);
     if (!buddy) return null;

@@ -16,12 +16,15 @@
     "darwin"
   ],
   "engines": {
-    "node": ">=18"
+    "node": ">=18.13"
   },
   "scripts": {
     "start": "node scripts/make-buddies.js --if-missing && electron .",
-    "dev": "node scripts/make-buddies.js --if-missing && CLIPPY_DEV=1 electron .",
+    "dev": "node scripts/make-buddies.js --if-missing && node scripts/dev.js",
+    "dev:once": "node scripts/make-buddies.js --if-missing && CLIPPY_DEV=1 electron .",
     "test": "node --test",
+    "test:watch": "node --test --watch",
+    "check": "find bin demo scripts src test -name '*.js' -exec node --check {} \\; && node --test",
     "make-buddies": "node scripts/make-buddies.js",
     "add-sprite-pack": "node scripts/add-sprite-pack.js",
     "mock-session": "node scripts/mock-session.js",

@@ -550,7 +550,8 @@ Electron, so end-to-end still means `npm start` plus a real Claude Code session
 The same idea inside the real app, for the half of Clippy a browser can't show:
 
 ```bash
-npm run dev             # a buddy on screen + a "Clippy storybook" window
+npm run dev             # storybook + automatic restart when source changes
+npm run dev:once        # storybook without the file watcher
 ```
 
 You get one pinned buddy with no Claude Code behind it, and a small window
@@ -582,14 +583,16 @@ Electron, the tests are `node:test`, and the pixel art is generated.
 ```bash
 npm install     # Electron (dev) — that's the only dependency
 npm test        # node:test: server, sessions, decisions, hooks, art, usage…
+npm run test:watch  # rerun the focused tests as files change
+npm run check   # syntax-check every JS file, then run the full suite
 npm start       # builds any missing buddies, then launches the app
-npm run dev     # the app + a storybook window, no Claude Code needed
+npm run dev     # watched app + storybook window, no Claude Code needed
 npm run demo:web    # the UI in a browser, no Electron and no Claude Code
 npm run mock-session  # drive a running app through a realistic session
 ```
 
 `src/renderer/assets/` is **generated** and gitignored — `npm run make-buddies`
-redraws every character, and `npm start` does it for you when it's missing.
+redraws every character, and startup repairs any missing or stale built-in art.
 `node scripts/make-buddies.js --preview` prints the frames as ASCII, which is
 the quickest way to iterate on a sprite.
 

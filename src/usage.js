@@ -22,6 +22,10 @@ const path = require('node:path');
 // right-click cheap even for someone with hundreds of sessions.
 const MAX_FILES = 400;
 const MAX_BYTES = 80 * 1024 * 1024;
+// Stop reviews normally find the final assistant turn in one read. Keeping the
+// block modest also means a very large transcript never has to be materialized
+// just to inspect its last few JSONL records.
+const TRANSCRIPT_TAIL_BYTES = 64 * 1024;
 
 const DEFAULT_CONTEXT = 200_000;
 const LONG_CONTEXT = 1_000_000;
@@ -154,35 +158,78 @@ async function sessionUsage(transcriptPath) {
  */
 async function lastAssistantText(transcriptPath, { maxChars = 600 } = {}) {
   if (!transcriptPath) return '';
-  let text = '';
+  let handle;
   try {
-    text = await fs.readFile(transcriptPath, 'utf8');
+    handle = await fs.open(transcriptPath, 'r');
+    const { size } = await handle.stat();
+    let position = size;
+    // Segments of the one line that crosses a block boundary, encountered from
+    // right to left. This stays empty for the overwhelmingly common case.
+    let lineParts = [];
+
+    const recapFrom = (line) => {
+      if (!line.length || line.indexOf('"assistant"') === -1) return '';
+      let entry;
+      try {
+        entry = JSON.parse(line.toString('utf8'));
+      } catch {
+        return ''; // including a half-written final line
+      }
+      if (entry.type !== 'assistant' || entry.isSidechain) return '';
+      const content = entry.message && entry.message.content;
+      if (!Array.isArray(content)) return '';
+      return content
+        .filter((c) => c && c.type === 'text' && c.text)
+        .map((c) => c.text)
+        .join('\n')
+        .trim();
+    };
+
+    const clipped = (recap) =>
+      recap.length > maxChars ? `${recap.slice(0, maxChars).trim()}…` : recap;
+
+    while (position > 0) {
+      const start = Math.max(0, position - TRANSCRIPT_TAIL_BYTES);
+      const block = Buffer.allocUnsafe(position - start);
+      let filled = 0;
+      // Positional reads can legally be short, even for a regular file.
+      while (filled < block.length) {
+        const result = await handle.read(block, filled, block.length - filled, start + filled);
+        if (!result.bytesRead) break;
+        filled += result.bytesRead;
+      }
+      position = start;
+      const bytes = filled === block.length ? block : block.subarray(0, filled);
+      let lineEnd = bytes.length;
+
+      for (let i = bytes.length - 1; i >= 0; i--) {
+        if (bytes[i] !== 0x0a) continue; // JSONL is delimited by LF
+        const segments = [bytes.subarray(i + 1, lineEnd)];
+        for (let j = lineParts.length - 1; j >= 0; j--) segments.push(lineParts[j]);
+        const line = segments.length === 1 ? segments[0] : Buffer.concat(segments);
+        lineParts = [];
+        lineEnd = i;
+        const recap = recapFrom(line);
+        if (recap) return clipped(recap);
+      }
+
+      if (lineEnd) lineParts.push(bytes.subarray(0, lineEnd));
+      if (!filled) break; // the file was truncated while it was being read
+    }
+
+    // A JSONL file need not have a leading or trailing newline. Once offset 0
+    // is reached, the accumulated fragments are its first complete record.
+    if (lineParts.length) {
+      const line = Buffer.concat(lineParts.reverse());
+      const recap = recapFrom(line);
+      if (recap) return clipped(recap);
+    }
   } catch {
     return '';
+  } finally {
+    if (handle) await handle.close().catch(() => {});
   }
-
-  let recap = '';
-  for (const line of text.split('\n')) {
-    if (!line || line.indexOf('"assistant"') === -1) continue;
-    let entry;
-    try {
-      entry = JSON.parse(line);
-    } catch {
-      continue; // a half-written last line
-    }
-    if (entry.type !== 'assistant' || entry.isSidechain) continue;
-    const content = entry.message && entry.message.content;
-    if (!Array.isArray(content)) continue;
-    const prose = content
-      .filter((c) => c && c.type === 'text' && c.text)
-      .map((c) => c.text)
-      .join('\n')
-      .trim();
-    // Keep walking — the last prose-bearing turn wins, and a turn that ends
-    // on a tool call rather than words leaves the recap as whatever came before.
-    if (prose) recap = prose;
-  }
-  return recap.length > maxChars ? `${recap.slice(0, maxChars).trim()}…` : recap;
+  return '';
 }
 
 /** Every `*.jsonl` under `~/.claude/projects`, newest first. */
