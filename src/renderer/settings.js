@@ -558,3 +558,60 @@ const spy = new IntersectionObserver(
 for (const panel of document.querySelectorAll('.panel')) spy.observe(panel);
 
 window.clippySettings.ready();
+
+/* ---------- Updates ---------- */
+
+// The one deliberate network call in the app, made when you press the button
+// and never before. The result speaks plainly: a checkout compares commits,
+// the packaged app can only tell you what the newest commit is.
+{
+  const version = document.getElementById('update-version');
+  const source = document.getElementById('update-source');
+  const build = document.getElementById('update-build');
+  const result = document.getElementById('update-result');
+  const button = document.getElementById('btn-check-updates');
+
+  // The offline half fills from state as soon as it arrives; the network half
+  // waits for the button.
+  window.clippySettings.onState((next) => {
+    if (next.build) show({ ...next.build });
+  });
+
+  const show = (info) => {
+    version.textContent = info.version ? `v${info.version}` : 'unknown';
+    source.textContent =
+      info.source === 'checkout'
+        ? `a git checkout${info.branch ? ` (${info.branch})` : ''}`
+        : 'the packaged app';
+    build.textContent = info.sha ? info.sha.slice(0, 10) : 'no git info — packaged build';
+
+    if (info.error) {
+      result.textContent = `couldn't reach GitHub: ${info.error}`;
+      result.className = 'update-result bad';
+      return;
+    }
+    if (!info.latest) return; // the offline fill — nothing has been checked yet
+    const when = info.latest.date ? new Date(info.latest.date).toLocaleDateString() : '';
+    if (info.upToDate === true) {
+      result.textContent = `up to date with main (${when})`;
+      result.className = 'update-result good';
+    } else if (info.upToDate === false) {
+      result.textContent = `main has moved on: “${info.latest.message}” (${when}) — git pull to catch up`;
+      result.className = 'update-result warn';
+    } else {
+      result.textContent = `latest on main: “${info.latest.message}” (${when}) — no local git to compare`;
+      result.className = 'update-result';
+    }
+  };
+
+  button.addEventListener('click', async () => {
+    button.disabled = true;
+    result.textContent = 'asking GitHub…';
+    result.className = 'update-result';
+    try {
+      show(await window.clippySettings.checkUpdates());
+    } finally {
+      button.disabled = false;
+    }
+  });
+}

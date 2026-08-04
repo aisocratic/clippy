@@ -2,6 +2,7 @@
   "name": "clippy-for-claude",
   "version": "0.1.0",
   "description": "A Clippy for your Mac that watches your Claude Code sessions and lets you answer them without hunting through terminal tabs",
+  "author": "AI Socratic (https://aisocratic.org)",
   "keywords": [
     "claude",
     "claude-code",
@@ -20,15 +21,18 @@
   },
   "scripts": {
     "start": "node scripts/make-buddies.js --if-missing && electron .",
-    "dev": "node scripts/make-buddies.js --if-missing && CLIPPY_DEV=1 electron .",
+    "sandbox": "node scripts/demo-web.js --open /gallery",
+    "sandbox:app": "node scripts/make-buddies.js --if-missing && CLIPPY_SANDBOX=1 electron .",
     "test": "node --test",
     "make-buddies": "node scripts/make-buddies.js",
+    "package": "node scripts/package-app.js",
     "add-sprite-pack": "node scripts/add-sprite-pack.js",
     "mock-session": "node scripts/mock-session.js",
     "demo:web": "node scripts/demo-web.js",
     "hooks:install": "node bin/clippy-hooks.js install",
     "hooks:uninstall": "node bin/clippy-hooks.js uninstall",
-    "hooks:status": "node bin/clippy-hooks.js status"
+    "hooks:status": "node bin/clippy-hooks.js status",
+    "website": "node website/build.js && open website/index.html"
   },
   "devDependencies": {
     "electron": "^33.0.0"

@@ -20,3 +20,6 @@ src/renderer/assets/
 
 # Downloaded sprite packs (third-party art, kept out of the repo)
 sprites/
+
+# Marketing site — kept out of the repo's history for now
+website/

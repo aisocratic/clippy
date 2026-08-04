@@ -3,13 +3,17 @@
 <head>
   <meta charset="utf-8" />
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'" />
-  <title>Clippy storybook</title>
+  <title>Clippy sandbox</title>
   <link rel="stylesheet" href="dev.css" />
 </head>
 <body>
   <header>
-    <h1>Storybook</h1>
+    <h1>Sandbox</h1>
     <p>Every state, fired at the buddy on your screen. No Claude Code needed.</p>
+    <div id="gallery-row">
+      <button id="gallery-all" title="One buddy per state, tiled across the screen — compare everything side by side">▦ Show all at once</button>
+      <button id="gallery-clear" title="Close the gallery buddies (the main sandbox buddy stays)">✕ Clear</button>
+    </div>
   </header>
   <main id="stories"></main>
   <script src="dev.js"></script>

@@ -16,8 +16,12 @@
     <a class="rail-link" href="#buddies">Buddies</a>
     <a class="rail-link" href="#limits">Usage &amp; limits</a>
     <a class="rail-link" href="#actions">What Clippy can do</a>
-    <div id="rail-foot">
-      <span id="server-dot"></span><span id="server-text">hook server</span>
+    <a class="rail-link" href="#updates">Updates</a>
+    <div id="rail-meta">
+      <a id="maker-link" href="https://aisocratic.org">by AI Socratic ↗</a>
+      <div id="rail-foot">
+        <span id="server-dot"></span><span id="server-text">hook server</span>
+      </div>
     </div>
   </nav>
 
@@ -89,6 +93,33 @@
           once and every bar after that is honest.</p>
         <p>The named tiers are starting scales, not facts: only the 5×/20× steps between them are
           certain. Until a number comes from you, Clippy shows spend and says so.</p>
+      </div>
+    </section>
+
+    <section id="updates" class="panel">
+      <header class="panel-head">
+        <h1>Updates</h1>
+        <p>No auto-updater and no phoning home — checking is a button, and updating is
+           <code>git pull</code>. This is the only place Clippy ever talks to something
+           that isn't localhost, and only when you ask it to.</p>
+      </header>
+
+      <div class="update-box">
+        <div class="update-row"><span class="update-key">Version</span><span id="update-version">—</span></div>
+        <div class="update-row"><span class="update-key">Running from</span><span id="update-source">—</span></div>
+        <div class="update-row"><span class="update-key">Build</span><span id="update-build">—</span></div>
+        <div class="update-row update-actions">
+          <button id="btn-check-updates">Check for updates</button>
+          <span id="update-result" class="update-result"></span>
+        </div>
+      </div>
+
+      <div class="drop-hint">
+        <p><b>Updating a checkout:</b> <code>git pull &amp;&amp; npm install &amp;&amp; npm start</code>
+           — hooks stay put, settings stay put.</p>
+        <p><b>Updating the installed app:</b> pull the checkout, run
+           <code>npm run package</code>, and replace the app in Applications with the fresh
+           <code>dist/</code> build.</p>
       </div>
     </section>
 

@@ -35,9 +35,10 @@ const {
   promptPosition,
   typeAndSubmit,
 } = require('./terminal');
-const { sessionUsage, lastAssistantText, usageWindows, planLimitsFor, cleanLimits, PLANS } =
+const { sessionUsage, lastAssistantText, usageWindows, readOfficialUsage, planLimitsFor, cleanLimits, PLANS } =
   require('./usage');
-const { DEV_SESSION, eventsFor, storyList, devUsage } = require('./dev-scenarios');
+const { checkForUpdates, localBuild } = require('./updates');
+const { DEV_SESSION, eventsFor, storyList, sandboxUsage } = require('./sandbox-scenarios');
 
 const PORT = Number(process.env.CLIPPY_PORT || 43117);
 
@@ -259,6 +260,8 @@ function settingsState() {
     ...settingsPayload(),
     actions: ACTIONS,
     port: PORT,
+    // Which copy of Clippy this is — the Updates section's offline half.
+    build: localBuild(path.join(__dirname, '..')),
     // Can we raise other apps' windows? Everything about perching depends on it.
     windowAccess: canDriveWindows(),
     appName: path.basename(appBundlePath(), '.app'),
@@ -400,10 +403,10 @@ function buddyFor(key, name = '') {
       color: identity.color,
     },
   });
-  // CLIPPY_DEVTOOLS=1 npm start opens an inspector per buddy, detached so it
+  // CLIPPY_SANDBOXTOOLS=1 npm start opens an inspector per buddy, detached so it
   // never fights the transparent always-on-top window for space — the fast
   // way to iterate on the cards/menu/bubble without a real Claude Code turn.
-  if (process.env.CLIPPY_DEVTOOLS) win.webContents.openDevTools({ mode: 'detach' });
+  if (process.env.CLIPPY_SANDBOXTOOLS) win.webContents.openDevTools({ mode: 'detach' });
   win.webContents.on('did-finish-load', () => {
     win.webContents.send('clippy-settings', settingsPayload(buddies.get(key)));
     // Only offer "open the session's window" when we actually know where it is.
@@ -1075,6 +1078,9 @@ async function collectUsage(key) {
   const plan = PLANS.find((p) => p.id === settings.plan) || PLANS[0];
   return {
     name: buddies.get(key)?.name || '',
+    // The percentages Claude Code itself cached from /usage — the real
+    // allowance, shown first whenever it exists.
+    official: await readOfficialUsage(),
     session,
     windows: usageCache.windows,
     now,
@@ -1266,51 +1272,51 @@ function stopDriveSession() {
   hideBuddy(DRIVE_KEY, { unpin: true });
 }
 
-/* ---------------- Development mode (the Electron storybook) ---------------- */
+/* ---------------- Development mode (the Electron sandbox) ---------------- */
 
 // `npm run dev` — a buddy with no Claude Code behind it, plus a control window
 // listing every state it can be in. The browser bench (npm run demo:web) covers
 // the same states faster, but only Electron has the real window: placement,
 // growing to fit a card, perching, the actual preload bridge. This is where you
 // check those.
-const DEV = Boolean(process.env.CLIPPY_DEV);
+const SANDBOX = Boolean(process.env.CLIPPY_SANDBOX);
 
-let storyWin = null;
+let sandboxWin = null;
 
 /**
- * The little window of buttons. Its stories come from `src/dev-scenarios.js`
+ * The little window of buttons. Its stories come from `src/sandbox-scenarios.js`
  * and are handed over after the page loads, so the dev bridge stays down to the
  * one method that plays one.
  */
-function openStorybook() {
-  if (storyWin && !storyWin.isDestroyed()) {
-    storyWin.show();
-    return storyWin;
+function openSandbox() {
+  if (sandboxWin && !sandboxWin.isDestroyed()) {
+    sandboxWin.show();
+    return sandboxWin;
   }
-  storyWin = new BrowserWindow({
+  sandboxWin = new BrowserWindow({
     width: 300,
     height: 560,
-    title: 'Clippy storybook',
+    title: 'Clippy sandbox',
     titleBarStyle: 'hiddenInset',
     backgroundColor: '#13161b',
     show: false,
     webPreferences: {
-      preload: path.join(__dirname, 'preload-dev.js'),
+      preload: path.join(__dirname, 'preload-sandbox.js'),
       contextIsolation: true,
       nodeIntegration: false,
     },
   });
-  storyWin.loadFile(path.join(__dirname, 'renderer', 'dev.html'));
-  storyWin.webContents.on('did-finish-load', () => {
-    storyWin.webContents.executeJavaScript(
+  sandboxWin.loadFile(path.join(__dirname, 'renderer', 'sandbox.html'));
+  sandboxWin.webContents.on('did-finish-load', () => {
+    sandboxWin.webContents.executeJavaScript(
       `window.renderStories(${JSON.stringify(storyList())});`
     );
   });
-  storyWin.once('ready-to-show', () => storyWin.show());
-  storyWin.on('closed', () => {
-    storyWin = null;
+  sandboxWin.once('ready-to-show', () => sandboxWin.show());
+  sandboxWin.on('closed', () => {
+    sandboxWin = null;
   });
-  return storyWin;
+  return sandboxWin;
 }
 
 /**
@@ -1325,14 +1331,76 @@ function playStory(id) {
 }
 
 /** One buddy on screen from the moment the app starts, and the story list. */
-function startDevMode() {
-  const buddy = buddyFor(DEV_SESSION, 'storybook');
+function startSandbox() {
+  const buddy = buddyFor(DEV_SESSION, 'sandbox');
   // Nothing will ever ask to see this one, so it has to be kept on screen the
   // same way a user-requested buddy is.
   buddy.pinned = true;
   placeBuddy(buddy, 'compact');
   buddy.win.showInactive();
-  openStorybook();
+  openSandbox();
+}
+
+// The gallery: every story at once, each on a buddy of its own. Cells are
+// sized for a full card side by side, and cards get a hold long enough that
+// nothing expires while you're comparing states across the screen.
+const GALLERY_CELL_W = WIN_W + 14;
+const GALLERY_CELL_H = 470;
+const GALLERY_HOLD_SECS = 60 * 60;
+
+/**
+ * Show every state at the same time, tiled left-to-right from the top of the
+ * screen. Each story buddy is marked `dragged`, which (since the drag fix) is
+ * exactly the anchor a gallery wants: the window grows and shrinks around the
+ * buddy's own center instead of snapping to the corner-slot layout, whose rows
+ * sit far too close for a screen full of open cards.
+ */
+function showAllStories() {
+  const now = Date.now();
+  const { workArea } = screen.getPrimaryDisplay();
+  const cols = Math.max(1, Math.floor(workArea.width / GALLERY_CELL_W));
+  const [compactW, compactH] = compactSize();
+
+  storyList().forEach((story, i) => {
+    const key = `sandbox:${story.id}`;
+    const buddy = buddyFor(key, story.label);
+    buddy.pinned = true;
+    buddy.dragged = true;
+    const centerX = workArea.x + (i % cols) * GALLERY_CELL_W + GALLERY_CELL_W / 2;
+    const bottom = Math.min(
+      workArea.y + (Math.floor(i / cols) + 1) * GALLERY_CELL_H,
+      workArea.y + workArea.height
+    );
+    setBuddyBounds(buddy, {
+      x: Math.round(centerX - compactW / 2),
+      y: bottom - compactH,
+      width: compactW,
+      height: compactH,
+    });
+    buddy.win.showInactive();
+
+    // A brand-new window is still loading its renderer; events sent before
+    // did-finish-load land on nobody. The settings payload rides the same
+    // listener buddyFor registered first, so order stays right.
+    const fire = () => {
+      for (const event of eventsFor(story.id, now, {
+        sessionId: key,
+        name: story.label,
+        holdSecs: GALLERY_HOLD_SECS,
+      })) {
+        sendTo(key, event);
+      }
+    };
+    if (buddy.win.webContents.isLoading()) buddy.win.webContents.once('did-finish-load', fire);
+    else fire();
+  });
+}
+
+/** Close every gallery buddy; the main dev buddy stays. */
+function clearGallery() {
+  for (const key of [...buddies.keys()]) {
+    if (key.startsWith('sandbox:') && key !== DEV_SESSION) closeBuddy(key);
+  }
 }
 
 /* ---------------- Hook handling ---------------- */
@@ -1443,21 +1511,28 @@ async function handleStop(payload, ctx) {
   ctx.onClose(() => broker.resolve(id, 'cancel'));
 
   // What Claude actually said right before stopping, if it said anything — a
-  // turn that ends on a bare tool call has no recap, and the card just won't
-  // show one.
+  // turn that ends on a bare tool call has no recap, and the card falls back
+  // to the generic headline.
   const recap = await lastAssistantText(tracker.transcriptFor(reaction.sessionId));
+  // The headline is the summary itself: what got done beats "something got
+  // done". First non-empty line, clipped to card width; the full recap rides
+  // below only when there is more of it than the headline already shows.
+  const firstLine = (recap.split('\n').find((l) => l.trim()) || '').trim();
+  const short = firstLine.length > 90 ? `${firstLine.slice(0, 90).trim()}…` : firstLine;
 
   sendTo(reaction.sessionId, {
     ...reaction,
     kind: 'review',
-    message: `Claude finished in “${reaction.name}”. Looks good, or should it keep going?`,
-    detail: recap,
+    message: short
+      ? `Claude finished: “${short}”`
+      : `Claude finished in “${reaction.name}”. Looks good, or should it keep going?`,
+    detail: recap !== firstLine ? recap : '',
     counts: tracker.counts(),
     requestId: id,
     expiresAt,
   });
   showBuddy(reaction.sessionId);
-  notify('📎 Claude finished', `“${reaction.name}” — review it from Clippy`, {
+  notify('📎 Claude finished', short || `“${reaction.name}” — review it from Clippy`, {
     silent: true,
     sessionId: reaction.sessionId,
   });
@@ -1688,9 +1763,9 @@ app.whenReady().then(async () => {
   ipcMain.handle('clippy-usage', (e) => {
     const buddy = buddyForSender(e.sender);
     if (!buddy) return null;
-    // A storybook buddy has no transcript to read and no session behind it, so
+    // A sandbox buddy has no transcript to read and no session behind it, so
     // the panel is fed canned numbers rather than showing empty bars.
-    if (buddy.sessionId.startsWith('dev:')) return devUsage(buddy.name);
+    if (buddy.sessionId.startsWith('sandbox:')) return sandboxUsage(buddy.name);
     return collectUsage(buddy.sessionId);
   });
   ipcMain.on('clippy-mode', (e, payload) => {
@@ -1731,6 +1806,12 @@ app.whenReady().then(async () => {
     const { name, character } = payload || {};
     assignCharacter(String(name || ''), String(character || ''));
   });
+  ipcMain.handle('clippy-settings-check-updates', () => {
+    // The repo root: from a checkout that's this file's parent; inside the
+    // packaged app it's Contents/Resources/app, which has no .git — and the
+    // checker reports exactly that instead of guessing.
+    return checkForUpdates(path.join(__dirname, '..'));
+  });
   ipcMain.on('clippy-settings-show', (_e, sessionId) => {
     if (sessionId) showBuddy(String(sessionId), { pin: true });
   });
@@ -1738,6 +1819,16 @@ app.whenReady().then(async () => {
     // "You have to answer this in the terminal" — walk over and show them where.
     const buddy = buddyForSender(e.sender);
     if (buddy) hintAtTerminal(buddy.sessionId);
+  });
+  ipcMain.on('clippy-move-by', (e, { dx, dy } = {}) => {
+    // The renderer's hand-rolled drag: move this buddy's window by a delta.
+    // Plain setPosition on purpose — the 'moved' listener sees the result land
+    // away from lastPlaced and marks the buddy dragged, exactly like a native
+    // drag did before.
+    const buddy = buddyForSender(e.sender);
+    if (!buddy || buddy.win.isDestroyed()) return;
+    const [x, y] = buddy.win.getPosition();
+    buddy.win.setPosition(x + Math.round(Number(dx) || 0), y + Math.round(Number(dy) || 0));
   });
   ipcMain.on('clippy-hide', (e) => {
     // Hiding by hand also drops the pin, so ambient rules take over again.
@@ -1764,8 +1855,13 @@ app.whenReady().then(async () => {
     if (drive && typeof text === 'string' && text.trim()) drive.prompt(text.trim());
   });
   ipcMain.on('clippy-drive-stop', stopDriveSession);
-  ipcMain.on('clippy-dev-fire', (_e, id) => {
-    if (DEV) playStory(String(id || ''));
+  ipcMain.on('clippy-sandbox-fire', (_e, id) => {
+    if (!SANDBOX) return;
+    // Two ids are the sandbox's own controls rather than stories: the
+    // gallery of everything at once, and putting it away again.
+    if (id === '__all__') return showAllStories();
+    if (id === '__clear__') return clearGallery();
+    playStory(String(id || ''));
   });
   ipcMain.on('clippy-send-prompt', (e, text) => {
     // The prompt composer: type what you wrote into the session's terminal.
@@ -1774,8 +1870,8 @@ app.whenReady().then(async () => {
   });
 
   // The hook server still comes up in development mode — a real session can
-  // report in alongside the storybook, and nothing here interferes with it.
-  if (DEV) startDevMode();
+  // report in alongside the sandbox, and nothing here interferes with it.
+  if (SANDBOX) startSandbox();
 
   const server = createHookServer({
     port: PORT,
