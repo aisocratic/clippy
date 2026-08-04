@@ -5,8 +5,8 @@ const assert = require('node:assert');
 const { ACTIONS } = require('../src/actions');
 const { toHookResponse } = require('../src/decisions');
 
-// The switches the settings window offers. An action can only be gated on one
-// of these — anything else would render a control that doesn't exist.
+// The switches the tray's Quick settings offers. An action can only be gated on
+// one of these — anything else would be a switch nobody can reach.
 const SWITCHES = ['approvals', 'answerQuestions', 'reviewOnStop', 'autoPerch'];
 
 test('every action is complete enough to render', () => {

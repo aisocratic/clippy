@@ -42,14 +42,19 @@ Every card carries a **go to terminal ↗** button that brings that window to th
 front, so you land in the right session instead of hunting for it.
 
 Clippy is a **small buddy** by default and only grows a window when there's
-something to read — as tall as that thing needs, no more. **Click him** and a
-menu drops out from underneath: go to the agent's terminal, stats & token usage
-(`660k left of 1.0M · 340k used (34%)` over a progress bar, plus real allowance
-bars for the rolling 5-hour block, the week, and Opus's own week once you tell
-Clippy your plan), a Settings submenu, and hide. The buddies are **pixel art**:
-Clippy himself in your session's colour and a pixel cat, both drawn in code
-with no image assets in the repo — and any sprite pack you drop in, swappable
-from the menu.
+something to read — as tall as that thing needs, no more. **Click him** and he
+goes straight to the useful thing: a message you haven't seen yet, or — when
+there's nothing waiting — one panel that answers "how is this session doing,
+and what now?": what the agent is doing right now, how much context and
+allowance it has spent (`660k left of 1.0M · 340k used (34%)` over a progress
+bar, plus real allowance bars for the rolling 5-hour block, the week, and
+Opus's own week once you tell Clippy your plan), and a box to type the next
+prompt into — he raises that session's terminal and types it in for you.
+**Right-click** for everything else — the same stats, Settings, and hide.
+**Double-click** just says hi back, for about a second. The buddies are **pixel
+art**: Clippy himself in your session's colour and a pixel cat, both drawn in
+code with no image assets in the repo — and any sprite pack you drop in,
+swappable from the menu.
 
 ## How it works
 
@@ -83,7 +88,7 @@ interactive — their HTTP response is the hook's decision:
 | `Notification` (`permission_prompt`) | 🔴 Urgent bounce — a prompt is waiting in the terminal |
 | `Notification` (`idle_prompt`) | 🟡 Reminder — Claude has been waiting for your reply |
 | `UserPromptSubmit` | clears alerts & pending cards for that session (you're on it) |
-| `SessionStart` / `SessionEnd` | tracks sessions appearing/disappearing |
+| `SessionStart` / `SessionEnd` | tracks sessions appearing/disappearing — a fresh session or `/clear` also nudges you to calibrate your plan, once a day, until you do |
 
 The activity hooks match **only meaningful tools** (`Bash|Edit|Write|…|mcp__.*`)
 — `Read`, `Grep`, `Glob`, and `TodoWrite` are excluded, so the noisy read-only
@@ -110,8 +115,8 @@ Safety properties of the interactive hooks:
 - When the app isn't running, the hooks fail instantly
   (`--connect-timeout 1 … || true`) and Claude Code behaves exactly as if
   Clippy didn't exist.
-- Both behaviors can be toggled from **Settings** in Clippy's click menu or the
-  📎 menu bar item ("approvals" / "review"), and the toggles persist.
+- Both behaviors can be toggled from **📎 menu bar → Quick settings**
+  ("Permission requests" / "Review when Claude finishes"), and the toggles persist.
 
 ## Quick start
 
@@ -157,31 +162,47 @@ know.
   your note, no terminal round-trip.
 - **Perched on your window**: a buddy pops up on the top-right corner of the
   window its session runs in (its editor or terminal), follows it around, and
-  leaves when you've answered. Turn it off with `perch` in the click menu's Settings, or the menu bar
-  if you'd rather they always sit in the screen corner.
-- **Click Clippy** (or right-click — either button) and a short menu drops out
-  from under him, about *this* session:
+  leaves when you've answered. Turn it off under **📎 menu bar → Quick settings →
+  Perch on the session's own window** if you'd rather they always sit in the
+  screen corner.
+- **Click Clippy** and he does the one useful thing directly, no menu in the
+  way: reopens a message you haven't seen yet, or — if there's nothing
+  waiting — opens the **session panel**, which is one click for the three
+  things you'd otherwise go looking for separately:
+  - **what the agent is doing** — its state and the tool it's on right now
+    (`working… · ⚙ Running: npm test`), kept live while the panel is open.
+  - **what it has spent** — how much context is **left** in this conversation
+    (progress bar turning amber past 60% and red past 85%, 1M window detected
+    automatically), then three bars for what every session on this machine has
+    spent in the windows `/usage` reports on — the rolling 5-hour block, the
+    week across all models, and Opus's own week — plus the models you leaned on
+    most. Tell Clippy your plan (Pro, Max 5×, Max 20×, or your own Custom
+    numbers) under **Usage & limits** in Settings (📎 in the menu bar) and those
+    become real allowance bars, spend over limit; until then they're hatched
+    bars showing each window's share of the week, spend with nothing to compare
+    it to. Claude Code keeps the real 5-hour/weekly allowances server-side, so
+    `/usage` is still the source of truth — Clippy's numbers are for
+    calibrating the estimate, not replacing it.
+  - **a box to keep chatting** — type what you want and hit Enter: Clippy
+    raises that session's terminal and types it onto the prompt line for you
+    (simulated keystrokes via the same Accessibility access perching uses,
+    flattened to one line since Return submits). Escape closes the panel.
+
+  **Right-click** for the rest, in a short RPG-style menu about *this* session:
   - **📨 See what's waiting** — re-open the latest message, when there is one.
-  - **↗ Go to the terminal** — raises the window that session runs in and sends
-    Clippy over to perch on it.
-  - **👇 Show me the prompt** — he walks to that session's input line and points
-    at it. From the corner he goes there first.
-  - **📌 Let go of this window** — unperch (only while riding a window).
-  - **📊 Stats & token usage** — how much context is **left** in this
-    conversation (progress bar turning amber past 60% and red past 85%, 1M
-    window detected automatically), then three bars for what every session on
-    this machine has spent in the windows `/usage` reports on — the rolling
-    5-hour block, the week across all models, and Opus's own week — plus the
-    models you leaned on most. Tell Clippy your plan (Pro, Max 5×, Max 20×, or
-    your own Custom numbers) in **Set plan…**/Settings and those become real
-    allowance bars, spend over limit; until then they're hatched bars showing
-    each window's share of the week, spend with nothing to compare it to.
-    Claude Code keeps the real 5-hour/weekly allowances server-side, so `/usage`
-    is still the source of truth — Clippy's numbers are for calibrating the
-    estimate, not replacing it.
+  - **📊 Stats & token usage** — the same panel as a left click.
   - **⚙ Settings…** — opens the settings window (everything that applies to all
     buddies lives there, not here).
   - **× Hide Clippy**.
+- **Just being there**: hovering the buddy reveals the name plate above him
+  (otherwise hidden so it isn't always taking up room) and the two small
+  buttons underneath — **open session ↗** and **hide**. Hovering does nothing
+  to the buddy himself: his pose is only ever about the session. A plain click
+  gets a quick acknowledging `wave` on top of whatever it just did;
+  double-click is purely for fun — a bigger one-off `cheer` for about a second,
+  no action attached. Neither ever papers over a real signal — a card, an
+  urgent nudge, the stress pose — they only show when there's nothing more
+  important going on.
 - **Messages you have to act on stay put**: "macOS blocked me from driving that
   window" and friends no longer fade after four seconds — they sit there with an
   **Open Settings ↗** button that takes you straight to Privacy & Security →
@@ -199,12 +220,13 @@ know.
   and 4× the 32×40 sprite (pixel art only looks right at whole multiples), and
   the choice sticks across restarts.
 - **The menu bar**: click 📎 for the settings window (above); right-click for the
-  quick menu — per-session actions (show, perch, open window), Drive mode, the
-  same switches under *Quick settings*, and quit.
-- **go to terminal ↗** (on every card) or **open session ↗** (hover below
-  Clippy) does the same as the menu's first item: raises that session's window
-  and keeps Clippy perched on it as a small happy paperclip until you send it
-  away. The menu bar can perch it again.
+  quick menu — per-session actions (show, perch, open window), Drive mode, every
+  on/off switch under *Quick settings* (permission requests, questions, review on
+  finish, perch), and quit.
+- **go to terminal ↗** (on every card) and **open session ↗** (hover below
+  Clippy) both raise that session's window and keep Clippy perched on it as a
+  small happy paperclip until you send it away. The menu bar can perch it
+  again.
 - **The window is only as big as the card**: the renderer measures what it has
   to show and asks for exactly that much height (clamped to your display), so a
   long plan or a queue of approvals isn't cut off and a bare buddy isn't sitting
@@ -236,7 +258,9 @@ know.
 
   `npm run make-buddies` rebuilds them; `node scripts/make-buddies.js --preview
   clip:walk` prints a frame as ASCII if you want to redraw one.
-- **Drag Clippy** anywhere; he floats above full-screen apps on all Spaces.
+- **Drag Clippy** anywhere; he floats above full-screen apps on all Spaces, and
+  he stays put where you dropped him — cards and the right-click menu grow
+  around him instead of nudging him sideways.
 - **Got it** acknowledges everything; **Snooze 5m** pauses the nagging.
 - The red badge and the menu bar `📎 N` show how many sessions need you.
 - **hide** (hover below Clippy) hides that buddy early; **Show “name”** in the
@@ -344,20 +368,18 @@ would at least make the row say "Clippy" instead of "Electron".
 
 Click **📎 in the menu bar** and Clippy's settings window opens (right-click for
 the quick menu — sessions, Drive mode, quit). It's the one part of Clippy you sit
-and read, and it has five sections:
+and read, and it has four sections:
 
 - **Sessions** — everything reporting in right now, each with the buddy it's
   wearing and a picker to **give that project a buddy of its own**. That choice
   is kept against the project name, so the same repo looks the same tomorrow,
-  and it outranks whichever mode is set below.
+  and it outranks the automatic pick.
 - **Buddies** — every character with all nine of its animations playing side by
   side (the same layout as the test bench's workbench), and a size picker.
-  **Who each session gets** is a choice of three:
-  - **Same for all** — every session uses the buddy you click.
-  - **One per project** — Clippy picks from the cast using the project name, so
-    the same repo always gets the same buddy and parallel agents rarely match.
-  - **Random** — a fresh buddy per session, drawn when it first reports in.
-
+  **Every project gets its own buddy**, chosen from the cast by the project
+  name: the same repo always gets the same face, and parallel agents rarely
+  match. Nothing to configure — click a character here to hand it to the
+  projects currently on screen, or pick one per project under **Sessions**.
   There's a link to [openpets.dev/gallery](https://openpets.dev/gallery) for
   downloading more.
 - **Usage & limits** — turns the token panel's spend bars into real allowance
@@ -367,16 +389,21 @@ and read, and it has five sections:
   run `/usage` in Claude Code, right-click a buddy, and back out the allowance
   from the percentage each side reports (40% in `/usage` against 2.0M in Clippy
   means a ~5M allowance) — type that in under Custom and every bar after that
-  is honest instead of a guess.
-- **What Clippy answers** — the switches, each spelling out what it means for
-  Claude Code. Turn one off and that moment goes back to the terminal exactly as
-  if Clippy weren't running.
+  is honest instead of a guess. Clippy can't read your plan tier itself —
+  Claude Code never persists it anywhere and `/usage` is a live API call that
+  leaves no trace on disk — so until you've set one, a new session or `/clear`
+  nudges you (once a day) to go run `/usage` and come back with the number.
 - **What Clippy can do** — the full catalogue: what triggers each behaviour,
   which hook it rides on, what you see, and — for anything that answers on your
   behalf — **the exact JSON Claude Code receives** for each button. Those strings
   come from the same `toHookResponse` the app answers with (`src/actions.js`), so
   the page can't drift from the behaviour, and a test asserts it.
 (Clicking a session's name brings its buddy to the front.)
+
+The on/off switches for what Clippy answers aren't in this window at all: they
+live in **📎 menu bar → Quick settings**, one right-click from anywhere. Turn one
+off and that moment goes back to the terminal exactly as if Clippy weren't
+running — *What Clippy can do* marks the affected entries **off**.
 
 ## Bring your own buddy (sprite-sheet themes)
 
@@ -452,6 +479,7 @@ default. That's why nothing here is committed for you.
 | Review hold time (default 30s) | `CLIPPY_REVIEW_HOLD_SECS=60 npm start` |
 | Question hold time (default 90s) | `CLIPPY_QUESTION_HOLD_SECS=120 npm start` |
 | Inspect live state | `curl localhost:43117/status` |
+| Open a DevTools inspector per buddy | `CLIPPY_DEVTOOLS=1 npm start` — iterate on the cards/menu/bubble live, no real Claude Code turn needed |
 | Check installed hooks | `npm run hooks:status` |
 | Remove hooks | `npm run hooks:uninstall` (only touches entries tagged `#claude-clippy`) |
 
@@ -517,6 +545,35 @@ Electron, so end-to-end still means `npm start` plus a real Claude Code session
 - `demo/stub-api.js` — browser stand-in for `src/preload.js`
 - `demo/index.html`, `demo/demo.js`, `demo/demo.css` — the control panel
 
+### Development mode (Electron storybook)
+
+The same idea inside the real app, for the half of Clippy a browser can't show:
+
+```bash
+npm run dev             # a buddy on screen + a "Clippy storybook" window
+```
+
+You get one pinned buddy with no Claude Code behind it, and a small window
+listing every state it can be in — session started, working, a failed tool,
+both nudges, the approval and plan cards, an answerable question, a read-only
+one, a review with a recap, a sticky message with its fix button, and back to
+quiet. Clicking one sends the same `clippy-event` payloads the real hook
+handlers send. The token panel works too (canned numbers, since there is no
+transcript to read), and answering a card is a no-op — the decision carries a
+made-up request id that the broker declines.
+
+Prefer **`npm run dev`** when the thing you're changing is the *window*: where a
+buddy is placed, how it grows to fit a card, perching, the preload bridge, the
+tray. Prefer **`npm run demo:web`** when it's the *page*: markup, CSS,
+animations, card layouts — it reloads instantly, has a show run, and prints the
+hook JSON each button would have produced. The hook server still runs under
+`npm run dev`, so a real session can report in alongside the storybook.
+
+- `src/dev-scenarios.js` — the stories, as pure data (with a test that keeps
+  every one of them firing something)
+- `src/renderer/dev.html`, `dev.js`, `dev.css` — the control window
+- `src/preload-dev.js` — its bridge: one method, `devAPI.fire(id)`
+
 ## Development
 
 No build step and no runtime dependencies: the app is plain CommonJS run by
@@ -526,6 +583,7 @@ Electron, the tests are `node:test`, and the pixel art is generated.
 npm install     # Electron (dev) — that's the only dependency
 npm test        # node:test: server, sessions, decisions, hooks, art, usage…
 npm start       # builds any missing buddies, then launches the app
+npm run dev     # the app + a storybook window, no Claude Code needed
 npm run demo:web    # the UI in a browser, no Electron and no Claude Code
 npm run mock-session  # drive a running app through a realistic session
 ```
@@ -538,7 +596,8 @@ the quickest way to iterate on a sprite.
 Two things worth knowing before changing the UI:
 
 - Anything user-visible should show up in the **show run** (`SHOW_RUN()` in
-  `scripts/demo-web.js`) so it can be demoed and eyeballed in one place.
+  `scripts/demo-web.js`) so it can be demoed and eyeballed in one place, and in
+  the **storybook** (`src/dev-scenarios.js`) if it needs a real window.
 - The renderer only talks to main through `window.clippyAPI` (`src/preload.js`).
   Keeping that surface small is what lets the whole UI run in a browser.
 
@@ -556,6 +615,8 @@ Two things worth knowing before changing the UI:
   process, the renderer's menu and the web test bench
 - `src/actions.js` — what Clippy does with a session, as data, with the real
   hook JSON for every button; the settings window is rendered from it
+- `src/dev-scenarios.js` — the storybook's states, as data, in the event shapes
+  the real handlers send; `npm run dev` plays them at a buddy
 - `src/visibility.js` — when a buddy is allowed on screen (done/asking) and
   when it hides again
 - `src/terminal.js` — finds a session's terminal window (hook-reported tty for

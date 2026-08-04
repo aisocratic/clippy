@@ -165,8 +165,9 @@ function showNote(text) {
 function runAction(action) {
   switch (action.do) {
     case 'usage':
-      send('poke', { button: 'left' }); // same as clicking the buddy
-      setTimeout(() => send('poke-menu', { item: 'menu-stats' }), 250);
+      // One left click is the whole gesture now: status, spend and the box to
+      // reply in all arrive in the same panel.
+      send('poke', { button: 'left' });
       break;
     case 'usage-close':
       send('poke-menu', { item: 'btn-usage-close' });

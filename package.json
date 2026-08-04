@@ -20,6 +20,7 @@
   },
   "scripts": {
     "start": "node scripts/make-buddies.js --if-missing && electron .",
+    "dev": "node scripts/make-buddies.js --if-missing && CLIPPY_DEV=1 electron .",
     "test": "node --test",
     "make-buddies": "node scripts/make-buddies.js",
     "add-sprite-pack": "node scripts/add-sprite-pack.js",

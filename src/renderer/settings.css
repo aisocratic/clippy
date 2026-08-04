@@ -270,8 +270,13 @@ code {
   cursor: pointer;
 }
 
-.cast-who:hover {
+.cast-who:hover:enabled {
   background: #232833;
+}
+
+/* Nothing is running, so there is no project to hand this buddy to. */
+.cast-who:disabled {
+  cursor: default;
 }
 
 .cast-name {
@@ -415,79 +420,6 @@ code {
   font-size: 11.5px;
   line-height: 1.5;
   color: var(--warn);
-}
-
-/* ---------- Switches ---------- */
-
-.switches {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.switch {
-  display: flex;
-  align-items: flex-start;
-  gap: 14px;
-  padding: 14px 16px;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-}
-
-.switch-text {
-  flex: 1;
-}
-
-.switch-title {
-  font-size: 13px;
-  font-weight: 600;
-  margin-bottom: 3px;
-}
-
-.switch-desc {
-  font-size: 11.5px;
-  color: var(--muted);
-}
-
-.switch-desc b {
-  color: #c3cbd5;
-  font-weight: 600;
-}
-
-.toggle {
-  flex: none;
-  width: 42px;
-  height: 24px;
-  padding: 0;
-  border: 1px solid var(--line);
-  border-radius: 13px;
-  background: var(--surface-2);
-  cursor: pointer;
-  position: relative;
-  transition: background 0.16s ease, border-color 0.16s ease;
-}
-
-.toggle::after {
-  content: '';
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  background: #8b95a1;
-  transition: transform 0.16s ease, background 0.16s ease;
-}
-
-.toggle.on {
-  background: rgba(74, 168, 112, 0.28);
-  border-color: rgba(74, 168, 112, 0.6);
-}
-
-.toggle.on::after {
-  transform: translateX(18px);
-  background: #b9ecce;
 }
 
 /* ---------- Actions ---------- */

@@ -311,6 +311,32 @@ async function revealWindow(target) {
   return runWindowScript(target, { reveal: true });
 }
 
+/**
+ * Type text into whatever window is frontmost and press Return — the same
+ * trick a human uses, simulated. Deliberately not app-specific: `keystroke`
+ * goes to whichever window macOS considers key, so this works identically
+ * whether the session lives in Terminal, iTerm, or an editor's integrated
+ * terminal, without a separate script per app.
+ *
+ * Call `revealWindow(target)` first — this only sends keys, it does not
+ * raise anything, so typing into a window that isn't actually frontmost yet
+ * would go wherever focus already was.
+ */
+function typeScript(text) {
+  // A CLI prompt submits on Return, so a newline typed mid-string would send
+  // early and cut the rest off — one line is what a keystroke can honestly do.
+  const oneLine = String(text).replace(/\s*\n+\s*/g, ' ').trim();
+  return `tell application "System Events"
+  keystroke ${q(oneLine)}
+  key code 36
+end tell`;
+}
+
+/** Type `text` into the frontmost window and submit it. */
+async function typeAndSubmit(text) {
+  await run('/usr/bin/osascript', ['-e', typeScript(text)]);
+}
+
 /** Where is that window right now? */
 async function windowBounds(target) {
   return runWindowScript(target, { reveal: false });
@@ -357,6 +383,8 @@ module.exports = {
   resolveTarget,
   revealWindow,
   windowBounds,
+  typeScript,
+  typeAndSubmit,
   TERMINAL_APP,
   ITERM_APP,
 };

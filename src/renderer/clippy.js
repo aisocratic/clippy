@@ -25,7 +25,6 @@ const badgeEl = document.getElementById('badge');
 const statusEl = document.getElementById('statusline');
 
 const cardEl = document.getElementById('card');
-const cardSession = document.getElementById('card-session');
 const cardQueue = document.getElementById('card-queue');
 const cardTitle = document.getElementById('card-title');
 const cardDetail = document.getElementById('card-detail');
@@ -50,20 +49,18 @@ const buddyEl = document.getElementById('buddy');
 
 const btnOpen = document.getElementById('btn-open');
 const usageEl = document.getElementById('usage');
-const usageSession = document.getElementById('usage-session');
 const usageModel = document.getElementById('usage-model');
+const usageStatus = document.getElementById('usage-status');
 const usageBarFill = document.getElementById('usage-bar-fill');
 const usageContext = document.getElementById('usage-context');
 const usageBars = document.getElementById('usage-bars');
 const usageNote = document.getElementById('usage-note');
+const usageInput = document.getElementById('usage-input');
 
 const menuEl = document.getElementById('menu');
 const menuName = document.getElementById('menu-name');
 const menuStatus = document.getElementById('menu-status');
 const menuWaiting = document.getElementById('menu-waiting');
-const menuGoto = document.getElementById('menu-goto');
-const menuUndock = document.getElementById('menu-undock');
-const menuPoint = document.getElementById('menu-point');
 
 const sheetEl = document.getElementById('buddy-sheet');
 let sheetTimer = null;
@@ -71,6 +68,8 @@ let pose = 'idle'; // what the buddy is doing right now, by name
 let pointing = false; // standing on a prompt
 let troubledUntil = 0; // a tool failed recently
 let greetingUntil = 0; // this session just started
+let pettedUntil = 0; // double-clicked just now — say hi back
+let clickedUntil = 0; // single-clicked just now — a quick acknowledging wave
 let contextTight = false; // the context window is filling up
 
 const pointerEl = document.getElementById('pointer');
@@ -80,7 +79,6 @@ const whoEl = document.getElementById('who');
 const whoName = document.getElementById('who-name');
 const activityEl = document.getElementById('activity');
 const qcardEl = document.getElementById('qcard');
-const qcardSession = document.getElementById('qcard-session');
 const qcardTitle = document.getElementById('qcard-title');
 const qcardDetail = document.getElementById('qcard-detail');
 const btnQgoto = document.getElementById('btn-qgoto');
@@ -231,6 +229,8 @@ function setExcited(on) {
  */
 function poseForState() {
   if (document.body.classList.contains('walking')) return 'walk';
+  if (pettedUntil > Date.now()) return 'cheer'; // you just double-clicked him
+  if (clickedUntil > Date.now()) return 'wave'; // you just clicked him once
   if (pointing) return 'point';
   if (greetingUntil > Date.now()) return 'wave';
   if (activeRequestId || currentUrgent()) return 'excited';
@@ -335,9 +335,6 @@ function menuOpen() {
 function syncMenuItems() {
   const waiting = [...pending.values()].some((p) => !p.acknowledged);
   menuWaiting.classList.toggle('hidden', !waiting);
-  menuGoto.classList.toggle('hidden', !canOpen);
-  menuPoint.classList.toggle('hidden', !canOpen);
-  menuUndock.classList.toggle('hidden', !docked);
   menuName.textContent = me.name;
   menuStatus.textContent = SHORT_STATUS[myStatus] || myStatus;
 }
@@ -377,6 +374,10 @@ function render() {
   // Perching, a terminal we can find, a message waiting: all of it can change
   // while the menu is on screen.
   if (menuOpen()) syncMenuItems();
+  // The combined panel is meant to be left open while the agent works, so its
+  // status line follows the session rather than freezing at whatever it said
+  // when the panel opened.
+  if (!usageEl.classList.contains('hidden')) usageStatus.textContent = statusSummary();
 
   refreshPose();
   syncMode();
@@ -404,27 +405,40 @@ function currentUrgent() {
 
 const TROUBLE_MS = 25 * 1000; // how long a failure keeps the buddy sweating
 
+// The last thing this session was seen doing. The line under the buddy shows it
+// only when nothing else is open, but the combined panel wants it too, so the
+// label is kept here rather than read back out of the DOM.
+let latestActivity = '';
+
 function showActivity(name, activity) {
   if (!activity || !activity.label) {
+    latestActivity = '';
     activityEl.classList.add('hidden');
     return;
   }
   if (activity.ok === false) troubledUntil = Date.now() + TROUBLE_MS;
   const icon = !activity.ok ? '⚠' : activity.state === 'done' ? '✓' : '⚙';
+  latestActivity = `${icon} ${activity.label}`;
   activityEl.textContent = `${icon} ${name} — ${activity.label}`;
   activityEl.classList.toggle('failed', !activity.ok);
   activityEl.classList.remove('hidden');
 }
 
 function clearActivity() {
+  latestActivity = '';
   activityEl.classList.add('hidden');
   activityEl.classList.remove('failed');
+}
+
+/** What this agent is up to, in one line: its state, and the tool it's on. */
+function statusSummary() {
+  const state = STATUS_TEXT[myStatus] || myStatus;
+  return latestActivity ? `${state} · ${latestActivity}` : state;
 }
 
 /* ---------- Read-only question card (AskUserQuestion surfacing) ---------- */
 
 function showQuestion(evt) {
-  qcardSession.textContent = evt.name;
   qcardTitle.textContent = evt.title || 'Claude is asking you a question';
   qcardDetail.textContent = evt.detail || '';
   qcardDetail.classList.toggle('hidden', !evt.detail);
@@ -443,7 +457,7 @@ function hideQuestion() {
   syncMode();
 }
 
-/* ---------- Token usage (right-click Clippy) ---------- */
+/* ---------- The combined panel: status, usage, and a box to reply in ---------- */
 
 const fmtTokens = (n) => {
   const v = Number(n) || 0;
@@ -606,6 +620,12 @@ function windowBar(row, win, limit, weekTotal, now, estimated) {
   });
 }
 
+/**
+ * The one panel a left click opens: what the agent is doing, what it has spent,
+ * and a box to say the next thing. It used to take three separate visits — the
+ * status line under the buddy, the token panel, the composer — for what is
+ * really one question ("how is this session doing, and what now?").
+ */
 async function showUsage() {
   const data = await window.clippyAPI.usage();
   if (!data) return;
@@ -615,9 +635,10 @@ async function showUsage() {
   // The panel and a speech bubble both want the space above Clippy's head.
   bubbleEl.classList.add('hidden');
   qcardEl.classList.add('hidden');
+  menuEl.classList.add('hidden');
 
-  usageSession.textContent = data.name || me.name;
   usageModel.textContent = shortModel(session?.model);
+  usageStatus.textContent = statusSummary();
 
   if (session && session.turns > 0) {
     const pct = Math.min(100, Math.round((session.context / session.contextLimit) * 100));
@@ -674,16 +695,20 @@ async function showUsage() {
   // The one thing this panel must never fudge: whose number the bars are.
   const named = plan && plan.id && plan.id !== 'unknown';
   usageNote.textContent = !named
-    ? 'No allowance set — bars are shares of the last 7 days. Set your plan to measure them ' +
-      'against something, and run /usage in Claude Code for the real numbers.'
+    ? 'No allowance set — bars are shares of the last 7 days. Set your plan under Usage & limits ' +
+      'in Settings (📎 in the menu bar) to measure them against something, and run /usage in ' +
+      'Claude Code for the real numbers.'
     : plan.estimated
     ? `Measured against a rough ${plan.label} estimate — run /usage in Claude Code and correct it ` +
-      'under Custom. Clippy counts what you spent; only /usage knows what is left.'
+      'under Custom in Settings (📎 in the menu bar). Clippy counts what you spent; only /usage ' +
+      'knows what is left.'
     : `Measured against the limits you set. Clippy counts what you spent; only /usage knows what ` +
       'is left.';
 
   usageEl.classList.remove('hidden');
   syncMode();
+  // The panel is also where you type the next prompt, so the caret starts there.
+  usageInput.focus();
 }
 
 function hideUsage() {
@@ -743,7 +768,6 @@ function showNextRequest() {
   const isApproval = next.type === 'approval';
   const isAnswer = next.type === 'answer';
   const isPlan = next.variant === 'plan';
-  cardSession.textContent = next.name;
   showQueueDepth();
   cardTitle.textContent = next.title;
 
@@ -972,6 +996,10 @@ function handleEvent(evt) {
       // Compact is about size, not about being perched — a corner buddy is a
       // bare paperclip too until it has something to show.
       document.body.classList.toggle('compact', Boolean(evt.compact));
+      // Clicking a compact buddy opens the panel before main has grown the
+      // window, and a display:none textarea can't take the caret — so the
+      // composer claims it here, once the panel is actually on screen.
+      if (!evt.compact && !usageEl.classList.contains('hidden')) usageInput.focus();
       break;
     }
     case 'pose': {
@@ -1202,24 +1230,77 @@ btnGoto.addEventListener('click', () => window.clippyAPI.openWindow());
 
 document.getElementById('btn-usage-close').addEventListener('click', hideUsage);
 
-// The allowances live in Settings because only you can know them — this is the
-// shortest path from "that bar means nothing" to typing in what it should mean.
-document.getElementById('btn-usage-plan').addEventListener('click', () => {
+/* ---------- Talking back: the composer at the foot of the panel ---------- */
+
+function sendPrompt() {
+  const text = usageInput.value.trim();
+  if (!text) return;
+  window.clippyAPI.sendPrompt(text);
+  usageInput.value = '';
   hideUsage();
-  window.clippyAPI.openSettings();
-});
+  // The visible confirmation is the terminal raising and the text appearing
+  // on its own prompt line — a cheer here bridges the half-second gap.
+  pettedUntil = Date.now() + 1200;
+  refreshPose();
+  setTimeout(refreshPose, 1300);
+}
 
-// Click Clippy: the little menu of everything you'd want from him — jump to
-// this session's terminal, see the numbers, let go of a window, go away.
-clippyEl.addEventListener('click', () => {
+usageInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendPrompt();
+  }
+  if (e.key === 'Escape') hideUsage();
+});
+document.getElementById('btn-usage-send').addEventListener('click', sendPrompt);
+
+/**
+ * What a plain click should just do, no menu in the way: a message you haven't
+ * seen yet wins (it's why the buddy is bouncing), otherwise the one panel that
+ * answers "how is this session doing, and what now?" opens — status, spend and
+ * a box to type the next prompt into. Everything else is a right-click away.
+ */
+const CLICK_ACK_MS = 900;
+function primaryAction() {
+  // A quick wave so the click reads as "got it, on it" even though the real
+  // feedback — the composer, the bubble reopening — takes a beat.
+  clickedUntil = Date.now() + CLICK_ACK_MS;
+  refreshPose();
+  setTimeout(refreshPose, CLICK_ACK_MS + 50);
+
+  const next = [...pending.values()].find((p) => !p.acknowledged);
+  if (next) {
+    nudge(next);
+    return;
+  }
+  showUsage();
+}
+
+// Click Clippy: straight to the useful thing, not a menu you have to read
+// first. `e.detail` is the browser's own click count for this burst of clicks
+// on the same element — skipping anything past the first lets a double-click
+// go straight to dblclick below instead of also firing the primary action.
+clippyEl.addEventListener('click', (e) => {
   if (activeRequestId) return; // the card is already the main attraction
-  toggleMenu();
+  if (e.detail > 1) return;
+  primaryAction();
 });
 
-// Right-click does the same thing, so neither button is a dead end.
+// Right-click is the one way in to everything else — settings, hide, unperch.
 clippyEl.addEventListener('contextmenu', (e) => {
   e.preventDefault();
   if (!activeRequestId) toggleMenu();
+});
+
+// Double-click: not a session action, just Clippy being glad you're there —
+// a beat of `cheer` and back to whatever pose the session actually calls for.
+const PET_MS = 1000;
+clippyEl.addEventListener('dblclick', () => {
+  if (activeRequestId) return; // don't upstage a card that needs an answer
+  closeMenu();
+  pettedUntil = Date.now() + PET_MS;
+  refreshPose();
+  setTimeout(refreshPose, PET_MS + 50);
 });
 
 // A click anywhere else puts the menu away, like any other popup.
@@ -1229,29 +1310,22 @@ document.addEventListener('click', (e) => {
   closeMenu();
 });
 
+// Clicking a different window entirely (the terminal, another app) never
+// reaches the listener above — it's a separate native window and no DOM click
+// happens here at all. Losing focus is the one signal that covers that case.
+window.addEventListener('blur', closeMenu);
+
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') closeMenu();
+  if (e.key === 'Escape') {
+    closeMenu();
+    hideUsage();
+  }
 });
 
 menuWaiting.addEventListener('click', () => {
   closeMenu();
   const next = [...pending.values()].find((p) => !p.acknowledged);
   if (next) nudge(next);
-});
-
-// Send Clippy over to the terminal this agent is running in: main raises that
-// window and perches the buddy on its corner.
-menuGoto.addEventListener('click', () => {
-  closeMenu();
-  window.clippyAPI.openWindow();
-});
-
-// Walk over to this session's prompt and point at it — from perched, that's
-// just the walk; from the corner, go there first.
-menuPoint.addEventListener('click', () => {
-  closeMenu();
-  if (docked) window.clippyAPI.pointAtPrompt();
-  else window.clippyAPI.openWindow({ point: true });
 });
 
 document.getElementById('menu-settings').addEventListener('click', () => {
@@ -1263,11 +1337,6 @@ document.getElementById('menu-stats').addEventListener('click', () => {
   closeMenu();
   if (usageEl.classList.contains('hidden')) showUsage();
   else hideUsage();
-});
-
-menuUndock.addEventListener('click', () => {
-  closeMenu();
-  window.clippyAPI.undock();
 });
 
 document.getElementById('menu-hide').addEventListener('click', () => {

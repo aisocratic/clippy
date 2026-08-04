@@ -15,7 +15,6 @@
     <a class="rail-link on" href="#sessions">Sessions</a>
     <a class="rail-link" href="#buddies">Buddies</a>
     <a class="rail-link" href="#limits">Usage &amp; limits</a>
-    <a class="rail-link" href="#answering">What Clippy answers</a>
     <a class="rail-link" href="#actions">What Clippy can do</a>
     <div id="rail-foot">
       <span id="server-dot"></span><span id="server-text">hook server</span>
@@ -36,17 +35,10 @@
     <section id="buddies" class="panel">
       <header class="panel-head">
         <h1>Buddies</h1>
-        <p>One buddy per Claude Code session, in the colour of that session. Pick who
-           they are and how big they're drawn — every session uses the same choice.</p>
+        <p>One buddy per Claude Code session, in the colour of that session. Every
+           project gets its own face from the cast, so the same repo always looks the
+           same tomorrow and parallel agents rarely match.</p>
       </header>
-
-      <div class="field-row">
-        <div class="field">
-          <label>Who each session gets</label>
-          <div id="modes" class="segmented"></div>
-        </div>
-        <p class="field-note" id="mode-note"></p>
-      </div>
 
       <div class="field-row">
         <div class="field">
@@ -57,6 +49,7 @@
            The buddy keeps this size whether or not a card is open.</p>
       </div>
 
+      <p class="field-note" id="cast-note"></p>
       <div id="cast" class="cast"></div>
 
       <div class="drop-hint">
@@ -97,15 +90,6 @@
         <p>The named tiers are starting scales, not facts: only the 5×/20× steps between them are
           certain. Until a number comes from you, Clippy shows spend and says so.</p>
       </div>
-    </section>
-
-    <section id="answering" class="panel">
-      <header class="panel-head">
-        <h1>What Clippy answers</h1>
-        <p>Each switch decides whether Clippy holds a hook open for you. Turn one off
-           and that moment goes back to the terminal, exactly as if Clippy weren't running.</p>
-      </header>
-      <div id="switches" class="switches"></div>
     </section>
 
     <section id="actions" class="panel">

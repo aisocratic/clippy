@@ -4,34 +4,11 @@
  * Clippy's settings window.
  *
  * Everything on the page is built from what main sends: the cast (with each
- * character's animations playing live), the switches that decide what Clippy
- * answers, the catalogue of what it does with a session, and the sessions
- * currently reporting in. Nothing here has its own copy of that knowledge.
+ * character's animations playing live), the catalogue of what Clippy does with
+ * a session, and the sessions currently reporting in. Nothing here has its own
+ * copy of that knowledge. The on/off switches for what Clippy answers live in
+ * the 📎 menu bar's Quick settings, where they're one click away from anywhere.
  */
-
-const SWITCHES = [
-  {
-    key: 'approvals',
-    title: 'Permission requests',
-    desc: 'Answer <b>Allow / Deny</b> from Clippy when Claude Code would show a permission prompt.',
-  },
-  {
-    key: 'answerQuestions',
-    title: 'Questions',
-    desc: "Turn Claude's multiple-choice questions into buttons, and feed your pick straight back.",
-  },
-  {
-    key: 'reviewOnStop',
-    title: 'Review when Claude finishes',
-    desc: 'Offer a short review box before a turn ends — typed feedback sends Claude back to work.',
-  },
-  {
-    key: 'autoPerch',
-    title: "Perch on the session's window",
-    desc: 'Appear on the terminal a session runs in, follow it around, and point at its prompt ' +
-      'when something needs answering there.',
-  },
-];
 
 const SIZE_LABEL = { small: 'Small', medium: 'Medium', large: 'Large' };
 const STATUS_TEXT = {
@@ -127,20 +104,39 @@ function posesOf(character) {
   return poses;
 }
 
+/**
+ * The cast, and who is wearing which face.
+ *
+ * There is no "the buddy" to select anymore — every project is cast on its own —
+ * so clicking a character here means "give the projects I can see that one",
+ * which is the same per-project assignment the Sessions pickers write. With
+ * nothing reporting in there is no project to give it to, and the row says so.
+ */
 function renderCast() {
   const host = document.getElementById('cast');
   host.replaceChildren();
-  const picking = (state.characterMode || 'same') === 'same';
+  const sessions = state.sessions || [];
+  const assignedTo = (name) => (state.characterByProject || {})[name] || '';
+  const projects = [...new Set(sessions.map((s) => s.name))];
+  // Highlight whoever is actually on duty: the closest thing left to a selection.
+  const onDuty = new Set(sessions.map((s) => assignedTo(s.name) || s.character));
+
+  document.getElementById('cast-note').textContent = projects.length
+    ? `Clicking one gives it to every project reporting in right now (${projects.join(', ')}). ` +
+      'For one project at a time, use the picker beside it under Sessions.'
+    : 'Nothing is reporting in, so there is no project to give a buddy to yet — start ' +
+      'Claude Code and it gets one from this cast automatically.';
 
   for (const character of state.characters) {
     const row = document.createElement('div');
-    row.className = `cast-row${picking && character.id === state.character ? ' on' : ''}`;
+    row.className = `cast-row${onDuty.has(character.id) ? ' on' : ''}`;
 
     const who = document.createElement('button');
     who.className = 'cast-who';
-    who.title = picking
-      ? `Use ${character.label} for every session`
-      : `Switch to "Same for all" and use ${character.label}`;
+    who.disabled = !projects.length;
+    who.title = projects.length
+      ? `Give ${projects.join(', ')} ${character.label}`
+      : 'No projects yet — start Claude Code somewhere and it gets a buddy of its own';
     const name = document.createElement('span');
     name.className = 'cast-name';
     name.textContent = character.label;
@@ -152,11 +148,8 @@ function renderCast() {
       ? 'drawn in code · per session colour'
       : 'drawn in code';
     who.append(name, origin);
-    // Picking a face also means "and use that one" — the friendliest read of
-    // clicking one while Clippy is choosing for you.
     who.addEventListener('click', () => {
-      if (!picking) set('characterMode', 'same');
-      set('character', character.id);
+      for (const project of projects) window.clippySettings.assign(project, character.id);
     });
 
     const poses = document.createElement('div');
@@ -177,23 +170,6 @@ function renderCast() {
     row.append(who, poses);
     host.appendChild(row);
   }
-}
-
-function renderModes() {
-  const host = document.getElementById('modes');
-  const note = document.getElementById('mode-note');
-  const modes = state.characterModes || [];
-  host.replaceChildren();
-
-  for (const mode of modes) {
-    const btn = document.createElement('button');
-    btn.className = mode.id === state.characterMode ? 'on' : '';
-    btn.textContent = mode.label;
-    btn.addEventListener('click', () => set('characterMode', mode.id));
-    host.appendChild(btn);
-  }
-  const current = modes.find((m) => m.id === state.characterMode);
-  note.textContent = current ? current.note : '';
 }
 
 function renderSizes() {
@@ -332,39 +308,6 @@ function renderLimits(plan) {
   }
 }
 
-/* ---------- Switches ---------- */
-
-function renderSwitches() {
-  const host = document.getElementById('switches');
-  host.replaceChildren();
-
-  for (const item of SWITCHES) {
-    const on = Boolean(state[item.key]);
-    const row = document.createElement('div');
-    row.className = 'switch';
-
-    const text = document.createElement('div');
-    text.className = 'switch-text';
-    const title = document.createElement('div');
-    title.className = 'switch-title';
-    title.textContent = item.title;
-    const desc = document.createElement('div');
-    desc.className = 'switch-desc';
-    desc.innerHTML = item.desc; // fixed copy from the list above, never user input
-    text.append(title, desc);
-
-    const toggle = document.createElement('button');
-    toggle.className = `toggle${on ? ' on' : ''}`;
-    toggle.setAttribute('role', 'switch');
-    toggle.setAttribute('aria-checked', String(on));
-    toggle.setAttribute('aria-label', item.title);
-    toggle.addEventListener('click', () => set(item.key, !state[item.key]));
-
-    row.append(text, toggle);
-    host.appendChild(row);
-  }
-}
-
 /* ---------- What Clippy can do ---------- */
 
 function renderActions() {
@@ -392,12 +335,13 @@ function renderActions() {
       tag.title = 'the Claude Code hook that triggers this';
       head.appendChild(tag);
     }
-    // Say plainly when a switch on this page has this turned off.
+    // Say plainly when this one is switched off, and where the switch is: the
+    // catalogue would otherwise promise behaviour that can't happen.
     if (action.setting && !state[action.setting]) {
       const off = document.createElement('span');
       off.className = 'tag off';
       off.textContent = 'off';
-      off.title = 'turned off in "What Clippy answers"';
+      off.title = 'turned off in the 📎 menu bar → Quick settings';
       head.appendChild(off);
     }
 
@@ -572,11 +516,9 @@ function set(key, value) {
 
 function render() {
   renderAccess();
-  renderModes();
   renderSizes();
   renderCast();
   renderPlans();
-  renderSwitches();
   renderActions();
   renderSessions();
 

@@ -11,11 +11,12 @@ contextBridge.exposeInMainWorld('clippyAPI', {
   setSetting: (key, value) => ipcRenderer.send('clippy-set-setting', { key, value }),
   drivePrompt: (text) => ipcRenderer.send('clippy-drive-prompt', text),
   driveStop: () => ipcRenderer.send('clippy-drive-stop'),
-  // Raise this session's terminal window (and perch on it) / let go of it.
-  // `point: true` also walks Clippy down to that session's prompt when he
-  // gets there — for when the answer has to be typed on that line.
+  // The prompt composer: raise this session's terminal and type this into it.
+  sendPrompt: (text) => ipcRenderer.send('clippy-send-prompt', text),
+  // Raise this session's terminal window and perch on it. `point: true` also
+  // walks Clippy down to that session's prompt when he gets there — for when
+  // the answer has to be typed on that line.
   openWindow: (opts) => ipcRenderer.send('clippy-open-window', opts || {}),
-  undock: () => ipcRenderer.send('clippy-undock'),
   // "Show me where": walk over to this session's prompt and point at it.
   pointAtPrompt: () => ipcRenderer.send('clippy-point'),
   // Everything that isn't about this one session lives in the settings window.
