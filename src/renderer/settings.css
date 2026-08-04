@@ -15,6 +15,7 @@
   --ok: #4aa870;
   --warn: #e0b23f;
   --radius: 12px;
+  --sans: 'Avenir Next', Avenir, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
 
 * {
@@ -32,7 +33,7 @@ body {
   display: flex;
   background: var(--bg);
   color: var(--text);
-  font: 13px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font: 13px/1.5 var(--sans);
   -webkit-font-smoothing: antialiased;
 }
 
@@ -108,13 +109,29 @@ code {
   color: var(--text);
 }
 
-#rail-foot {
+#rail-meta {
   -webkit-app-region: no-drag;
   margin-top: auto;
+  display: grid;
+  gap: 4px;
+  padding: 8px 10px;
+  font-size: 11px;
+}
+
+#maker-link {
+  color: var(--muted);
+  text-decoration: none;
+  font-weight: 600;
+}
+
+#maker-link:hover {
+  color: var(--text);
+}
+
+#rail-foot {
   display: flex;
   align-items: center;
   gap: 7px;
-  padding: 8px 10px;
   font-size: 11px;
   color: var(--faint);
 }
@@ -690,3 +707,44 @@ code {
 .hidden {
   display: none !important;
 }
+
+/* ---------- Updates ---------- */
+
+.update-box {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 16px;
+  margin-bottom: 16px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius, 12px);
+}
+
+.update-row {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  font-size: 12.5px;
+}
+
+.update-key {
+  flex: none;
+  width: 110px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.update-actions {
+  margin-top: 6px;
+  align-items: center;
+}
+
+.update-result {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.update-result.good { color: var(--ok, #4aa870); }
+.update-result.warn { color: var(--warn, #e0b23f); }
+.update-result.bad { color: var(--no, #d76b64); }

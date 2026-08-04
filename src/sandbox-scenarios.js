@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * The storybook: every state a buddy can be in, as the events main would send.
+ * The sandbox: every state a buddy can be in, as the events main would send.
  *
  * `npm run dev` shows one buddy with no Claude Code attached and a little
  * control window (src/renderer/dev.html) listing these; clicking one fires the
@@ -20,8 +20,8 @@ const { PLANS, SESSION_WINDOW_MS, WEEK_WINDOW_MS } = require('./usage');
 
 // The session key the dev buddy is created under. `dev:` is also what tells
 // the usage panel to answer from canned numbers instead of a transcript.
-const DEV_SESSION = 'dev:story';
-const NAME = 'storybook';
+const DEV_SESSION = 'sandbox:story';
+const NAME = 'sandbox';
 
 /** An event as main would send it, minus the deadline stamped at fire time. */
 const evt = (e) => ({ sessionId: DEV_SESSION, name: NAME, ...e });
@@ -208,7 +208,9 @@ const DEV_SCENARIOS = [
         status: 'waiting',
         requestId: 'dev-review',
         holdSecs: 30,
-        message: `Claude finished in “${NAME}”. Looks good, or should it keep going?`,
+        message:
+          'Claude finished: “Added `withRetry()` around postInvoice — 3 attempts with ' +
+          'exponential backoff, 200ms base…”',
         detail:
           'Added `withRetry()` around postInvoice — 3 attempts with exponential backoff, ' +
           '200ms base, and 409 treated as success.\n\n' +
@@ -258,10 +260,23 @@ function stampEvent(event, now = Date.now()) {
   return { ...rest, expiresAt: now + holdSecs * 1000 };
 }
 
-/** The events one story fires, ready to send. */
-function eventsFor(id, now = Date.now()) {
+/**
+ * The events one story fires, ready to send.
+ *
+ * The gallery ("show every state at once") plays each story at a buddy of its
+ * own, so the events can be retargeted to that buddy's session and name — and
+ * a posing card must not count down and expire mid-gallery, so its hold can be
+ * stretched. One story at the main dev buddy passes no options and gets the
+ * table exactly as written.
+ */
+function eventsFor(id, now = Date.now(), { sessionId, name, holdSecs } = {}) {
   const story = DEV_SCENARIOS.find((s) => s.id === id);
-  return story ? story.events.map((e) => stampEvent(e, now)) : [];
+  if (!story) return [];
+  return story.events.map((e) => {
+    const held = holdSecs && e.holdSecs ? { ...e, holdSecs } : e;
+    const stamped = stampEvent(held, now);
+    return sessionId ? { ...stamped, sessionId, name: name || stamped.name } : stamped;
+  });
 }
 
 /** Just enough for the control window to draw its list of buttons. */
@@ -294,7 +309,7 @@ const sumTotals = (list) =>
  * open it. The session's own context is kept comfortably under the stress
  * threshold, so the buddy isn't permanently sweating at you while you work.
  */
-function devUsage(name = NAME) {
+function sandboxUsage(name = NAME) {
   const now = Date.now();
   const win = (spanMs, startedAgo, byModel, sessions = 1) => {
     const firstAt = startedAgo ? now - startedAgo : 0;
@@ -356,5 +371,5 @@ module.exports = {
   stampEvent,
   eventsFor,
   storyList,
-  devUsage,
+  sandboxUsage,
 };

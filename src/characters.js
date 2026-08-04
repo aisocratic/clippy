@@ -35,8 +35,12 @@ const POSES = [
 ];
 
 const CHARACTERS = [
-  { id: 'clip', label: '📎 Clippy', poses: POSES, perColour: true },
-  { id: 'cat', label: '🐱 Pixel cat', poses: POSES },
+  { id: 'clip', label: 'Clippy', poses: POSES, perColour: true },
+  { id: 'cat', label: 'Pixel cat', poses: POSES },
+  // A squat terracotta box in the spirit of a certain mascot — he was already
+  // pixel art, so this is a transcription; the name keeps a polite distance.
+  // One colour, like the cat: Clod is that orange.
+  { id: 'clod', label: 'Clod', poses: POSES },
 ];
 
 /**
@@ -44,10 +48,16 @@ const CHARACTERS = [
  * holds nothing but him. Pixel art only looks right at whole multiples, so the
  * steps are 2x, 3x and 4x the 32x40 sprite.
  */
+// The compact window is the buddy plus headroom for everything hover reveals
+// around him: the name plate above (~38px with its margin) and the small
+// controls below (~24px) — all rendered invisible until hover, so revealing
+// them never resizes the window. Short-changing this is how the plate got
+// clipped at the top once: the stage bottom-anchors, so missing room comes
+// out of whatever sits highest.
 const SIZES = {
-  small: { buddy: 64, win: [76, 98] },
-  medium: { buddy: 96, win: [108, 136] },
-  large: { buddy: 128, win: [140, 174] },
+  small: { buddy: 64, win: [92, 156] },
+  medium: { buddy: 96, win: [124, 196] },
+  large: { buddy: 128, win: [156, 236] },
 };
 
 /**

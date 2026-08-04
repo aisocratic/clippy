@@ -1,15 +1,20 @@
 'use strict';
 
 /**
- * The storybook's list of buttons.
+ * The sandbox's list of buttons.
  *
- * The stories live in `src/dev-scenarios.js` (main's side of the fence), and
+ * The stories live in `src/sandbox-scenarios.js` (main's side of the fence), and
  * main hands them over by calling `renderStories()` once this page has loaded —
- * which is why the bridge in `preload-dev.js` only needs the one method that
+ * which is why the bridge in `preload-sandbox.js` only needs the one method that
  * plays one. Clicking a button fires that story's events at the dev buddy.
  */
 
 const stories = document.getElementById('stories');
+
+// The gallery controls: `__all__` and `__clear__` are the sandbox's own
+// commands, understood by main alongside the story ids.
+document.getElementById('gallery-all').addEventListener('click', () => window.sandboxAPI.fire('__all__'));
+document.getElementById('gallery-clear').addEventListener('click', () => window.sandboxAPI.fire('__clear__'));
 
 window.renderStories = (list) => {
   stories.replaceChildren();
@@ -29,7 +34,7 @@ window.renderStories = (list) => {
       hint.textContent = story.hint;
       button.append(hint);
     }
-    button.addEventListener('click', () => window.devAPI.fire(story.id));
+    button.addEventListener('click', () => window.sandboxAPI.fire(story.id));
     stories.append(button);
   }
 };
