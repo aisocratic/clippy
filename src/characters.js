@@ -11,10 +11,9 @@ const { hash } = require('./identity');
  * list: the main process (menus, settings validation), the renderer (its own
  * menu, via the settings payload), and the web test bench.
  *
- * Every character is original pixel art drawn by `npm run make-buddies` into
- * `src/renderer/assets/themes/<id>/` — arcade *idiom*, not arcade sprites, so
- * the repo keeps shipping no third-party art. The paperclip is the one built
- * per session colour, since a GIF can't be recoloured by CSS.
+ * Every character is original art drawn in this repo. The pixel cast is built
+ * by `npm run make-buddies` into `src/renderer/assets/themes/<id>/`; vector
+ * characters are live SVG created by `src/renderer/vector-buddies.js`.
  */
 
 /**
@@ -41,6 +40,11 @@ const CHARACTERS = [
   // pixel art, so this is a transcription; the name keeps a polite distance.
   // One colour, like the cat: Clod is that orange.
   { id: 'clod', label: 'Clod', poses: POSES },
+  { id: 'orbit', label: 'Orbit', poses: POSES, vector: 'orbit', usesColour: true },
+  // The paperclip again, but drawn as live SVG: the same wire, smooth at any
+  // size, recoloured per session by CSS-free markup instead of baked GIFs.
+  // A different name so both clips can sit in the menu side by side.
+  { id: 'loopy', label: 'Loopy', poses: POSES, vector: 'loopy', usesColour: true },
 ];
 
 /**

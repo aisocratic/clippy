@@ -382,6 +382,10 @@ window.addEventListener('message', async (e) => {
       log('in', 'fix', `would open macOS ${p.what} settings`);
       break;
 
+    case 'open-external':
+      log('in', 'openExternal', `would open ${p.url} in the browser`);
+      break;
+
     case 'open-settings':
       log('in', 'openSettings', 'would open the settings window (/settings/ here)');
       window.open('/settings/', '_blank', 'noopener');
@@ -558,8 +562,15 @@ const POSE_LABEL = {
   wave: 'hello',
 };
 
-/** One animation, playing: a GIF for the drawn buddies, a stepped sheet for packs. */
+/** One animation, playing: live SVG, a generated GIF, or a stepped sheet. */
 function poseArt(character, poseName, height = 44) {
+  if (character.vector) {
+    const colour = document.getElementById('opt-color').value || '#9aa3ad';
+    const svg = window.ClippyVectors.create(character.vector, poseName, colour);
+    svg.style.height = `${height}px`;
+    svg.style.width = `${Math.round(height * 0.8)}px`;
+    return svg;
+  }
   if (!character.sheet) {
     const img = document.createElement('img');
     const colour = (document.getElementById('opt-color').value || '#9aa3ad').replace('#', '');
@@ -612,6 +623,8 @@ function renderSprites() {
     origin.className = 'sprite-origin';
     origin.textContent = character.sheet
       ? `${character.sheet.frameWidth}×${character.sheet.frameHeight} sheet`
+      : character.vector
+      ? 'live SVG'
       : 'drawn in code';
     who.append(name, origin);
 

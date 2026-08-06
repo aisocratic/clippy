@@ -23,6 +23,7 @@ const { DecisionBroker, toHookResponse, describeToolCall } = require('./decision
 const { DriveSession } = require('./sdk-session');
 const { checkDrift, checkCodexDrift, checkOpenclawDrift, installToFiles } = require('../bin/clippy-hooks');
 const { identityFor } = require('./identity');
+const { sessionBannerOutput } = require('./session-banner');
 const { SIZES, sizeList, allCharacters, characterFor } = require('./characters');
 const { ACTIONS } = require('./actions');
 const { windowActionFor } = require('./visibility');
@@ -45,8 +46,8 @@ const PORT = Number(process.env.CLIPPY_PORT || 43117);
 
 // Clippy is a small paperclip by default — the size it is when perched on a
 // window — and only takes the full window when there's a card to read.
-const WIN_W = 268;
-const WIN_H = 470; // fallback until the renderer reports what it needs
+const WIN_W = 310;
+const WIN_H = 520; // fallback until the renderer reports what it needs
 const WIN_GAP = 6;
 const ROW_STEP = 160; // how far a second row of Clippys sits above the first
 
@@ -1122,7 +1123,13 @@ function refreshUsageWindowsFor(agent) {
  */
 async function collectUsage(key) {
   const agent = tracker.agentFor(key);
-  const session = await sessionUsage(tracker.transcriptFor(key));
+  const transcriptSession = await sessionUsage(tracker.transcriptFor(key));
+  const trackedModel = tracker.modelFor(key);
+  const session = transcriptSession
+    ? { ...transcriptSession, model: transcriptSession.model || trackedModel }
+    : trackedModel
+    ? { model: trackedModel, context: 0, contextLimit: 0, totals: {}, turns: 0 }
+    : null;
   const now = Date.now();
   let cached = usageCache.get(agent);
   if (!cached || now - cached.at > USAGE_CACHE_MS) {
@@ -1430,7 +1437,7 @@ function startSandbox() {
 // sized for a full card side by side, and cards get a hold long enough that
 // nothing expires while you're comparing states across the screen.
 const GALLERY_CELL_W = WIN_W + 14;
-const GALLERY_CELL_H = 470;
+const GALLERY_CELL_H = 520;
 const GALLERY_HOLD_SECS = 60 * 60;
 
 /**
@@ -1807,6 +1814,18 @@ function handleHookEvent(eventName, kind, payload, ctx) {
   const reaction = tracker.handle(eventName, kind, payload);
   if (reaction) emitPassive(reaction);
   if (eventName === 'SessionStart' && payload.agent === 'claude') maybeNudgePlanCalibration(payload);
+  if (eventName === 'SessionStart' && reaction) {
+    const buddy = buddies.get(reaction.sessionId);
+    const character = buddy?.character || 'clip';
+    const label = allCharacters().find((item) => item.id === character)?.label || 'Clippy';
+    return sessionBannerOutput({
+      character,
+      label,
+      project: reaction.name,
+      agent: reaction.agentName,
+      model: reaction.model,
+    });
+  }
   return undefined;
 }
 
@@ -1839,6 +1858,8 @@ function warnOnHookDrift() {
     } catch (err) {
       console.warn(`clippy: could not check ${config.agent} hooks:`, err.message);
     }
+
+
   }
   // Re-run after every install, so a fixed state clears the tray warnings.
   hooksAbsent = installed.length === 0;
@@ -1958,7 +1979,7 @@ app.whenReady().then(async () => {
     return {
       name: buddy.name,
       agent: buddy.agent,
-      model: session?.model || '',
+      model: session?.model || tracker.modelFor(buddy.sessionId) || '',
     };
   });
   ipcMain.on('clippy-mode', (e, payload) => {

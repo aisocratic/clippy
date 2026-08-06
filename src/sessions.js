@@ -22,6 +22,14 @@ const STALE_ACTIVE_MS = 30 * 60 * 1000;
 const STALE_PARKED_MS = 6 * 60 * 60 * 1000;
 
 const firstLine = (s) => String(s ?? '').split('\n')[0].slice(0, 200);
+const modelId = (value) =>
+  typeof value === 'string'
+    ? value
+    : typeof value?.id === 'string'
+    ? value.id
+    : typeof value?.display_name === 'string'
+    ? value.display_name
+    : '';
 
 /**
  * Tracks the state of every agent session (Claude Code, Codex, OpenClaw) that reports in via hooks,
@@ -54,6 +62,7 @@ class SessionTracker {
     }
     if (AGENTS[payload.agent]) s.agent = payload.agent;
     if (payload.cwd) s.cwd = payload.cwd;
+    if (modelId(payload.model)) s.model = modelId(payload.model);
     s.name = s.cwd ? path.basename(s.cwd) : id.slice(0, 8);
     s.updatedAt = Date.now();
     return s;
@@ -70,6 +79,7 @@ class SessionTracker {
       activity: s.activity,
       agent: s.agent,
       agentName: agentDisplayName(s.agent),
+      model: s.model || '',
       message,
     };
   }
@@ -240,6 +250,11 @@ class SessionTracker {
 
   agentFor(sessionId) {
     return this.sessions.get(sessionId)?.agent || 'claude';
+  }
+
+  /** Model reported directly by SessionStart or another hook payload. */
+  modelFor(sessionId) {
+    return this.sessions.get(sessionId)?.model || '';
   }
 
   /** Where Claude Code is writing this session's transcript (for token usage). */

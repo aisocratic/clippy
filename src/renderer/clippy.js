@@ -1,5 +1,14 @@
 'use strict';
 
+const { setMarkdown } = window.ClippyMarkdown;
+
+document.addEventListener('click', (event) => {
+  const link = event.target.closest?.('a[data-clippy-external]');
+  if (!link) return;
+  event.preventDefault();
+  window.clippyAPI.openExternal(link.href);
+});
+
 const REMIND_AFTER_MS = 90 * 1000; // re-bounce if a session is still ignored
 const SNOOZE_MS = 5 * 60 * 1000;
 const CHECK_INTERVAL_MS = 15 * 1000;
@@ -70,6 +79,7 @@ const menuStatus = document.getElementById('menu-status');
 const menuWaiting = document.getElementById('menu-waiting');
 
 const sheetEl = document.getElementById('buddy-sheet');
+const vectorEl = document.getElementById('buddy-vector');
 let sheetTimer = null;
 let pose = 'idle'; // what the buddy is doing right now, by name
 let pointing = false; // standing on a prompt
@@ -140,7 +150,7 @@ let widthSent = 0;
 // How wide the window has to be while a plan card is up: the plan panel
 // (--plan-w in clippy.css) plus the same slack the normal window keeps around
 // the normal panel. Every other card leaves the width alone (0 = default).
-const PLAN_WIN_W = 440;
+const PLAN_WIN_W = 510;
 
 const PANELS = ['card', 'bubble', 'qcard', 'usage', 'drive', 'menu'];
 
@@ -253,9 +263,21 @@ function currentSheet() {
   return who && who.sheet ? who.sheet : null;
 }
 
+/** The built-in SVG drawing name for the current character, if it has one. */
+function currentVector() {
+  const who = (settings.characters || []).find((c) => c.id === settings.character);
+  return who && who.vector ? who.vector : null;
+}
+
 /** Show a pose by name — `walk`, `point`, `excited`, `idle`… */
 function setPose(name) {
   pose = poseFor(name);
+  const vector = currentVector();
+  if (vector) {
+    const art = window.ClippyVectors.create(vector, pose, me.color);
+    if (art) vectorEl.replaceChildren(art);
+    return;
+  }
   const sheet = currentSheet();
   if (sheet) {
     playSheet(sheet, pose);
@@ -301,9 +323,12 @@ function refreshPose() {
 /** Same buddy, same behaviour, different shape — and one constant size. */
 function applyCharacter() {
   const sheet = currentSheet();
-  buddyEl.classList.toggle('hidden', Boolean(sheet));
+  const vector = currentVector();
+  buddyEl.classList.toggle('hidden', Boolean(sheet || vector));
   sheetEl.classList.toggle('hidden', !sheet);
+  vectorEl.classList.toggle('hidden', !vector);
   if (!sheet) stopSheet();
+  if (!vector) vectorEl.replaceChildren();
   applySize();
   setPose(pose);
 }
@@ -362,7 +387,7 @@ buddyEl.addEventListener('error', () => {
 });
 
 function showBubble(text, { fix = null } = {}) {
-  bubbleText.textContent = text;
+  setMarkdown(bubbleText, text);
   bubbleFix = fix;
   btnFix.classList.toggle('hidden', !fix);
   usageEl.classList.add('hidden'); // news wins over the token panel
@@ -497,7 +522,7 @@ function statusSummary() {
 
 function showQuestion(evt) {
   qcardTitle.textContent = evt.title || 'Claude is asking you a question';
-  qcardDetail.textContent = evt.detail || '';
+  setMarkdown(qcardDetail, evt.detail || '');
   qcardDetail.classList.toggle('hidden', !evt.detail);
   // The picker is up in the terminal — the question is readable here, and this
   // takes you to where it can be answered.
@@ -842,7 +867,17 @@ function addDriveLine(role, text) {
   if (!text) return;
   const line = document.createElement('div');
   line.className = `drive-line ${role}`;
-  line.textContent = (role === 'user' ? 'you: ' : role === 'system' ? '' : 'claude: ') + text;
+  const prefix = role === 'user' ? 'you:' : role === 'system' ? '' : 'claude:';
+  if (prefix) {
+    const label = document.createElement('span');
+    label.className = 'drive-role';
+    label.textContent = prefix;
+    line.appendChild(label);
+  }
+  const copy = document.createElement('div');
+  copy.className = 'drive-copy markdown';
+  setMarkdown(copy, text);
+  line.appendChild(copy);
   driveTranscript.appendChild(line);
   driveTranscript.scrollTop = driveTranscript.scrollHeight;
 }
@@ -908,7 +943,7 @@ function showNextRequest() {
   btnSubmit.classList.add('hidden');
   btnDismiss.classList.add('hidden');
 
-  cardDetail.textContent = next.detail || '';
+  setMarkdown(cardDetail, next.detail || '');
   cardDetail.classList.toggle('hidden', !next.detail);
   cardInput.value = '';
   cardInput.placeholder = isPlan
@@ -1039,7 +1074,9 @@ function handleEvent(evt) {
     me.agent = evt.agent;
     applyIdentity();
   }
-  if (evt.name && evt.name !== me.name) {
+  // The workbench's private pose event describes artwork, not a session. Older
+  // benches put that pose in `name`, so explicitly keep it away from identity.
+  if (evt.kind !== 'pose' && evt.name && evt.name !== me.name) {
     me.name = evt.name;
     applyIdentity();
   }
@@ -1122,8 +1159,8 @@ function handleEvent(evt) {
     case 'pose': {
       // A dev hook: the test bench uses it to look at one animation. Nothing in
       // the app sends this — the buddy picks its own pose from what it knows.
-      setPose(evt.name || 'idle');
-      break;
+      setPose(evt.pose || evt.name || 'idle');
+      return; // render() would immediately replace this forced pose from state
     }
     case 'walk': {
       // Main is stepping the window across the terminal; all we do is put him

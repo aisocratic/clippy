@@ -1,23 +1,27 @@
 name: CI
 
 on:
+  pull_request:
   push:
     branches: [main]
-  pull_request:
+
+permissions:
+  contents: read
 
 jobs:
-  check:
-    runs-on: macos-latest
+  app:
     strategy:
       fail-fast: false
       matrix:
-        node-version: [18, 20, 22]
-
+        node: [18, 20, 22]
+    # The root package intentionally declares macOS-only support, so npm will
+    # reject installation before tests on a Linux runner.
+    runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
-          node-version: ${{ matrix.node-version }}
+          node-version: ${{ matrix.node }}
           cache: npm
       - run: npm ci
       - run: npm run check

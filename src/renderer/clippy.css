@@ -1,7 +1,9 @@
 /* Clippy's window is transparent: everything here is a floating panel over
    whatever the user has on screen. One surface style, one accent (the session's
    own colour), one spacing rhythm — so a card, the menu and the token panel
-   read as the same object rather than three different apps. */
+   read as the same object rather than three different apps. The buddy stays
+   pixel art; the panels around him are smooth, warm-light cards (the same
+   language as the marketing site's mock popup). */
 
 :root {
   /* Session identity, set from the query string by clippy.js. */
@@ -12,18 +14,22 @@
      menu changes this and it sticks. */
   --buddy: 96px;
 
-  --surface: #1c1f26;
-  --surface-2: #13161b; /* inset blocks: details, transcripts, inputs */
-  --line: #333a45;
-  --line-soft: #262b33;
-  --text: #eef1f5;
-  --muted: #98a2ae;
-  --ok: #4aa870;
-  --no: #d76b64;
-  --warn: #e0b23f;
-  --panel-w: 258px;
-  --plan-w: 430px; /* the plan card only: a multi-step plan needs a page, not a blurb */
+  --surface: #f4f4f0;
+  --surface-2: #e9e9e5; /* inset blocks: details, transcripts, code */
+  --line: #d0d0cc;
+  --line-soft: #e0e0dc;
+  --text: #111111;
+  --muted: #696969;
+  --ok: #1f8a4c;
+  --no: #cf3f36;
+  --warn: #a16207;
+  --amber: #fbbf24; /* status pills, straight from the site */
+  --ink: #181818; /* the solid primary button */
+  --panel-w: 300px;
+  --plan-w: 500px; /* the plan card only: a multi-step plan needs a page, not a blurb */
   --sans: 'Avenir Next', Avenir, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --radius: 14px; /* panels */
+  --radius-s: 7px; /* buttons, inset blocks */
 }
 
 * {
@@ -59,10 +65,9 @@ body {
   flex: none;
 }
 
-/* ---------- The shared panel look: an RPG textbox, not a modal ----------
-   Square corners, a light pixel border over a dark bevel ring, and a hard,
-   unblurred drop shadow — the things that read as "pixel UI" instead of
-   "web app card" at a glance. */
+/* ---------- The shared panel look: a soft, warm card ----------
+   Rounded corners, no border, one deep blurred shadow — the same card the
+   marketing site floats over its hero terminal, shrunk to buddy size. */
 
 #card,
 #qcard,
@@ -72,10 +77,10 @@ body {
 #menu {
   -webkit-app-region: no-drag;
   width: var(--panel-w);
-  background: linear-gradient(180deg, #232a42 0%, #12162a 100%);
-  border: 3px solid var(--text);
-  border-radius: 0;
-  box-shadow: 0 0 0 3px #0a0c16, 5px 5px 0 0 rgba(0, 0, 0, 0.55);
+  background: var(--surface);
+  border: 0;
+  border-radius: var(--radius);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.4);
   color: var(--text);
 }
 
@@ -94,15 +99,12 @@ body {
 #menu::after {
   content: '';
   position: absolute;
-  bottom: -13px;
+  bottom: -8px;
   left: 50%;
-  margin-left: -8px;
-  width: 16px;
-  height: 16px;
-  background: #12162a;
-  border-right: 3px solid var(--text);
-  border-bottom: 3px solid var(--text);
-  box-shadow: 3px 3px 0 0 #0a0c16;
+  margin-left: -9px;
+  width: 18px;
+  height: 18px;
+  background: var(--surface);
   transform: rotate(45deg);
 }
 
@@ -127,25 +129,23 @@ button {
   font: inherit;
   font-size: 11.5px;
   line-height: 1.3;
-  padding: 5px 10px;
-  border-radius: 0;
-  border: 2px solid var(--line);
-  background: #262b33;
+  padding: 6px 10px;
+  border-radius: var(--radius-s);
+  border: 1px solid var(--line);
+  background: #ffffff;
   color: var(--text);
   cursor: pointer;
-  box-shadow: 2px 2px 0 0 rgba(0, 0, 0, 0.4);
-  transition: background 0.12s ease, border-color 0.12s ease, opacity 0.12s ease;
+  transition: background 0.12s ease, border-color 0.12s ease, opacity 0.12s ease,
+    transform 0.08s ease;
 }
 
 button:hover:not(:disabled) {
-  background: #2f353f;
-  border-color: #454e5c;
+  background: #f1f1ed;
+  border-color: #c2c2be;
 }
 
 button:active:not(:disabled) {
-  /* A pixel button gets pressed, not just recoloured. */
-  transform: translate(2px, 2px);
-  box-shadow: none;
+  transform: scale(0.985);
 }
 
 button:disabled {
@@ -153,24 +153,26 @@ button:disabled {
   cursor: default;
 }
 
+/* The affirmative action is the site's solid-ink primary. */
 button.good {
-  background: rgba(74, 168, 112, 0.16);
-  border-color: rgba(74, 168, 112, 0.55);
-  color: #b9ecce;
+  background: var(--ink);
+  border-color: var(--ink);
+  color: #ffffff;
 }
 
 button.good:hover:not(:disabled) {
-  background: rgba(74, 168, 112, 0.28);
+  background: #000000;
+  border-color: #000000;
 }
 
 button.bad {
-  background: rgba(215, 107, 100, 0.14);
-  border-color: rgba(215, 107, 100, 0.5);
-  color: #f3c0bc;
+  background: #ffffff;
+  border-color: rgba(207, 63, 54, 0.45);
+  color: var(--no);
 }
 
 button.bad:hover:not(:disabled) {
-  background: rgba(215, 107, 100, 0.26);
+  background: rgba(207, 63, 54, 0.08);
 }
 
 button.dim {
@@ -190,11 +192,12 @@ button.dim {
   gap: 5px;
   max-width: 100%;
   margin-bottom: 8px;
-  padding: 2px 10px;
-  border-radius: 0;
-  background: rgba(20, 22, 27, 0.9);
-  border: 2px solid var(--clip);
-  color: #f0f2f4;
+  padding: 3px 11px;
+  border-radius: 10px;
+  background: rgba(244, 244, 240, 0.95);
+  border: 1px solid var(--clip);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.25);
+  color: #111111;
   font-family: var(--sans);
   font-size: 14px;
   font-weight: 700;
@@ -233,7 +236,7 @@ button.dim {
 
 #who-project {
   margin-top: 1px;
-  color: var(--text);
+  color: #333333;
 }
 
 #stage:hover #who,
@@ -277,9 +280,10 @@ body:not(.compact) #who {
   cursor: grabbing;
 }
 
-/* The pixel art must never become an HTML5 drag ghost mid-drag. */
+/* The artwork must never become an HTML5 drag ghost mid-drag. */
 #buddy,
-#buddy-sheet {
+#buddy-sheet,
+#buddy-vector {
   -webkit-user-drag: none;
 }
 
@@ -300,6 +304,20 @@ body:not(.compact) #who {
   filter: drop-shadow(0 5px 8px rgba(0, 0, 0, 0.4));
 }
 
+/* Built-in vector buddies use the same 4:5 stage as the generated GIFs, but
+   keep ordinary SVG smoothing at every size. */
+#buddy-vector {
+  width: var(--buddy);
+  height: calc(var(--buddy) * 1.25);
+}
+
+#buddy-vector .vector-buddy {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
 #badge {
   position: absolute;
   top: 2px;
@@ -307,7 +325,7 @@ body:not(.compact) #who {
   min-width: 18px;
   height: 18px;
   padding: 0 4px;
-  border-radius: 0;
+  border-radius: 99px;
   background: #d64545;
   color: #fff;
   font-size: 11px;
@@ -356,7 +374,9 @@ body.walking #clippy {
 }
 
 /* Face where you're going. */
-body.facing-left #buddy {
+body.facing-left #buddy,
+body.facing-left #buddy-sheet,
+body.facing-left #buddy-vector {
   transform: scaleX(-1);
 }
 
@@ -370,8 +390,8 @@ body.facing-left #buddy {
 }
 
 #pointer-hint {
-  padding: 1px 7px;
-  border-radius: 0;
+  padding: 1px 8px;
+  border-radius: 99px;
   background: var(--clip);
   color: #14171b;
   font-size: 9.5px;
@@ -400,9 +420,96 @@ body.facing-left #buddy {
 }
 
 #bubble-text {
-  font-size: 12.5px;
+  font-size: 13px;
   line-height: 1.45;
   color: var(--text);
+}
+
+/* Transcript text is untrusted Markdown: markdown.js emits only this small,
+   safe vocabulary and main opens validated https links in the real browser. */
+.markdown {
+  user-select: text;
+  overflow-wrap: anywhere;
+}
+
+.markdown > :first-child {
+  margin-top: 0;
+}
+
+.markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.markdown p,
+.markdown ul,
+.markdown ol,
+.markdown pre,
+.markdown blockquote {
+  margin: 0 0 8px;
+}
+
+.markdown ul,
+.markdown ol {
+  padding-left: 20px;
+}
+
+.markdown li + li {
+  margin-top: 3px;
+}
+
+.markdown h1,
+.markdown h2,
+.markdown h3,
+.markdown h4,
+.markdown h5,
+.markdown h6 {
+  margin: 10px 0 5px;
+  color: var(--text);
+  font-size: 1.08em;
+  line-height: 1.3;
+}
+
+.markdown code,
+.markdown pre {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.markdown code {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.07);
+  font-size: 0.92em;
+}
+
+.markdown pre {
+  padding: 8px 9px;
+  overflow-x: auto;
+  border-radius: 6px;
+  background: #ddddda;
+  white-space: pre;
+}
+
+.markdown pre code {
+  padding: 0;
+  background: transparent;
+}
+
+.markdown blockquote {
+  padding-left: 9px;
+  border-left: 3px solid var(--clip);
+  color: var(--muted);
+}
+
+.markdown a {
+  color: #1769aa;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.markdown hr {
+  margin: 9px 0;
+  border: 0;
+  border-top: 1px solid var(--line);
 }
 
 #bubble-actions {
@@ -414,26 +521,31 @@ body.facing-left #buddy {
 /* ---------- Interactive card (approvals, plans, reviews, questions) ---------- */
 
 #card {
-  padding: 8px 11px 9px;
+  padding: 13px 15px 14px;
 }
 
+/* The site's card-meta row: tiny mono caps, session in grey, state in a pill. */
 #card-head {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 10.5px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 9.5px;
   font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
   color: var(--muted);
-  margin-bottom: 6px;
+  margin-bottom: 9px;
 }
 
 #card-queue {
   flex: none;
-  padding: 0 6px;
-  border-radius: 0;
-  background: rgba(224, 178, 63, 0.16);
-  color: var(--warn);
-  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 99px;
+  background: rgba(251, 191, 36, 0.28);
+  color: #111111;
+  font-size: 9px;
+  letter-spacing: 0.08em;
 }
 
 /* Jump straight to the terminal this card came from. */
@@ -448,26 +560,25 @@ body.facing-left #buddy {
 }
 
 #card-title {
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 600;
-  line-height: 1.4;
+  letter-spacing: -0.02em;
+  line-height: 1.35;
   color: var(--text);
 }
 
 #card-detail {
-  margin-top: 7px;
+  margin-top: 9px;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 10.5px;
+  font-size: 12px;
   line-height: 1.5;
-  color: #cbd3dc;
+  color: #575757;
   background: var(--surface-2);
-  border: 1px solid var(--line-soft);
-  border-radius: 0;
-  padding: 7px 8px;
-  max-height: 132px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-s);
+  padding: 10px 11px;
+  max-height: 190px;
   overflow: auto;
-  white-space: pre-wrap;
-  word-break: break-word;
   user-select: text;
 }
 
@@ -480,25 +591,25 @@ body.plan #card {
 }
 
 body.plan #card-detail {
-  max-height: 400px;
+  max-height: 460px;
 }
 
 #card-input {
   width: 100%;
-  margin-top: 8px;
+  margin-top: 9px;
   font-family: inherit;
   font-size: 11.5px;
-  padding: 6px 8px;
+  padding: 7px 9px;
   border: 1px solid var(--line);
-  border-radius: 0;
-  background: var(--surface-2);
+  border-radius: var(--radius-s);
+  background: #ffffff;
   color: var(--text);
   resize: none;
   -webkit-app-region: no-drag;
 }
 
 #card-input::placeholder {
-  color: #6f7a87;
+  color: #9a9a96;
 }
 
 #card-input:focus {
@@ -539,7 +650,7 @@ body.plan #card-detail {
 .opt-question {
   font-size: 11.5px;
   font-weight: 600;
-  color: #c3cbd5;
+  color: #333333;
   margin-bottom: 5px;
 }
 
@@ -549,14 +660,14 @@ button.opt {
   text-align: left;
   margin-bottom: 4px;
   font-size: 11.5px;
-  padding: 6px 9px;
-  background: var(--surface-2);
+  padding: 7px 10px;
+  background: #ffffff;
 }
 
 button.opt.chosen {
-  background: rgba(74, 168, 112, 0.22);
+  background: rgba(31, 138, 76, 0.1);
   border-color: var(--ok);
-  color: #ccf1dc;
+  color: #14532d;
 }
 
 button.opt.chosen::after {
@@ -565,9 +676,9 @@ button.opt.chosen::after {
 }
 
 #card-countdown {
-  margin-top: 9px;
+  margin-top: 10px;
   height: 3px;
-  border-radius: 2px;
+  border-radius: 99px;
   background: var(--line-soft);
   overflow: hidden;
 }
@@ -575,63 +686,59 @@ button.opt.chosen::after {
 #card-countdown-fill {
   height: 100%;
   width: 100%;
-  background: var(--warn);
+  background: var(--amber);
   transition: width 0.2s linear;
 }
 
 /* ---------- Read-only question card ---------- */
 
 #qcard {
-  padding: 8px 11px 9px;
-  border-color: rgba(224, 178, 63, 0.45);
-}
-
-#qcard::after {
-  border-right-color: rgba(224, 178, 63, 0.45);
-  border-bottom-color: rgba(224, 178, 63, 0.45);
+  padding: 13px 15px 14px;
 }
 
 #qcard-head {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 10.5px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 9.5px;
   font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
   color: var(--muted);
-  margin-bottom: 6px;
+  margin-bottom: 9px;
 }
 
 #qcard-tag {
   margin-left: auto;
   flex: none;
-  padding: 0 6px;
-  border-radius: 0;
-  background: rgba(224, 178, 63, 0.16);
-  color: var(--warn);
-  font-size: 9.5px;
+  padding: 2px 8px;
+  border-radius: 99px;
+  background: rgba(251, 191, 36, 0.28);
+  color: #111111;
+  font-size: 9px;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.08em;
 }
 
 #qcard-title {
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 600;
-  line-height: 1.4;
+  letter-spacing: -0.02em;
+  line-height: 1.35;
 }
 
 #qcard-detail {
-  margin-top: 7px;
-  font-size: 11px;
+  margin-top: 9px;
+  font-size: 12px;
   line-height: 1.5;
-  color: #cbd3dc;
+  color: #575757;
   background: var(--surface-2);
-  border: 1px solid var(--line-soft);
-  border-radius: 0;
-  padding: 7px 8px;
-  max-height: 140px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-s);
+  padding: 10px 11px;
+  max-height: 190px;
   overflow: auto;
-  white-space: pre-wrap;
-  word-break: break-word;
   user-select: text;
 }
 
@@ -648,7 +755,7 @@ button.opt.chosen::after {
 /* ---------- Drive mode panel ---------- */
 
 #drive {
-  padding: 8px 10px 9px;
+  padding: 12px 14px 13px;
   margin-bottom: 13px;
 }
 
@@ -659,7 +766,7 @@ button.opt.chosen::after {
   font-size: 11px;
   font-weight: 600;
   margin-bottom: 7px;
-  color: #c3cbd5;
+  color: #333333;
 }
 
 #drive-head button {
@@ -668,25 +775,34 @@ button.opt.chosen::after {
 }
 
 #drive-transcript {
-  max-height: 230px;
+  max-height: 300px;
   overflow: auto;
-  font-size: 11.5px;
+  font-size: 12px;
   line-height: 1.45;
   background: var(--surface-2);
-  border: 1px solid var(--line-soft);
-  border-radius: 0;
-  padding: 7px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-s);
+  padding: 9px 10px;
   user-select: text;
 }
 
 .drive-line {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 5px;
   margin-bottom: 5px;
-  white-space: pre-wrap;
-  word-break: break-word;
+}
+
+.drive-role {
+  font-weight: 600;
+}
+
+.drive-copy {
+  min-width: 0;
 }
 
 .drive-line.user {
-  color: #8fd3ff;
+  color: #1d6fd8;
 }
 
 .drive-line.assistant {
@@ -714,10 +830,10 @@ button.opt.chosen::after {
   flex: 1;
   font-family: inherit;
   font-size: 11.5px;
-  padding: 6px 8px;
+  padding: 7px 9px;
   border: 1px solid var(--line);
-  border-radius: 0;
-  background: var(--surface-2);
+  border-radius: var(--radius-s);
+  background: #ffffff;
   color: var(--text);
   resize: none;
   -webkit-app-region: no-drag;
@@ -749,7 +865,7 @@ button.opt.chosen::after {
 
 #menu-name {
   font-weight: 700;
-  color: #c3cbd5;
+  color: #333333;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -773,13 +889,12 @@ button.opt.chosen::after {
   color: var(--text);
   background: transparent;
   border: 0;
-  border-radius: 0;
+  border-radius: var(--radius-s);
 }
 
-/* A left bar in the session's colour instead of a rounded highlight — the
-   pointer cursor an RPG menu shows next to the selected line. */
+/* A left bar in the session's colour marks the hovered line. */
 .menu-item:hover:not(:disabled) {
-  background: #272d36;
+  background: var(--surface-2);
   border-color: transparent;
   box-shadow: inset 3px 0 0 0 var(--clip);
 }
@@ -821,7 +936,7 @@ button.opt.chosen::after {
   font-size: 9.5px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: #6f7a87;
+  color: #8a8a86;
 }
 
 /* A switch reads as on/off at a glance; a chip reads as one-of-many. */
@@ -829,14 +944,14 @@ button.opt.chosen::after {
   text-align: left;
   font-size: 11px;
   padding: 4px 8px;
-  background: var(--surface-2);
-  color: #b9c2cc;
+  background: #ffffff;
+  color: #555555;
 }
 
 #toggles button.on {
-  background: rgba(74, 168, 112, 0.18);
-  border-color: rgba(74, 168, 112, 0.5);
-  color: #cbeeda;
+  background: rgba(31, 138, 76, 0.1);
+  border-color: rgba(31, 138, 76, 0.45);
+  color: #14532d;
 }
 
 .chips {
@@ -848,14 +963,14 @@ button.opt.chosen::after {
 .chip {
   padding: 4px 8px;
   font-size: 11px;
-  background: var(--surface-2);
-  color: #b9c2cc;
+  background: #ffffff;
+  color: #555555;
 }
 
 .chip.on {
-  background: rgba(74, 168, 112, 0.18);
-  border-color: rgba(74, 168, 112, 0.5);
-  color: #cbeeda;
+  background: rgba(31, 138, 76, 0.1);
+  border-color: rgba(31, 138, 76, 0.45);
+  color: #14532d;
 }
 
 /* ---------- Ambient activity line ---------- */
@@ -907,13 +1022,14 @@ body:not(.compact) #statusline {
 #controls button {
   font-size: 10px;
   padding: 2px 8px;
-  background: rgba(28, 31, 38, 0.85);
+  background: rgba(244, 244, 240, 0.92);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
 }
 
 /* ---------- The combined panel: status, token usage, and the composer ---------- */
 
 #usage {
-  padding: 9px 11px 10px;
+  padding: 13px 15px 14px;
   margin-bottom: 8px;
   font-size: 11px;
 }
@@ -933,7 +1049,7 @@ body:not(.compact) #statusline {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: #c3cbd5;
+  color: #333333;
 }
 
 #usage-name::before {
@@ -963,7 +1079,7 @@ body:not(.compact) #statusline {
   margin-bottom: 7px;
   font-size: 11px;
   line-height: 1.35;
-  color: #dbe1e8;
+  color: #444444;
 }
 
 #usage-bar {
@@ -981,7 +1097,7 @@ body:not(.compact) #statusline {
 }
 
 #usage-bar-fill.warn {
-  background: var(--warn);
+  background: var(--amber);
 }
 
 #usage-bar-fill.hot {
@@ -991,7 +1107,7 @@ body:not(.compact) #statusline {
 #usage-context {
   margin: 5px 0 7px;
   font-size: 10.5px;
-  color: #c8ccd2;
+  color: #575757;
 }
 
 #usage-bars {
@@ -1019,12 +1135,12 @@ body:not(.compact) #statusline {
 /* What a window covers — true of the row, but never the point of it. */
 .ubar-sub {
   font-size: 9.5px;
-  color: #6f7a87;
+  color: #8a8a86;
   margin-bottom: 3px;
 }
 
 .ubar-head b {
-  color: #dce2e9;
+  color: #333333;
   font-variant-numeric: tabular-nums;
   font-weight: 600;
   white-space: nowrap;
@@ -1045,7 +1161,7 @@ body:not(.compact) #statusline {
 }
 
 .ubar-fill.warn {
-  background: var(--warn);
+  background: var(--amber);
 }
 
 .ubar-fill.hot {
@@ -1057,15 +1173,15 @@ body:not(.compact) #statusline {
 .ubar-fill.share {
   background: repeating-linear-gradient(
     -45deg,
-    #5d6773,
-    #5d6773 3px,
-    #444d58 3px,
-    #444d58 6px
+    #c9c9c4,
+    #c9c9c4 3px,
+    #b6b6b0 3px,
+    #b6b6b0 6px
   );
 }
 
 .ubar-fill.alt {
-  background: #6f7c8c;
+  background: #a6a6a0;
 }
 
 .ubar-group {
@@ -1073,14 +1189,14 @@ body:not(.compact) #statusline {
   font-size: 9.5px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: #6f7a87;
+  color: #8a8a86;
 }
 
 #usage-note {
   margin-top: 7px;
   font-size: 9.5px;
   line-height: 1.4;
-  color: #7f8996;
+  color: #8a8a86;
 }
 
 /* Keep talking to the agent without leaving the panel: what you type here is
@@ -1090,17 +1206,17 @@ body:not(.compact) #statusline {
   margin-top: 9px;
   font-family: inherit;
   font-size: 11.5px;
-  padding: 6px 8px;
+  padding: 7px 9px;
   border: 1px solid var(--line);
-  border-radius: 0;
-  background: var(--surface-2);
+  border-radius: var(--radius-s);
+  background: #ffffff;
   color: var(--text);
   resize: none;
   -webkit-app-region: no-drag;
 }
 
 #usage-input::placeholder {
-  color: #6f7a87;
+  color: #9a9a96;
 }
 
 #usage-input:focus {

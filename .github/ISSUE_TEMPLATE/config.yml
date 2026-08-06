@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/AISocratic/clippy/security/advisories/new
+    about: Report security-sensitive findings privately.
+  - name: Troubleshooting
+    url: https://github.com/AISocratic/clippy/blob/main/docs/TROUBLESHOOTING.md
+    about: Check install, hook, window, and timeout diagnostics first.

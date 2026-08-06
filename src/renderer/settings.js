@@ -26,10 +26,17 @@ const sheetTimers = [];
 /* ---------- Buddies ---------- */
 
 /**
- * Draw one animation. Generated characters are GIFs that animate themselves;
- * sprite-sheet packs are stepped here, one frame at a time.
+ * Draw one animation. Vector buddies are live SVG, generated characters are
+ * GIFs that animate themselves, and sprite-sheet packs are stepped here.
  */
 function poseArt(character, pose, height = 64) {
+  if (character.vector) {
+    const colour = (state.sessions[0] || {}).color || '#9aa3ad';
+    const svg = window.ClippyVectors.create(character.vector, pose.name, colour);
+    svg.style.height = `${height}px`;
+    svg.style.width = `${Math.round(height * 0.8)}px`;
+    return svg;
+  }
   if (!character.sheet) {
     const img = document.createElement('img');
     img.src = pose.file;
@@ -82,8 +89,11 @@ function posesOf(character) {
     // session that has reported in, or the default steel.
     const colour = ((state.sessions[0] || {}).color || '#9aa3ad').replace('#', '');
     const art = (pose) =>
-      `assets/themes/${character.id}/${character.perColour ? `${colour}-` : ''}${pose}.gif`;
+      character.vector
+        ? ''
+        : `assets/themes/${character.id}/${character.perColour ? `${colour}-` : ''}${pose}.gif`;
     return (character.poses || ['idle', 'excited']).map((pose) => ({
+      name: pose,
       label: POSE_LABEL[pose] || pose,
       file: art(pose),
       named: true,
@@ -144,6 +154,8 @@ function renderCast() {
     origin.className = 'cast-origin';
     origin.textContent = character.sheet
       ? `sprite pack · ${character.sheet.frameWidth}×${character.sheet.frameHeight}`
+      : character.vector
+      ? 'live SVG · session colour'
       : character.perColour
       ? 'drawn in code · per session colour'
       : 'drawn in code';

@@ -148,6 +148,31 @@ function eachUsage(text, visit) {
 }
 
 /**
+ * The latest model named by either transcript format, even before the first
+ * token-count event arrives. Claude writes it on assistant messages; Codex
+ * writes it on turn_context. Keeping this independent from usage is what lets
+ * a brand-new or idle session identify itself instead of saying "unknown".
+ */
+function modelFromTranscript(text) {
+  let model = '';
+  for (const line of String(text).split('\n')) {
+    if (!line || line.indexOf('"model"') === -1) continue;
+    let entry;
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (entry.type === 'assistant' && typeof entry.message?.model === 'string') {
+      model = entry.message.model;
+    } else if (entry.type === 'turn_context' && typeof entry.payload?.model === 'string') {
+      model = entry.payload.model;
+    }
+  }
+  return model;
+}
+
+/**
  * Summarize one transcript.
  *
  * @param {string} text  JSONL contents
@@ -156,7 +181,7 @@ function eachUsage(text, visit) {
 function parseTranscript(text, { sinceMs = 0 } = {}) {
   const totals = emptyTotals();
   const byModel = new Map(); // model id -> totals, for "where did it all go?"
-  let model = '';
+  let model = modelFromTranscript(text);
   let context = 0;
   let biggest = 0;
   let turns = 0;
@@ -609,6 +634,7 @@ function planLimitsFor({ plan = 'unknown', planLimits = {} } = {}) {
 
 module.exports = {
   parseTranscript,
+  modelFromTranscript,
   contextLimitFor,
   contextOf,
   sessionUsage,
