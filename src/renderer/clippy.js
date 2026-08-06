@@ -1,5 +1,14 @@
 'use strict';
 
+const { setMarkdown } = window.ClippyMarkdown;
+
+document.addEventListener('click', (event) => {
+  const link = event.target.closest?.('a[data-clippy-external]');
+  if (!link) return;
+  event.preventDefault();
+  window.clippyAPI.openExternal(link.href);
+});
+
 const REMIND_AFTER_MS = 90 * 1000; // re-bounce if a session is still ignored
 const SNOOZE_MS = 5 * 60 * 1000;
 const CHECK_INTERVAL_MS = 15 * 1000;
@@ -137,7 +146,7 @@ let widthSent = 0;
 // How wide the window has to be while a plan card is up: the plan panel
 // (--plan-w in clippy.css) plus the same slack the normal window keeps around
 // the normal panel. Every other card leaves the width alone (0 = default).
-const PLAN_WIN_W = 440;
+const PLAN_WIN_W = 510;
 
 const PANELS = ['card', 'bubble', 'qcard', 'usage', 'drive', 'menu'];
 
@@ -374,7 +383,7 @@ buddyEl.addEventListener('error', () => {
 });
 
 function showBubble(text, { fix = null } = {}) {
-  bubbleText.textContent = text;
+  setMarkdown(bubbleText, text);
   bubbleFix = fix;
   btnFix.classList.toggle('hidden', !fix);
   usageEl.classList.add('hidden'); // news wins over the token panel
@@ -509,7 +518,7 @@ function statusSummary() {
 
 function showQuestion(evt) {
   qcardTitle.textContent = evt.title || 'Claude is asking you a question';
-  qcardDetail.textContent = evt.detail || '';
+  setMarkdown(qcardDetail, evt.detail || '');
   qcardDetail.classList.toggle('hidden', !evt.detail);
   // The picker is up in the terminal — the question is readable here, and this
   // takes you to where it can be answered.
@@ -854,7 +863,17 @@ function addDriveLine(role, text) {
   if (!text) return;
   const line = document.createElement('div');
   line.className = `drive-line ${role}`;
-  line.textContent = (role === 'user' ? 'you: ' : role === 'system' ? '' : 'claude: ') + text;
+  const prefix = role === 'user' ? 'you:' : role === 'system' ? '' : 'claude:';
+  if (prefix) {
+    const label = document.createElement('span');
+    label.className = 'drive-role';
+    label.textContent = prefix;
+    line.appendChild(label);
+  }
+  const copy = document.createElement('div');
+  copy.className = 'drive-copy markdown';
+  setMarkdown(copy, text);
+  line.appendChild(copy);
   driveTranscript.appendChild(line);
   driveTranscript.scrollTop = driveTranscript.scrollHeight;
 }
@@ -920,7 +939,7 @@ function showNextRequest() {
   btnSubmit.classList.add('hidden');
   btnDismiss.classList.add('hidden');
 
-  cardDetail.textContent = next.detail || '';
+  setMarkdown(cardDetail, next.detail || '');
   cardDetail.classList.toggle('hidden', !next.detail);
   cardInput.value = '';
   cardInput.placeholder = isPlan

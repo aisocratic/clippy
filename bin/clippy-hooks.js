@@ -45,7 +45,9 @@ const QUESTION_TOOL = 'AskUserQuestion';
 // filter only. `mode: 'decide'` marks interactive hooks: their HTTP response
 // body is echoed to stdout, which Claude Code parses as the hook's decision
 // (approve/deny a permission request, or send Claude back to work with review
-// feedback). Everything else is fire-and-forget.
+// feedback). `reply` keeps a quick response visible too: SessionStart uses it
+// for the one-line buddy identity at the top of the chat. Everything else is
+// fire-and-forget.
 const SPECS = [
   { event: 'Notification', matcher: 'permission_prompt' },
   { event: 'Notification', matcher: 'idle_prompt' },
@@ -57,7 +59,7 @@ const SPECS = [
   // Claude Code reports a failed tool on its own event, not PostToolUse.
   { event: 'PostToolUseFailure', matcher: MEANINGFUL_TOOLS },
   { event: 'UserPromptSubmit' },
-  { event: 'SessionStart' },
+  { event: 'SessionStart', mode: 'reply' },
   { event: 'SessionEnd' },
 ];
 
@@ -75,7 +77,7 @@ const CODEX_SPECS = [
   { event: 'PreToolUse', matcher: CODEX_MEANINGFUL_TOOLS },
   { event: 'PostToolUse', matcher: CODEX_MEANINGFUL_TOOLS },
   { event: 'UserPromptSubmit' },
-  { event: 'SessionStart' },
+  { event: 'SessionStart', mode: 'reply' },
   // Codex caps this advisory hook at three seconds.
   { event: 'SessionEnd', timeout: 3 },
 ];
@@ -99,6 +101,14 @@ function hookCommand(spec, port, source = 'claude') {
     // no output, which Claude Code treats as "no decision" — zero impact.
     return (
       `curl -s --connect-timeout 1 -m ${DECIDE_CURL_MAX_S} -X POST '${url}' ` +
+      `-H 'Content-Type: application/json' ${TERM_HEADERS}--data-binary @- 2>/dev/null || true ${MARKER}`
+    );
+  }
+  if (spec.mode === 'reply') {
+    // SessionStart's response is a small systemMessage for the terminal UI.
+    // Keep stdout, but retain the same fast, harmless failure as passive hooks.
+    return (
+      `curl -s --connect-timeout 1 -m 2 -X POST '${url}' ` +
       `-H 'Content-Type: application/json' ${TERM_HEADERS}--data-binary @- 2>/dev/null || true ${MARKER}`
     );
   }
@@ -201,9 +211,15 @@ function checkDriftFor(settings, port, specs) {
     return { installed: false, missing: [], wrongPort: false, noTerminalInfo: false };
   }
 
-  const missing = specs.filter(
-    (spec) => !installed.some((h) => h.event === spec.event && h.matcher === (spec.matcher || ''))
-  ).map((spec) => `${spec.event}${spec.matcher ? ` (${spec.matcher})` : ''}`);
+  const missing = specs.filter((spec) => {
+    const found = installed.find(
+      (h) => h.event === spec.event && h.matcher === (spec.matcher || '')
+    );
+    if (!found) return true;
+    // A pre-banner SessionStart hook discards the response body, so it has the
+    // right event name but cannot show which buddy owns the chat.
+    return spec.mode === 'reply' && found.command.includes('>/dev/null 2>&1');
+  }).map((spec) => `${spec.event}${spec.matcher ? ` (${spec.matcher})` : ''}`);
 
   return {
     installed: true,

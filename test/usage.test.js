@@ -7,6 +7,7 @@ const os = require('node:os');
 const path = require('node:path');
 const {
   parseTranscript,
+  modelFromTranscript,
   contextLimitFor,
   contextOf,
   rollingWindow,
@@ -84,6 +85,25 @@ test('Codex rollout token events produce totals and use the reported context win
   assert.equal(parsed.context, 1200);
   assert.equal(parsed.contextLimit, 128000);
   assert.deepEqual(parsed.totals, { input: 400, output: 200, cacheRead: 600, cacheCreate: 0 });
+});
+
+test('finds a model before any token usage has been written', () => {
+  const claude = JSON.stringify({
+    type: 'assistant',
+    timestamp: '2026-08-05T10:00:00Z',
+    message: { model: 'claude-sonnet-5', content: [] },
+  });
+  const codex = JSON.stringify({
+    type: 'turn_context',
+    timestamp: '2026-08-05T10:00:00Z',
+    payload: { model: 'gpt-5.6-codex' },
+  });
+
+  assert.equal(modelFromTranscript(claude), 'claude-sonnet-5');
+  assert.equal(parseTranscript(claude).model, 'claude-sonnet-5');
+  assert.equal(parseTranscript(claude).turns, 0);
+  assert.equal(modelFromTranscript(codex), 'gpt-5.6-codex');
+  assert.equal(parseTranscript(codex).model, 'gpt-5.6-codex');
 });
 
 test('subagent sidechains never masquerade as the main context', () => {

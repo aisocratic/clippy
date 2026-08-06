@@ -88,10 +88,12 @@ test('uninstall removes only our hooks and preserves user hooks', () => {
 });
 
 test('hook command never blocks or errors Claude Code', () => {
-  const cmd = hookCommand({ event: 'SessionStart' }, 43117);
+  const cmd = hookCommand({ event: 'SessionStart', mode: 'reply' }, 43117);
   assert.match(cmd, /-m 2/); // curl timeout
+  assert.match(cmd, /--connect-timeout 1/);
   assert.match(cmd, /\|\| true/); // always exit 0
   assert.match(cmd, /127\.0\.0\.1:43117\/hook\/SessionStart/);
+  assert.doesNotMatch(cmd, />\/dev\/null 2>&1/); // stdout is the visible banner
 });
 
 test('decide hooks echo the response as their decision and fail fast when app is down', () => {
@@ -178,6 +180,13 @@ test('checkDrift spots hooks older than this build, and a port mismatch', () => 
     `PreToolUse (${QUESTION_TOOL})`,
     `PostToolUseFailure (${MEANINGFUL_TOOLS})`,
   ]);
+
+  const silentStart = installHooks({}, 43117);
+  groupFor(silentStart, 'SessionStart').hooks[0].command = groupFor(
+    silentStart,
+    'SessionStart'
+  ).hooks[0].command.replace('2>/dev/null ||', '>/dev/null 2>&1 ||');
+  assert.deepEqual(checkDrift(silentStart, 43117).missing, ['SessionStart']);
 
   assert.equal(checkDrift(installHooks({}, 43117), 5005).wrongPort, true);
 
