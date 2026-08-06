@@ -292,6 +292,28 @@ function checkOpenclawDrift(config) {
   };
 }
 
+/**
+ * The same read-modify-write as `clippy-hooks.js install`, callable in-process —
+ * this is the app's one-click path, so a fresh DMG install never needs a
+ * terminal. Returns one row per agent; a failure (say, hand-edited JSON that no
+ * longer parses) is reported rather than thrown, so one broken config doesn't
+ * stop the other agent's install — and the broken file is left untouched.
+ */
+function installToFiles({ port = DEFAULT_PORT, agents = ['claude', 'codex'], pathFor } = {}) {
+  const resolvePath = pathFor || settingsPathFor;
+  return agents.map((agent) => {
+    const settingsPath = resolvePath(agent);
+    try {
+      const settings = readSettings(settingsPath);
+      targetFor(agent, settingsPath).install(settings, port);
+      writeSettings(settingsPath, settings);
+      return { agent, settingsPath, ok: true };
+    } catch (err) {
+      return { agent, settingsPath, ok: false, error: err.message };
+    }
+  });
+}
+
 /* ---------------- CLI ---------------- */
 
 function parseArgs(argv) {
@@ -457,6 +479,8 @@ module.exports = {
   installHooks,
   installCodexHooks,
   installOpenclawHooks,
+  installToFiles,
+  settingsPathFor,
   uninstallHooks,
   uninstallOpenclawHooks,
   listInstalled,

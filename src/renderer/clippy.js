@@ -135,6 +135,12 @@ let docked = false; // perched on that window's top-right corner
 
 let modeSent = null;
 let heightSent = 0;
+let widthSent = 0;
+
+// How wide the window has to be while a plan card is up: the plan panel
+// (--plan-w in clippy.css) plus the same slack the normal window keeps around
+// the normal panel. Every other card leaves the width alone (0 = default).
+const PLAN_WIN_W = 440;
 
 const PANELS = ['card', 'bubble', 'qcard', 'usage', 'drive', 'menu'];
 
@@ -166,10 +172,13 @@ function syncMode() {
   const want = showing ? 'full' : 'compact';
   // Measure after layout has settled, so a card that just appeared is included.
   const height = want === 'full' ? contentHeight() : 0;
-  if (want === modeSent && Math.abs(height - heightSent) < 6) return;
+  // Only the plan card asks for extra width; 0 means "the usual".
+  const width = want === 'full' && document.body.classList.contains('plan') ? PLAN_WIN_W : 0;
+  if (want === modeSent && Math.abs(height - heightSent) < 6 && width === widthSent) return;
   modeSent = want;
   heightSent = height;
-  window.clippyAPI.setMode(want, height);
+  widthSent = width;
+  window.clippyAPI.setMode(want, height, width);
 }
 
 /* ---------- UI helpers ---------- */
@@ -845,6 +854,7 @@ function showNextRequest() {
   if (!next) {
     activeRequestId = null;
     cardEl.classList.add('hidden');
+    document.body.classList.remove('plan'); // the wide window goes with the plan card
     syncMode();
     setExcited(currentUrgent());
     // surface whatever passive nudge was waiting behind the card
@@ -861,6 +871,9 @@ function showNextRequest() {
   const isApproval = next.type === 'approval';
   const isAnswer = next.type === 'answer';
   const isPlan = next.variant === 'plan';
+  // A plan is a page, not a blurb: the card grows (clippy.css) and syncMode
+  // asks main for a window wide and tall enough to read it in.
+  document.body.classList.toggle('plan', isPlan);
   showQueueDepth();
   cardTitle.textContent = next.title;
 
@@ -888,7 +901,10 @@ function showNextRequest() {
 
   cardOptions.classList.add('hidden');
   cardOptions.innerHTML = '';
-  cardInput.classList.remove('hidden');
+  // The review card leads with its two actions; the feedback box only appears
+  // once "Send feedback" is clicked. Approvals keep the always-there box — the
+  // note rides along with whichever button you press.
+  cardInput.classList.toggle('hidden', !isApproval);
   btnSubmit.classList.add('hidden');
   btnDismiss.classList.add('hidden');
 
@@ -909,7 +925,9 @@ function showNextRequest() {
   btnPass.classList.toggle('hidden', !isApproval || next.noPass); // Drive has no terminal
   btnGood.classList.toggle('hidden', isApproval);
   btnFeedback.classList.toggle('hidden', isApproval);
-  btnFeedback.disabled = true;
+  // On a review card the first click on "Send feedback" opens the box, so the
+  // button starts enabled; once the box is open it disables until there's text.
+  btnFeedback.disabled = false;
 
   cardEl.classList.remove('hidden');
   syncMode();
@@ -1212,13 +1230,24 @@ window.clippyAPI.onEvent(handleEvent);
 // It's the number you'd want to notice before Claude starts forgetting things.
 const CONTEXT_STRESS = 0.3;
 const CONTEXT_POLL_MS = 60 * 1000;
+let contextCheckInFlight = false;
 
 async function checkContext() {
+  // Hidden buddy windows do not need to reread transcripts just to choose a
+  // pose nobody can see. Visibility changes trigger a fresh check below, so a
+  // buddy still has the right expression as soon as it appears.
+  if (document.hidden || contextCheckInFlight) return;
+  contextCheckInFlight = true;
   let data = null;
   try {
-    data = await window.clippyAPI.usage();
+    // Context pressure only needs this session's latest transcript state. The
+    // full usage call also aggregates a week of every session on the machine
+    // and is reserved for the panel the user explicitly opens.
+    data = await window.clippyAPI.context();
   } catch {
     return; // no transcript yet, or main is busy — try again next time
+  } finally {
+    contextCheckInFlight = false;
   }
   const session = data && data.session;
   const tight = Boolean(
@@ -1230,7 +1259,10 @@ async function checkContext() {
 }
 
 setInterval(checkContext, CONTEXT_POLL_MS);
-checkContext();
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) checkContext();
+});
+if (!document.hidden) checkContext();
 
 /* ---------- Reminder loop: Clippy doesn't give up ---------- */
 
@@ -1259,7 +1291,17 @@ btnPass.addEventListener('click', () => {
   if (canOpen) window.clippyAPI.openWindow({ point: true });
 });
 btnGood.addEventListener('click', () => decide('ok'));
+// Two-step on the review card: the first click opens the feedback box (it is
+// hidden until then), the second — once there's text — sends the note back to
+// Claude through the same decide('feedback', …) wiring as before.
 btnFeedback.addEventListener('click', () => {
+  if (cardInput.classList.contains('hidden')) {
+    cardInput.classList.remove('hidden');
+    btnFeedback.disabled = true; // nothing typed yet
+    syncMode(); // the card just got taller — the window follows
+    cardInput.focus();
+    return;
+  }
   const msg = cardInput.value.trim();
   if (msg) decide('feedback', msg);
 });

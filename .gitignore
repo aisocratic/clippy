@@ -21,8 +21,11 @@ src/renderer/assets/
 # Downloaded sprite packs (third-party art, kept out of the repo)
 sprites/
 
-# Marketing site — kept out of the repo's history for now
-website/
+# Marketing site — source is tracked; generated assets (buddy GIFs copied from
+# the app's themes, third-party sprite packs, cast-data.js) stay local: `npm run
+# website` rebuilds them, and downloaded packs keep their own licences.
+website/img/
+website/cast-data.js
 
 # Agent-session state (workflow worktrees, per-agent memory) — machine-local
 .claude/worktrees/

@@ -2,10 +2,15 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const {
   installHooks,
   installCodexHooks,
   installOpenclawHooks,
+  installToFiles,
+  settingsPathFor,
   uninstallHooks,
   uninstallOpenclawHooks,
   listInstalled,
@@ -243,4 +248,46 @@ test('checkDrift spots hooks older than this build, and a port mismatch', () => 
     }
   }
   assert.equal(checkDrift(noTerm, 43117).noTerminalInfo, true);
+});
+
+test('settingsPathFor names each agent\'s user-level hook file', () => {
+  assert.ok(settingsPathFor('claude').endsWith(path.join('.claude', 'settings.json')));
+  assert.ok(settingsPathFor('codex').endsWith(path.join('.codex', 'hooks.json')));
+});
+
+test('installToFiles writes both agents\' files in-process and is idempotent', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clippy-hooks-'));
+  const pathFor = (agent) => path.join(dir, agent, agent === 'claude' ? 'settings.json' : 'hooks.json');
+
+  const results = installToFiles({ port: 5005, pathFor });
+  assert.deepEqual(results.map((r) => [r.agent, r.ok]), [['claude', true], ['codex', true]]);
+
+  const claude = JSON.parse(fs.readFileSync(pathFor('claude'), 'utf8'));
+  assert.equal(listInstalled(claude).length, SPECS.length);
+  assert.deepEqual(checkDrift(claude, 5005), {
+    installed: true, missing: [], wrongPort: false, noTerminalInfo: false,
+  });
+  const codex = JSON.parse(fs.readFileSync(pathFor('codex'), 'utf8'));
+  assert.equal(listInstalled(codex).length, CODEX_SPECS.length);
+
+  // Second run replaces rather than duplicates, and unrelated keys survive.
+  claude.theme = 'dark';
+  fs.writeFileSync(pathFor('claude'), JSON.stringify(claude));
+  installToFiles({ port: 5005, agents: ['claude'], pathFor });
+  const again = JSON.parse(fs.readFileSync(pathFor('claude'), 'utf8'));
+  assert.equal(listInstalled(again).length, SPECS.length);
+  assert.equal(again.theme, 'dark');
+});
+
+test('installToFiles reports a broken config without clobbering it or the other agent', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clippy-hooks-'));
+  const pathFor = (agent) => path.join(dir, `${agent}.json`);
+  fs.writeFileSync(pathFor('claude'), '{ not json');
+
+  const results = installToFiles({ pathFor });
+  const byAgent = Object.fromEntries(results.map((r) => [r.agent, r]));
+  assert.equal(byAgent.claude.ok, false);
+  assert.match(byAgent.claude.error, /not valid JSON/);
+  assert.equal(fs.readFileSync(pathFor('claude'), 'utf8'), '{ not json'); // untouched
+  assert.equal(byAgent.codex.ok, true); // the healthy agent still installs
 });

@@ -3,10 +3,12 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
+const fsPromises = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const {
   parseTranscript,
+  lastAssistantText,
   contextLimitFor,
   contextOf,
   rollingWindow,
@@ -35,6 +37,21 @@ const usage = (input, output, cacheRead = 0, cacheCreate = 0) => ({
   cache_read_input_tokens: cacheRead,
   cache_creation_input_tokens: cacheCreate,
 });
+
+const assistantText = (content, extra = {}) =>
+  JSON.stringify({
+    type: 'assistant',
+    ...extra,
+    message: { content },
+  });
+
+const transcriptFile = (t, contents) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clippy-transcript-tail-'));
+  const file = path.join(dir, 'session.jsonl');
+  fs.writeFileSync(file, contents);
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  return file;
+};
 
 test('a transcript adds up to session totals and a live context size', () => {
   const text = [
@@ -119,6 +136,82 @@ test('the long-context models get the bigger budget', () => {
   assert.equal(contextLimitFor('claude-fable-5'), 1_000_000);
   assert.equal(contextLimitFor('claude-sonnet-4-5'), 200_000);
   assert.equal(contextLimitFor(''), 200_000);
+});
+
+/* ---------- Stop review transcript tail ---------- */
+
+test('the latest prose-bearing main assistant turn wins', async (t) => {
+  const file = transcriptFile(
+    t,
+    [
+      assistantText([{ type: 'text', text: 'older recap' }]),
+      assistantText([
+        { type: 'text', text: '  latest recap  ' },
+        { type: 'tool_use', name: 'Read' },
+        { type: 'text', text: 'with detail' },
+      ]),
+      assistantText([{ type: 'text', text: 'sidechain words' }], { isSidechain: true }),
+      assistantText([{ type: 'tool_use', name: 'Bash' }]),
+    ].join('\n')
+  );
+
+  assert.equal(await lastAssistantText(file), 'latest recap  \nwith detail');
+});
+
+test('a large transcript prefix is not read when the recap is in the tail', async (t) => {
+  const oldLine = `${JSON.stringify({ type: 'user', message: { content: 'old history' } })}\n`;
+  const file = transcriptFile(
+    t,
+    `${oldLine.repeat(80_000)}${assistantText([{ type: 'text', text: 'tail recap' }])}\n`
+  );
+  const fileSize = fs.statSync(file).size;
+  const originalOpen = fsPromises.open;
+  let bytesRead = 0;
+
+  fsPromises.open = async (...args) => {
+    const handle = await originalOpen(...args);
+    const originalRead = handle.read.bind(handle);
+    handle.read = async (...readArgs) => {
+      const result = await originalRead(...readArgs);
+      bytesRead += result.bytesRead;
+      return result;
+    };
+    return handle;
+  };
+  try {
+    assert.equal(await lastAssistantText(file), 'tail recap');
+  } finally {
+    fsPromises.open = originalOpen;
+  }
+
+  assert.ok(fileSize > 3_000_000);
+  assert.ok(bytesRead < fileSize / 20, `read ${bytesRead} of ${fileSize} bytes`);
+});
+
+test('an assistant record can cross tail block boundaries and still clip identically', async (t) => {
+  const prose = `abcdefghij   ${'x'.repeat(80_000)}`;
+  const file = transcriptFile(t, assistantText([{ type: 'text', text: prose }]));
+
+  // Clipping happens after the whole record is decoded, and trims whitespace
+  // introduced at the cut just as the original forward scan did.
+  assert.equal(await lastAssistantText(file, { maxChars: 13 }), 'abcdefghij…');
+});
+
+test('a malformed partial final line is skipped even when it spans blocks', async (t) => {
+  const valid = assistantText([{ type: 'text', text: 'complete recap' }]);
+  const partial = `{"type":"assistant","message":{"content":[{"type":"text","text":"${'z'.repeat(
+    80_000
+  )}`;
+  const file = transcriptFile(t, `${valid}\n${partial}`);
+
+  assert.equal(await lastAssistantText(file), 'complete recap');
+});
+
+test('an absent or prose-free transcript has no Stop recap', async (t) => {
+  const file = transcriptFile(t, assistantText([{ type: 'tool_use', name: 'Read' }]));
+  assert.equal(await lastAssistantText(file), '');
+  assert.equal(await lastAssistantText(path.join(path.dirname(file), 'missing.jsonl')), '');
+  assert.equal(await lastAssistantText(''), '');
 });
 
 /* ---------- The windows /usage reports on ---------- */
