@@ -1,8 +1,8 @@
-# 📎 Clippy for Claude Code
+# 📎 Clippy for Claude Code + Codex
 
 By [AI Socratic](https://aisocratic.org).
 
-**One little Clippy per Claude Code session**, living on your MacBook, each one
+**One little Clippy per Claude Code or Codex session**, living on your MacBook, each one
 knowing what its session is doing right now — and letting you **answer it right
 there**: approve or deny permission requests, approve or revise a plan, pick an
 answer to Claude's question, and review the work when it finishes. No hunting
@@ -14,9 +14,10 @@ through terminal tabs.
 |---|---|---|
 | ![approval](shots/7-approval-card.png) | ![plan](shots/10-plan-card.png) | ![question](shots/11-question-card.png) |
 
-Each buddy wears a **name plate** for its session and its own colour, so five
-parallel agents are five distinguishable characters rather than one confused
-paperclip. A live **activity line** under each shows what that session
+Each buddy wears a **name plate** with its session name plus the harness and model
+running it (`Codex · gpt-5.5`, for example), and its own colour, so five parallel
+agents are five distinguishable characters rather than one confused paperclip. A live
+**activity line** under each shows what that session
 is doing — `⚙ my-app — Running: npm test`, `✏ Editing server.js`,
 `✓ done — your turn`, `⚠ Bash failed`.
 
@@ -24,7 +25,7 @@ is doing — `⚙ my-app — Running: npm test`, `✏ Editing server.js`,
 `npx electron scripts/demo-screenshots.js`, or under `xvfb-run` on Linux. The
 dark backdrop stands in for your desktop: the real window is transparent.)*
 
-You kick off a long Claude Code task, switch to Slack, and twenty minutes later
+You kick off a long coding-agent task, switch to Slack, and twenty minutes later
 discover it's been sitting at a permission prompt the whole time. Clippy fixes
 that: floating, draggable paperclips (always on top, on every Space) that know
 the live state of every session — and they don't give up, re-nudging every 90
@@ -61,7 +62,7 @@ swappable from the menu.
 ## How it works
 
 ```
-Claude Code session(s)
+Claude Code / Codex session(s)
    │  hooks: PermissionRequest / Stop / Pre+PostToolUse / Notification / Session*
    ▼  curl POST → http://127.0.0.1:43117/hook/<event>   (response = hook decision)
 Clippy app (Electron)
@@ -73,10 +74,10 @@ Clippy app (Electron)
    └─ menu bar item 📎 with a count of sessions waiting on you
 ```
 
-Claude Code's [hooks](https://code.claude.com/docs/en/hooks) fire shell
+Claude Code and Codex lifecycle hooks fire shell
 commands on lifecycle events, and a hook's stdout JSON can *answer* the event.
-The installer registers nine tiny `curl` hooks in `~/.claude/settings.json`
-that POST each event's JSON to the app on localhost. Two of them are
+The installer registers tiny `curl` hooks in `~/.claude/settings.json` and
+`~/.codex/hooks.json` that POST each event's JSON to the app on localhost. Interactive hooks are
 interactive — their HTTP response is the hook's decision:
 
 | Hook event | Clippy reaction |
@@ -120,17 +121,37 @@ Safety properties of the interactive hooks:
 - Both behaviors can be toggled from **📎 menu bar → Quick settings**
   ("Permission requests" / "Review when Claude finishes"), and the toggles persist.
 
+### Codex support
+
+Codex uses its native [lifecycle hooks](https://learn.chatgpt.com/docs/hooks) and reports into the
+same local server. Clippy tracks Codex sessions, tool activity, permission requests, completed
+turns, terminal windows, review feedback, and token/context totals from local rollout transcripts.
+The permission and `Stop` decision formats are compatible with the Claude path, so Allow, Deny,
+Looks good, and Send feedback work from the same cards.
+
+There are three deliberate differences in the current Codex integration:
+
+- Codex has no `Notification` or `PostToolUseFailure` hook. Clippy detects non-zero shell exits
+  from `PostToolUse`, while idle reminders rely on the turn/question/permission hooks it does have.
+- A Codex `request_user_input` call is surfaced as a read-only question card that takes you to the
+  native picker. Claude's `AskUserQuestion` hook can still be answered directly inside Clippy.
+- Drive mode and Claude plan/allowance calibration remain Claude-specific. Codex context and token
+  totals are shown from its rollout files without pretending they are account-limit percentages.
+
 ## Quick start
 
 ```bash
 npm install            # pulls Electron
-npm run hooks:install  # registers hooks in ~/.claude/settings.json
+npm run hooks:install  # registers Claude + Codex hooks in both user config files
 npm start              # Clippy appears bottom-right; 📎 appears in the menu bar
 ```
 
-Restart any already-running Claude Code sessions so they pick up the hooks,
-then ask Claude to do something that needs permission — Clippy will let you
-know.
+Restart any already-running agent sessions so they pick up the hooks. Codex requires one extra
+trust step: open `/hooks`, review the new Clippy definitions, and trust them. Then ask either agent
+to do something that needs permission — Clippy will let you know.
+
+Use `npm run hooks:install -- --agent claude` or `--agent codex` to install only one integration.
+The matching options also work with `hooks:status` and `hooks:uninstall`.
 
 ## Installing the app
 
@@ -318,7 +339,8 @@ Every Claude Code session that reports in gets **its own little buddy**, so
 parallel agents never fight over one window:
 
 - a **name plate** above each Clippy says which session it's watching (the
-  project directory), with a dot that pulses while that session is working
+  project directory) and the harness + model running it, with a dot that
+  pulses while that session is working
 - each buddy has its own **colour**, derived from the project name, so the same
   project looks the same every run and two agents are rarely twins
 - buddies tile from the bottom-right corner leftwards, wrapping onto a row

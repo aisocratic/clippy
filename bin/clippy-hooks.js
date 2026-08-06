@@ -2,21 +2,22 @@
 'use strict';
 
 /**
- * Installs/removes the Claude Code hooks that report session activity to the
- * Clippy app. Edits ~/.claude/settings.json (user-level, applies to all
- * projects). Safe to re-run; only touches entries tagged with our marker.
+ * Installs/removes the Claude Code and Codex hooks that report session activity
+ * to the Clippy app. Edits the user-level JSON hook files for both agents. Safe
+ * to re-run; only touches entries tagged with our marker.
  *
  * Usage:
- *   node bin/clippy-hooks.js install   [--port N] [--settings PATH]
- *   node bin/clippy-hooks.js uninstall [--settings PATH]
- *   node bin/clippy-hooks.js status    [--settings PATH]
+ *   node bin/clippy-hooks.js install   [--port N] [--agent claude|codex|both]
+ *   node bin/clippy-hooks.js uninstall [--agent claude|codex|both]
+ *   node bin/clippy-hooks.js status    [--agent claude|codex|both]
  */
 
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const MARKER = '#claude-clippy';
+const MARKER = '#clippy';
+const LEGACY_MARKER = '#claude-clippy';
 const DEFAULT_PORT = 43117;
 
 // How long an interactive ("decide") hook may wait for the user to answer in
@@ -60,6 +61,25 @@ const SPECS = [
   { event: 'SessionEnd' },
 ];
 
+// Codex implements the same core lifecycle hook protocol, but currently has
+// no Notification or PostToolUseFailure events and no AskUserQuestion tool.
+// Its PostToolUse event also fires for non-zero shell exits, which the session
+// tracker detects from tool_response instead. Edit/Write are documented aliases
+// for apply_patch, and Agent is the matcher alias for spawn_agent.
+const CODEX_MEANINGFUL_TOOLS =
+  'Bash|apply_patch|Edit|Write|update_plan|Agent|request_user_input|image_gen__.*|mcp__.*';
+
+const CODEX_SPECS = [
+  { event: 'PermissionRequest', mode: 'decide' },
+  { event: 'Stop', mode: 'decide' },
+  { event: 'PreToolUse', matcher: CODEX_MEANINGFUL_TOOLS },
+  { event: 'PostToolUse', matcher: CODEX_MEANINGFUL_TOOLS },
+  { event: 'UserPromptSubmit' },
+  { event: 'SessionStart' },
+  // Codex caps this advisory hook at three seconds.
+  { event: 'SessionEnd', timeout: 3 },
+];
+
 // Which terminal window a session lives in. The hook shell's parent is the
 // `claude` process, so its tty pins the exact tab in Terminal.app/iTerm2, and
 // its pid lets the app walk up to the owning .app for every other terminal.
@@ -69,9 +89,10 @@ const TERM_HEADERS =
   `-H "X-Clippy-Pid: $PPID" ` +
   `-H "X-Clippy-Tty: $(ps -o tty= -p $PPID 2>/dev/null | tr -d ' ')" `;
 
-function hookCommand(spec, port) {
+function hookCommand(spec, port, source = 'claude') {
   const kind = spec.event === 'Notification' && spec.matcher ? `?kind=${spec.matcher}` : '';
-  const url = `http://127.0.0.1:${port}/hook/${spec.event}${kind}`;
+  const separator = kind ? '&' : '?';
+  const url = `http://127.0.0.1:${port}/hook/${spec.event}${kind}${separator}source=${source}`;
   if (spec.mode === 'decide') {
     // Interactive: stdout (the app's JSON response) is the hook decision.
     // --connect-timeout 1: if the Clippy app isn't running, fail in <1s with
@@ -91,7 +112,9 @@ function hookCommand(spec, port) {
 }
 
 function isOurs(hook) {
-  return hook && hook.type === 'command' && String(hook.command).includes(MARKER);
+  const command = String(hook?.command || '');
+  return hook && hook.type === 'command' &&
+    (command.includes(MARKER) || command.includes(LEGACY_MARKER));
 }
 
 /** Remove all clippy hooks from a settings object (mutates + returns it). */
@@ -113,10 +136,10 @@ function uninstallHooks(settings) {
 }
 
 /** Add clippy hooks to a settings object (mutates + returns it). */
-function installHooks(settings, port = DEFAULT_PORT) {
+function installHooksFor(settings, port, specs, source) {
   uninstallHooks(settings); // idempotent: replace any previous install
   settings.hooks = settings.hooks || {};
-  for (const spec of SPECS) {
+  for (const spec of specs) {
     const groups = (settings.hooks[spec.event] = settings.hooks[spec.event] || []);
     let group = groups.find((g) => (g.matcher || '') === (spec.matcher || ''));
     if (!group) {
@@ -126,11 +149,21 @@ function installHooks(settings, port = DEFAULT_PORT) {
     group.hooks = group.hooks || [];
     group.hooks.push({
       type: 'command',
-      command: hookCommand(spec, port),
-      timeout: spec.mode === 'decide' ? DECIDE_HOOK_TIMEOUT_S : 5,
+      command: hookCommand(spec, port, source),
+      timeout: spec.timeout || (spec.mode === 'decide' ? DECIDE_HOOK_TIMEOUT_S : 5),
     });
   }
   return settings;
+}
+
+/** Add Claude Code hooks to ~/.claude/settings.json. */
+function installHooks(settings, port = DEFAULT_PORT) {
+  return installHooksFor(settings, port, SPECS, 'claude');
+}
+
+/** Add Codex hooks to ~/.codex/hooks.json. */
+function installCodexHooks(settings, port = DEFAULT_PORT) {
+  return installHooksFor(settings, port, CODEX_SPECS, 'codex');
 }
 
 function listInstalled(settings) {
@@ -153,7 +186,7 @@ function listInstalled(settings) {
  *
  * @returns {{installed: boolean, missing: string[], wrongPort: boolean, noTerminalInfo: boolean}}
  */
-function checkDrift(settings, port = DEFAULT_PORT) {
+function checkDriftFor(settings, port, specs) {
   const installed = [];
   for (const [event, groups] of Object.entries(settings.hooks || {})) {
     for (const group of groups || []) {
@@ -168,7 +201,7 @@ function checkDrift(settings, port = DEFAULT_PORT) {
     return { installed: false, missing: [], wrongPort: false, noTerminalInfo: false };
   }
 
-  const missing = SPECS.filter(
+  const missing = specs.filter(
     (spec) => !installed.some((h) => h.event === spec.event && h.matcher === (spec.matcher || ''))
   ).map((spec) => `${spec.event}${spec.matcher ? ` (${spec.matcher})` : ''}`);
 
@@ -182,76 +215,110 @@ function checkDrift(settings, port = DEFAULT_PORT) {
   };
 }
 
+function checkDrift(settings, port = DEFAULT_PORT) {
+  return checkDriftFor(settings, port, SPECS);
+}
+
+function checkCodexDrift(settings, port = DEFAULT_PORT) {
+  return checkDriftFor(settings, port, CODEX_SPECS);
+}
+
 /* ---------------- CLI ---------------- */
 
 function parseArgs(argv) {
-  const args = { cmd: argv[0], port: DEFAULT_PORT, settings: null };
+  const args = { cmd: argv[0], port: DEFAULT_PORT, settings: null, agent: null };
   for (let i = 1; i < argv.length; i++) {
     if (argv[i] === '--port') args.port = Number(argv[++i]);
     else if (argv[i] === '--settings') args.settings = argv[++i];
+    else if (argv[i] === '--agent') args.agent = argv[++i];
   }
   if (!Number.isInteger(args.port) || args.port < 1 || args.port > 65535) {
     throw new Error(`invalid --port`);
   }
+  if (args.agent && !['claude', 'codex', 'both'].includes(args.agent)) {
+    throw new Error(`invalid --agent`);
+  }
   return args;
+}
+
+function readSettings(settingsPath) {
+  if (!fs.existsSync(settingsPath)) return {};
+  const raw = fs.readFileSync(settingsPath, 'utf8');
+  try {
+    return raw.trim() ? JSON.parse(raw) : {};
+  } catch (err) {
+    throw new Error(`${settingsPath} is not valid JSON; fix it first (${err.message})`);
+  }
+}
+
+function writeSettings(settingsPath, settings) {
+  fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
+  fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n');
 }
 
 function main() {
   const args = parseArgs(process.argv.slice(2));
-  const settingsPath =
-    args.settings || path.join(os.homedir(), '.claude', 'settings.json');
+  // --settings remains a single-file escape hatch for tests and custom Claude
+  // homes. With normal paths, one command manages both supported agents.
+  const selected = args.settings
+    ? [args.agent === 'codex' ? 'codex' : 'claude']
+    : args.agent === 'claude' || args.agent === 'codex'
+    ? [args.agent]
+    : ['claude', 'codex'];
+  const targets = selected.map((agent) => ({
+    agent,
+    settingsPath: args.settings || path.join(os.homedir(), `.${agent}`, agent === 'claude' ? 'settings.json' : 'hooks.json'),
+    install: agent === 'codex' ? installCodexHooks : installHooks,
+    drift: agent === 'codex' ? checkCodexDrift : checkDrift,
+  }));
 
-  let settings = {};
-  if (fs.existsSync(settingsPath)) {
-    const raw = fs.readFileSync(settingsPath, 'utf8');
+  if (!['install', 'uninstall', 'status'].includes(args.cmd)) {
+    console.log('usage: clippy-hooks.js <install|uninstall|status> [--port N] [--agent claude|codex|both] [--settings PATH]');
+    process.exit(args.cmd ? 1 : 0);
+  }
+
+  for (const target of targets) {
+    let settings;
     try {
-      settings = raw.trim() ? JSON.parse(raw) : {};
+      settings = readSettings(target.settingsPath);
     } catch (err) {
-      console.error(`error: ${settingsPath} is not valid JSON; fix it first (${err.message})`);
-      process.exit(1);
+      console.error(`error: ${err.message}`);
+      process.exitCode = 1;
+      continue;
+    }
+
+    if (args.cmd === 'install') {
+      target.install(settings, args.port);
+      writeSettings(target.settingsPath, settings);
+      console.log(`Installed Clippy ${target.agent} hooks into ${target.settingsPath}`);
+      continue;
+    }
+    if (args.cmd === 'uninstall') {
+      uninstallHooks(settings);
+      writeSettings(target.settingsPath, settings);
+      console.log(`Removed Clippy hooks from ${target.settingsPath}`);
+      continue;
+    }
+
+    const found = listInstalled(settings);
+    if (found.length === 0) {
+      console.log(`No Clippy ${target.agent} hooks in ${target.settingsPath}.`);
+      continue;
+    }
+    console.log(`Clippy ${target.agent} hooks in ${target.settingsPath}:`);
+    for (const f of found) console.log(`  - ${f.event}${f.matcher ? ` (${f.matcher})` : ''}`);
+    const drift = target.drift(settings, args.port);
+    if (drift.missing.length || drift.wrongPort || drift.noTerminalInfo) {
+      console.log('⚠ These hooks are out of date — re-run `npm run hooks:install`:');
+      for (const m of drift.missing) console.log(`  - missing: ${m}`);
+      if (drift.wrongPort) console.log(`  - some hooks don't point at port ${args.port}`);
+      if (drift.noTerminalInfo) console.log("  - they don't report the session's terminal window");
     }
   }
 
-  const write = () => {
-    fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
-    fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n');
-  };
-
-  switch (args.cmd) {
-    case 'install':
-      installHooks(settings, args.port);
-      write();
-      console.log(`Installed ${SPECS.length} Clippy hooks into ${settingsPath}`);
-      console.log(`They report to http://127.0.0.1:${args.port} — start the app with: npm start`);
-      console.log('Restart any running Claude Code sessions to pick up the hooks.');
-      break;
-    case 'uninstall':
-      uninstallHooks(settings);
-      write();
-      console.log(`Removed Clippy hooks from ${settingsPath}`);
-      break;
-    case 'status': {
-      const found = listInstalled(settings);
-      if (found.length === 0) {
-        console.log(`No Clippy hooks in ${settingsPath}. Run: node bin/clippy-hooks.js install`);
-        break;
-      }
-      console.log(`Clippy hooks in ${settingsPath}:`);
-      for (const f of found) {
-        console.log(`  - ${f.event}${f.matcher ? ` (${f.matcher})` : ''}`);
-      }
-      const drift = checkDrift(settings, args.port);
-      if (drift.missing.length || drift.wrongPort || drift.noTerminalInfo) {
-        console.log('\n⚠ These hooks are out of date — re-run `npm run hooks:install`:');
-        for (const m of drift.missing) console.log(`  - missing: ${m}`);
-        if (drift.wrongPort) console.log(`  - some hooks don't point at port ${args.port}`);
-        if (drift.noTerminalInfo) console.log("  - they don't report the session's terminal window");
-      }
-      break;
-    }
-    default:
-      console.log('usage: clippy-hooks.js <install|uninstall|status> [--port N] [--settings PATH]');
-      process.exit(args.cmd ? 1 : 0);
+  if (args.cmd === 'install') {
+    console.log(`Hooks report to http://127.0.0.1:${args.port} — start the app with: npm start`);
+    console.log('Restart running agent sessions; in Codex, open /hooks and trust the new hooks.');
   }
 }
 
@@ -259,13 +326,17 @@ if (require.main === module) main();
 
 module.exports = {
   installHooks,
+  installCodexHooks,
   uninstallHooks,
   listInstalled,
   checkDrift,
+  checkCodexDrift,
   hookCommand,
   SPECS,
+  CODEX_SPECS,
   MARKER,
   MEANINGFUL_TOOLS,
+  CODEX_MEANINGFUL_TOOLS,
   QUESTION_TOOL,
   DEFAULT_PORT,
 };

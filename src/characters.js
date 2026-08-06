@@ -49,15 +49,15 @@ const CHARACTERS = [
  * steps are 2x, 3x and 4x the 32x40 sprite.
  */
 // The compact window is the buddy plus headroom for everything hover reveals
-// around him: the name plate above (~38px with its margin) and the small
+// around him: the name plate above (~52px, or one extra wrapped line at S) and the small
 // controls below (~24px) — all rendered invisible until hover, so revealing
 // them never resizes the window. Short-changing this is how the plate got
 // clipped at the top once: the stage bottom-anchors, so missing room comes
 // out of whatever sits highest.
 const SIZES = {
-  small: { buddy: 64, win: [92, 156] },
-  medium: { buddy: 96, win: [124, 196] },
-  large: { buddy: 128, win: [156, 236] },
+  small: { buddy: 64, win: [92, 182] },
+  medium: { buddy: 96, win: [124, 222] },
+  large: { buddy: 128, win: [156, 250] },
 };
 
 /**

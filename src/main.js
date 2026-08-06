@@ -21,7 +21,7 @@ const { createHookServer } = require('./server');
 const { SessionTracker, WORKING, WAITING } = require('./sessions');
 const { DecisionBroker, toHookResponse, describeToolCall } = require('./decisions');
 const { DriveSession } = require('./sdk-session');
-const { checkDrift } = require('../bin/clippy-hooks');
+const { checkDrift, checkCodexDrift } = require('../bin/clippy-hooks');
 const { identityFor } = require('./identity');
 const { SIZES, sizeList, allCharacters, characterFor } = require('./characters');
 const { ACTIONS } = require('./actions');
@@ -269,6 +269,7 @@ function settingsState() {
     sessions: tracker.list().map((s) => ({
       sessionId: s.sessionId,
       name: s.name,
+      agent: s.agent,
       color: identityFor(s.sessionId, s.name).color,
       status: s.status,
       // Who this session's buddy is right now — which is what "Auto" means in
@@ -360,13 +361,14 @@ function nextFreeSlot() {
  * The window for a session, created on first sight. Each one carries its own
  * identity (name + colour) so you can tell your agents apart at a glance.
  */
-function buddyFor(key, name = '') {
+function buddyFor(key, name = '', agent = '') {
   const existing = buddies.get(key);
   if (existing) {
     if (name && name !== existing.name) {
       existing.name = name;
       existing.win.webContents.send('clippy-identity', { name });
     }
+    if (agent && agent !== existing.agent) existing.agent = agent;
     return existing;
   }
 
@@ -401,6 +403,7 @@ function buddyFor(key, name = '') {
       session: key,
       name: identity.name,
       color: identity.color,
+      agent: agent || 'claude',
     },
   });
   // CLIPPY_SANDBOXTOOLS=1 npm start opens an inspector per buddy, detached so it
@@ -435,6 +438,7 @@ function buddyFor(key, name = '') {
     slot,
     name: identity.name,
     sessionId: key,
+    agent: agent || 'claude',
     pinned: false,
     dock: null,
     dragged: false, // moved by hand — placeBuddy grows around that spot instead
@@ -457,7 +461,7 @@ function buddyForSender(sender) {
 /** Send an event to one session's Clippy, creating its window if needed. */
 function sendTo(sessionId, event) {
   if (!sessionId) return null;
-  const buddy = buddyFor(sessionId, event?.name);
+  const buddy = buddyFor(sessionId, event?.name, event?.agent);
   buddy.win.webContents.send('clippy-event', event);
   return buddy;
 }
@@ -1054,9 +1058,10 @@ function maybeNudgePlanCalibration(payload) {
 
 /* ---------------- Token usage (right-click) ---------------- */
 
-const PROJECTS_DIR = path.join(os.homedir(), '.claude', 'projects');
+const CLAUDE_PROJECTS_DIR = path.join(os.homedir(), '.claude', 'projects');
+const CODEX_SESSIONS_DIR = path.join(os.homedir(), '.codex', 'sessions');
 const USAGE_CACHE_MS = 60 * 1000;
-let usageCache = { at: 0, windows: null };
+const usageCache = new Map();
 
 /**
  * What this session (and the machine) has spent. Session context comes straight
@@ -1070,22 +1075,31 @@ let usageCache = { at: 0, windows: null };
  * of inventing a percentage.
  */
 async function collectUsage(key) {
+  const agent = tracker.agentFor(key);
   const session = await sessionUsage(tracker.transcriptFor(key));
   const now = Date.now();
-  if (now - usageCache.at > USAGE_CACHE_MS) {
-    usageCache = { at: now, windows: await usageWindows(PROJECTS_DIR, now) };
+  let cached = usageCache.get(agent);
+  if (!cached || now - cached.at > USAGE_CACHE_MS) {
+    cached = {
+      at: now,
+      windows: await usageWindows(agent === 'codex' ? CODEX_SESSIONS_DIR : CLAUDE_PROJECTS_DIR, now),
+    };
+    usageCache.set(agent, cached);
   }
   const plan = PLANS.find((p) => p.id === settings.plan) || PLANS[0];
   return {
     name: buddies.get(key)?.name || '',
+    agent,
     // The percentages Claude Code itself cached from /usage — the real
     // allowance, shown first whenever it exists.
-    official: await readOfficialUsage(),
+    official: agent === 'claude' ? await readOfficialUsage() : null,
     session,
-    windows: usageCache.windows,
+    windows: cached.windows,
     now,
-    limits: planLimitsFor(settings),
-    plan: { id: plan.id, label: plan.label, estimated: Boolean(plan.estimated) },
+    limits: agent === 'claude' ? planLimitsFor(settings) : null,
+    plan: agent === 'claude'
+      ? { id: plan.id, label: plan.label, estimated: Boolean(plan.estimated) }
+      : { id: 'unknown', label: 'Codex', estimated: false },
   };
 }
 
@@ -1172,7 +1186,7 @@ function globalSettingsMenu() {
       click: (item) => setSetting('answerQuestions', item.checked),
     },
     {
-      label: 'Review when Claude finishes',
+      label: 'Review when an agent finishes',
       type: 'checkbox',
       checked: settings.reviewOnStop,
       click: (item) => setSetting('reviewOnStop', item.checked),
@@ -1202,12 +1216,33 @@ function globalSettingsMenu() {
   ];
 }
 
+/**
+ * The menu bar item wears a real image: the paperclip, rendered from the same
+ * pixel grid the app icon uses, as a macOS *template* (black + alpha) so it
+ * follows light and dark menu bars. The old empty-image-plus-emoji-title tray
+ * could end up invisible — an item with no image is fragile, and a full menu
+ * bar hides what it can't fit with nothing to grab onto.
+ */
+function trayIcon() {
+  try {
+    const { encodePng, renderIconPixels } = require('../scripts/package-app');
+    const size = 36; // rendered @2x for an 18pt menu bar item
+    const black = new Array(16).fill([0, 0, 0]);
+    const png = encodePng(size, size, renderIconPixels(size, undefined, black));
+    const icon = nativeImage.createFromBuffer(png, { scaleFactor: 2 });
+    icon.setTemplateImage(true);
+    return icon;
+  } catch (err) {
+    console.warn('clippy: tray icon render failed, falling back to text:', err.message);
+    return nativeImage.createEmpty();
+  }
+}
+
 function createTray() {
-  // Empty image + emoji title gives us a menu bar presence on macOS
-  // without shipping icon assets.
-  tray = new Tray(nativeImage.createEmpty());
-  tray.setTitle('📎');
-  tray.setToolTip('Clippy for Claude Code — click for settings');
+  const icon = trayIcon();
+  tray = new Tray(icon);
+  if (icon.isEmpty()) tray.setTitle('📎'); // the old fallback, better than nothing
+  tray.setToolTip('Clippy for Claude Code + Codex — click for settings');
   // Click opens the settings window; right-click (or ctrl-click) drops the
   // menu. The menu is *not* attached with setContextMenu, because on macOS that
   // makes the icon swallow left-clicks and we'd never see one.
@@ -1218,7 +1253,8 @@ function createTray() {
 function updateTray() {
   if (!tray) return;
   const { waiting } = tracker.counts();
-  tray.setTitle(waiting > 0 ? `📎 ${waiting}` : '📎');
+  // The count rides beside the icon; quiet means just the clip.
+  tray.setTitle(waiting > 0 ? ` ${waiting}` : '');
 }
 
 function notify(title, body, { silent = true, sessionId } = {}) {
@@ -1421,7 +1457,7 @@ function emitPassive(reaction, { osNotification = true } = {}) {
 
   if (reaction.kind === 'attention' && osNotification) {
     notify(
-      reaction.urgency === 'urgent' ? '📎 Claude needs you!' : '📎 Clippy',
+      reaction.urgency === 'urgent' ? `📎 ${reaction.agentName} needs you!` : '📎 Clippy',
       reaction.message,
       { silent: reaction.urgency !== 'urgent', sessionId: reaction.sessionId }
     );
@@ -1437,6 +1473,7 @@ async function handlePermissionRequest(payload, ctx) {
   if (!settings.approvals) return {};
 
   const reaction = tracker.handle('PermissionRequest', null, payload);
+  const agentName = reaction.agentName;
   updateTray();
 
   const isPlan = payload.tool_name === 'ExitPlanMode';
@@ -1460,7 +1497,7 @@ async function handlePermissionRequest(payload, ctx) {
   });
   showBuddy(reaction.sessionId);
   notify(
-    isPlan ? '📎 Claude has a plan' : '📎 Claude needs your approval',
+    isPlan ? `📎 ${agentName} has a plan` : `📎 ${agentName} needs your approval`,
     `${reaction.name}: ${title}`,
     { silent: false, sessionId: reaction.sessionId }
   );
@@ -1497,6 +1534,7 @@ async function handlePermissionRequest(payload, ctx) {
  */
 async function handleStop(payload, ctx) {
   const reaction = tracker.handle('Stop', null, payload);
+  const agentName = reaction.agentName;
 
   if (!settings.reviewOnStop) {
     emitPassive(reaction);
@@ -1524,15 +1562,15 @@ async function handleStop(payload, ctx) {
     ...reaction,
     kind: 'review',
     message: short
-      ? `Claude finished: “${short}”`
-      : `Claude finished in “${reaction.name}”. Looks good, or should it keep going?`,
+      ? `${agentName} finished: “${short}”`
+      : `${agentName} finished in “${reaction.name}”. Looks good, or should it keep going?`,
     detail: recap !== firstLine ? recap : '',
     counts: tracker.counts(),
     requestId: id,
     expiresAt,
   });
   showBuddy(reaction.sessionId);
-  notify('📎 Claude finished', short || `“${reaction.name}” — review it from Clippy`, {
+  notify(`📎 ${agentName} finished`, short || `“${reaction.name}” — review it from Clippy`, {
     silent: true,
     sessionId: reaction.sessionId,
   });
@@ -1649,11 +1687,11 @@ function surfaceQuestion(reaction, title, detail, { osNotification = true } = {}
     counts: tracker.counts(),
     title,
     detail,
-    message: `Claude is asking in “${reaction.name}” — answer in your terminal.`,
+    message: `${reaction.agentName} is asking in “${reaction.name}” — answer in your terminal.`,
   });
   showBuddy(reaction.sessionId);
   if (osNotification) {
-    notify('📎 Claude is asking you', `${reaction.name}: ${title}`, {
+    notify(`📎 ${reaction.agentName} is asking you`, `${reaction.name}: ${title}`, {
       silent: false,
       sessionId: reaction.sessionId,
     });
@@ -1681,6 +1719,10 @@ function noteTerminal(payload, ctx) {
 }
 
 function handleHookEvent(eventName, kind, payload, ctx) {
+  // The hook command tags its source in the local URL. Keep the upstream hook
+  // payload untouched on the wire, then carry the source through our session
+  // model so one app can label Claude and Codex buddies correctly.
+  payload = { ...(payload || {}), agent: ctx?.source === 'codex' ? 'codex' : 'claude' };
   noteTerminal(payload, ctx);
 
   if (eventName === 'PermissionRequest') return handlePermissionRequest(payload, ctx);
@@ -1690,6 +1732,22 @@ function handleHookEvent(eventName, kind, payload, ctx) {
     return handleQuestion(payload, ctx);
   }
 
+  // Codex's question tool is observable but its result is not answerable by a
+  // PreToolUse rewrite. Surface a read-only card while Codex's own picker stays
+  // authoritative; the hook itself remains fire-and-forget.
+  if (
+    eventName === 'PreToolUse' &&
+    payload.agent === 'codex' &&
+    payload.tool_name === 'request_user_input'
+  ) {
+    const reaction = tracker.handle(eventName, kind, payload);
+    const { title, detail } = describeToolCall(payload.tool_name, payload.tool_input);
+    tracker.setStatus(reaction.sessionId, WAITING);
+    updateTray();
+    surfaceQuestion(reaction, title, detail);
+    return undefined;
+  }
+
   if (eventName === 'UserPromptSubmit' || eventName === 'SessionEnd') {
     // The user moved on in the terminal — pending cards for this session are moot.
     broker.cancelBySession(payload.session_id || 'unknown');
@@ -1697,38 +1755,48 @@ function handleHookEvent(eventName, kind, payload, ctx) {
 
   const reaction = tracker.handle(eventName, kind, payload);
   if (reaction) emitPassive(reaction);
-  if (eventName === 'SessionStart') maybeNudgePlanCalibration(payload);
+  if (eventName === 'SessionStart' && payload.agent === 'claude') maybeNudgePlanCalibration(payload);
   return undefined;
 }
 
 /* ---------------- App lifecycle ---------------- */
 
 /**
- * Hooks are written once into ~/.claude/settings.json, so a Clippy that has
+ * Hooks are written once into each agent's user config, so a Clippy that has
  * learned to handle new events (answerable questions, tool failures) can be
  * running against an older install and silently never hear about them. Say so
  * instead of looking broken.
  */
 function warnOnHookDrift() {
-  try {
-    const file = path.join(os.homedir(), '.claude', 'settings.json');
-    const raw = fs.readFileSync(file, 'utf8');
-    const drift = checkDrift(raw.trim() ? JSON.parse(raw) : {}, PORT);
-    if (!drift.installed) {
-      console.warn('clippy: no hooks installed yet — run `npm run hooks:install`');
-      return;
+  const configs = [
+    { agent: 'Claude', file: path.join(os.homedir(), '.claude', 'settings.json'), check: checkDrift },
+    { agent: 'Codex', file: path.join(os.homedir(), '.codex', 'hooks.json'), check: checkCodexDrift },
+  ];
+  const installed = [];
+  const stale = [];
+  for (const config of configs) {
+    try {
+      if (!fs.existsSync(config.file)) continue;
+      const raw = fs.readFileSync(config.file, 'utf8');
+      const drift = config.check(raw.trim() ? JSON.parse(raw) : {}, PORT);
+      if (!drift.installed) continue;
+      installed.push(config.agent);
+      if (drift.missing.length || drift.wrongPort || drift.noTerminalInfo) {
+        stale.push({ agent: config.agent, ...drift });
+      }
+    } catch (err) {
+      console.warn(`clippy: could not check ${config.agent} hooks:`, err.message);
     }
-    if (drift.missing.length || drift.wrongPort || drift.noTerminalInfo) {
-      hookDrift = drift;
-      console.warn(
-        `clippy: installed hooks are out of date — run \`npm run hooks:install\`` +
-          (drift.missing.length ? `\n  missing: ${drift.missing.join(', ')}` : '') +
-          (drift.wrongPort ? `\n  some hooks don't point at port ${PORT}` : '') +
-          (drift.noTerminalInfo ? `\n  they don't report which terminal window a session is in` : '')
-      );
-    }
-  } catch (err) {
-    console.warn('clippy: could not check installed hooks:', err.message);
+  }
+  if (installed.length === 0) {
+    console.warn('clippy: no hooks installed yet — run `npm run hooks:install`');
+  }
+  if (stale.length) {
+    hookDrift = { agents: stale };
+    console.warn(
+      `clippy: installed hooks are out of date for ${stale.map((d) => d.agent).join(', ')} — ` +
+        'run `npm run hooks:install`'
+    );
   }
 }
 
@@ -1767,6 +1835,18 @@ app.whenReady().then(async () => {
     // the panel is fed canned numbers rather than showing empty bars.
     if (buddy.sessionId.startsWith('sandbox:')) return sandboxUsage(buddy.name);
     return collectUsage(buddy.sessionId);
+  });
+  ipcMain.handle('clippy-session-identity', async (e) => {
+    const buddy = buddyForSender(e.sender);
+    if (!buddy) return null;
+    const session = buddy.sessionId.startsWith('sandbox:')
+      ? sandboxUsage(buddy.name).session
+      : await sessionUsage(tracker.transcriptFor(buddy.sessionId));
+    return {
+      name: buddy.name,
+      agent: buddy.agent,
+      model: session?.model || '',
+    };
   });
   ipcMain.on('clippy-mode', (e, payload) => {
     // The renderer knows whether it has anything on screen, and how tall that
@@ -1893,7 +1973,7 @@ app.whenReady().then(async () => {
   });
   try {
     await server.listenOn();
-    console.log(`clippy: listening for Claude Code hooks on 127.0.0.1:${PORT}`);
+    console.log(`clippy: listening for Claude Code and Codex hooks on 127.0.0.1:${PORT}`);
   } catch (err) {
     console.error(
       `clippy: could not bind 127.0.0.1:${PORT} (${err.code}). ` +

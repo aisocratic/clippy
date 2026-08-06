@@ -24,16 +24,17 @@ const ACTIONS = [
     scenario: 'approval-bash',
     icon: '🛂',
     title: 'Approve or deny a tool call',
+    appliesTo: 'Claude + Codex',
     hook: 'PermissionRequest',
     setting: 'approvals',
-    when: 'Claude is about to do something it needs permission for — and only ' +
+    when: 'The agent is about to do something it needs permission for — and only ' +
       'then. Allowlisted commands never reach Clippy.',
     shows: 'A card with the exact command or edit, a box for a reason, and a countdown.',
     choices: [
-      { label: 'Allow', effect: 'Claude runs it', json: json('PermissionRequest', 'allow') },
+      { label: 'Allow', effect: 'the agent runs it', json: json('PermissionRequest', 'allow') },
       {
         label: 'Deny',
-        effect: 'Claude is blocked and told why',
+        effect: 'the agent is blocked and told why',
         json: json('PermissionRequest', 'deny', 'use rg instead'),
       },
       {
@@ -49,6 +50,7 @@ const ACTIONS = [
     scenario: 'approval-plan',
     icon: '📋',
     title: 'Approve or revise a plan',
+    appliesTo: 'Claude',
     hook: 'PermissionRequest (ExitPlanMode)',
     setting: 'approvals',
     when: 'Claude finishes planning and asks to start work.',
@@ -68,6 +70,7 @@ const ACTIONS = [
     scenario: 'answer-one',
     icon: '❓',
     title: "Answer Claude's question",
+    appliesTo: 'Claude · Codex uses its native picker',
     hook: 'PreToolUse (AskUserQuestion)',
     setting: 'answerQuestions',
     when: 'Claude asks a multiple-choice question.',
@@ -91,15 +94,16 @@ const ACTIONS = [
     scenario: 'review',
     icon: '✅',
     title: 'Review a finished turn',
+    appliesTo: 'Claude + Codex',
     hook: 'Stop',
     setting: 'reviewOnStop',
-    when: 'Claude finishes and is about to stop.',
+    when: 'The agent finishes and is about to stop.',
     shows: 'A short review box before the session goes quiet.',
     choices: [
       { label: 'Looks good', effect: 'Claude stops', json: json('Stop', 'ok') },
       {
         label: 'Send feedback',
-        effect: 'Claude keeps working with your note',
+        effect: 'the agent keeps working with your note',
         json: json('Stop', 'feedback', 'also add a 429 test'),
       },
     ],
@@ -110,6 +114,7 @@ const ACTIONS = [
     scenario: 'activity-failed',
     icon: '😰',
     title: 'Show when things are going wrong',
+    appliesTo: 'Claude + Codex',
     hook: 'PostToolUseFailure',
     when: 'A tool fails, or this session has used more than 30% of its context window.',
     shows: 'The buddy sweats and shivers until it settles — and the activity line turns red.',
@@ -120,7 +125,8 @@ const ACTIONS = [
     pose: 'think',
     scenario: 'activity-stream',
     icon: '⚙',
-    title: 'Show what Claude is doing',
+    title: 'Show what the agent is doing',
+    appliesTo: 'Claude + Codex',
     hook: 'PreToolUse / PostToolUse',
     when: 'Any meaningful tool runs — Bash, Edit, Write, WebFetch, Task, MCP tools. ' +
       'Read, Grep, Glob and TodoWrite are excluded, so they never even fire a hook.',
@@ -133,6 +139,7 @@ const ACTIONS = [
     scenario: 'attention-urgent',
     icon: '🔴',
     title: "Nudge when a session needs you",
+    appliesTo: 'Claude notifications · both agents for held cards',
     hook: 'Notification',
     when: 'A prompt is waiting in the terminal, or Claude has been waiting on your reply.',
     shows: 'A bouncing buddy and a speech bubble, re-nudging every 90 seconds until ' +
@@ -169,6 +176,7 @@ const ACTIONS = [
     scenario: 'story',
     icon: '📊',
     title: 'Report context and spend',
+    appliesTo: 'Claude + Codex',
     when: "You ask for it — click the buddy, then Stats & token usage.",
     shows: 'How much context is left, what this session has spent, and the totals for ' +
       "today and the week, read from Claude Code's own transcripts.",
@@ -180,6 +188,7 @@ const ACTIONS = [
     scenario: 'drive',
     icon: '🕹',
     title: 'Run a session of its own',
+    appliesTo: 'Claude',
     when: 'You start a Clippy-driven session from the menu bar (needs the Agent SDK).',
     shows: 'A transcript panel you can type into — Clippy answers its permission ' +
       'requests and questions through the same cards.',

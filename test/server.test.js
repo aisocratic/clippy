@@ -41,6 +41,17 @@ test('receives hook events posted like the curl hook does', async () => {
   ]);
 });
 
+test('identifies Codex hook sources from the local callback URL', async () => {
+  let source;
+  await withServer(
+    (_event, _kind, _payload, ctx) => { source = ctx.source; },
+    async (base) => {
+      await fetch(`${base}/hook/SessionStart?source=codex`, { method: 'POST', body: '{}' });
+    }
+  );
+  assert.equal(source, 'codex');
+});
+
 test('tolerates empty and malformed bodies', async () => {
   const seen = [];
   await withServer(

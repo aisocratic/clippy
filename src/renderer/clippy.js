@@ -12,6 +12,8 @@ const params = new URLSearchParams(location.search);
 const me = {
   name: params.get('name') || 'session',
   color: params.get('color') || '#9aa3ad',
+  agent: params.get('agent') === 'codex' ? 'codex' : 'claude',
+  model: '',
 };
 
 document.documentElement.style.setProperty('--clip', me.color);
@@ -78,6 +80,7 @@ let walkTimer = null;
 
 const whoEl = document.getElementById('who');
 const whoName = document.getElementById('who-name');
+const whoRuntime = document.getElementById('who-runtime');
 const activityEl = document.getElementById('activity');
 const qcardEl = document.getElementById('qcard');
 const qcardTitle = document.getElementById('qcard-title');
@@ -168,7 +171,38 @@ function syncMode() {
 
 function applyIdentity() {
   whoName.textContent = me.name;
-  whoEl.title = `Claude Code session: ${me.name}`;
+  const harness = me.agent === 'codex' ? 'Codex' : 'Claude Code';
+  const model = shortModel(me.model);
+  whoRuntime.textContent = `${harness} · ${model}`;
+  whoEl.title = `${me.name} — running ${harness} with ${model}`;
+}
+
+// Hook payloads identify the harness, while its transcript is the reliable
+// source for the model. Refresh on activity so switching models during a long
+// session eventually updates the plate, without re-reading the transcript for
+// every noisy tool event.
+let identityRefreshAt = 0;
+let identityRefreshTimer = null;
+async function refreshIdentity({ force = false } = {}) {
+  const now = Date.now();
+  const interval = me.model ? 30_000 : 2_000;
+  if (!force && now - identityRefreshAt < interval) {
+    clearTimeout(identityRefreshTimer);
+    identityRefreshTimer = setTimeout(refreshIdentity, interval - (now - identityRefreshAt));
+    return;
+  }
+  identityRefreshAt = now;
+  let identity;
+  try {
+    identity = await window.clippyAPI.identity();
+  } catch {
+    return; // the window/app may be closing while the IPC request is in flight
+  }
+  if (!identity) return;
+  if (identity.name) me.name = identity.name;
+  if (identity.agent) me.agent = identity.agent;
+  me.model = identity.model || '';
+  applyIdentity();
 }
 
 /**
@@ -579,7 +613,7 @@ function covers(win, now) {
  * except for the week itself, which is that share's denominator and so gets no
  * bar rather than one pinned full of itself.
  */
-function windowBar(row, win, limit, weekTotal, now, estimated) {
+function windowBar(row, win, limit, weekTotal, now, estimated, agent = 'claude') {
   const spent = allTokens(win.totals);
   const sub = covers(win, now);
   // The star is the old panel's: this total is a floor, and the row says why.
@@ -587,9 +621,10 @@ function windowBar(row, win, limit, weekTotal, now, estimated) {
   const capped = win.truncated
     ? ' Some older transcripts were skipped to keep this quick, so the total is a floor.'
     : '';
-  const clock =
-    ' The grey line is where the spend Clippy can see begins, not a reset: run /usage in Claude ' +
-    'Code for the block the server keeps.';
+  const clock = agent === 'codex'
+    ? ' The grey line is where the spend Clippy can see begins, not an account-limit reset.'
+    : ' The grey line is where the spend Clippy can see begins, not a reset: run /usage in Claude ' +
+      'Code for the block the server keeps.';
 
   if (limit > 0) {
     const pct = Math.round((spent / limit) * 100);
@@ -645,6 +680,10 @@ async function showUsage() {
 
   usageName.textContent = data.name || me.name;
   usageModel.textContent = shortModel(session?.model);
+  if (session?.model && session.model !== me.model) {
+    me.model = session.model;
+    applyIdentity();
+  }
   usageStatus.textContent = statusSummary();
 
   if (session && session.turns > 0) {
@@ -699,11 +738,12 @@ async function showUsage() {
       `From /usage, cached ${fetched}` +
       `${age > 6 * 60 * 60 * 1000 ? ' — getting stale: open /usage in any session to refresh' : ''}.`;
   } else {
-    for (const row of WINDOWS) {
+    const rows = data.agent === 'codex' ? WINDOWS.filter((row) => row.key !== 'weekOpus') : WINDOWS;
+    for (const row of rows) {
       const win = windows && windows[row.key];
       if (!win) continue;
       const limit = (limits && limits[row.key]) || 0;
-      usageBars.append(windowBar(row, win, limit, weekTotal, now, plan && plan.estimated));
+      usageBars.append(windowBar(row, win, limit, weekTotal, now, plan && plan.estimated, data.agent));
     }
   }
 
@@ -735,7 +775,9 @@ async function showUsage() {
   // wording below belongs to the measured-spend fallback only.
   if (!(data.official && data.official.limits && data.official.limits.length)) {
     const named = plan && plan.id && plan.id !== 'unknown';
-    usageNote.textContent = !named
+    usageNote.textContent = data.agent === 'codex'
+      ? 'Measured from local Codex rollout transcripts. These are token totals, not your remaining account allowance.'
+      : !named
       ? 'No allowance set — bars are shares of the last 7 days. Set your plan under Usage & limits ' +
         'in Settings (📎 in the menu bar) to measure them against something, and run /usage in ' +
         'Claude Code for the real numbers.'
@@ -956,6 +998,7 @@ setInterval(() => {
 window.clippyAPI.onSettings((s) => {
   settings = s;
   applyCharacter();
+  applyIdentity();
   render();
 });
 
@@ -966,10 +1009,15 @@ window.clippyAPI.onIdentity((id) => {
 
 function handleEvent(evt) {
   if (evt.status) myStatus = evt.status;
+  if (evt.agent && evt.agent !== me.agent) {
+    me.agent = evt.agent;
+    applyIdentity();
+  }
   if (evt.name && evt.name !== me.name) {
     me.name = evt.name;
     applyIdentity();
   }
+  refreshIdentity();
 
   switch (evt.kind) {
     case 'approval':
@@ -1463,3 +1511,4 @@ document.getElementById('menu-hide').addEventListener('click', () => {
 applyIdentity();
 applyCharacter();
 render();
+refreshIdentity({ force: true });

@@ -10,7 +10,7 @@
   <nav id="rail">
     <div id="brand">
       <span id="brand-mark">📎</span>
-      <span id="brand-name">Clippy<small>for Claude Code</small></span>
+      <span id="brand-name">Clippy<small>for Claude + Codex</small></span>
     </div>
     <a class="rail-link on" href="#sessions">Sessions</a>
     <a class="rail-link" href="#buddies">Buddies</a>
@@ -29,7 +29,7 @@
     <section id="sessions" class="panel">
       <header class="panel-head">
         <h1>Sessions</h1>
-        <p>Every Claude Code session that has reported in. Click one to bring its buddy
+        <p>Every Claude Code or Codex session that has reported in. Click one to bring its buddy
            to the front.</p>
       </header>
       <div id="access" class="access hidden"></div>
@@ -39,7 +39,7 @@
     <section id="buddies" class="panel">
       <header class="panel-head">
         <h1>Buddies</h1>
-        <p>One buddy per Claude Code session, in the colour of that session. Every
+        <p>One buddy per coding-agent session, in the colour of that session. Every
            project gets its own face from the cast, so the same repo always looks the
            same tomorrow and parallel agents rarely match.</p>
       </header>
@@ -69,11 +69,12 @@
     <section id="limits" class="panel">
       <header class="panel-head">
         <h1>Usage &amp; limits</h1>
-        <p>Right-click a buddy and it shows the three windows <code>/usage</code> reports on: the
+        <p>Right-click a Claude buddy and it shows the three windows <code>/usage</code> reports on: the
            rolling 5&nbsp;hours, the week, and Opus's own week. Clippy reads what those windows
            <em>spent</em> from Claude Code's transcripts, exactly. What nobody can read is what
            you're <em>allowed</em> — Claude Code never writes it down, <code>/usage</code> asks the
-           API. Tell Clippy your limits and those bars become real progress bars.</p>
+           API. Tell Clippy your limits and those bars become real progress bars. Codex buddies
+           show context and measured token totals from local rollout transcripts, separately.</p>
       </header>
 
       <div class="field-row">
@@ -127,7 +128,7 @@
       <header class="panel-head">
         <h1>What Clippy can do</h1>
         <p>Everything a buddy does with a session, what triggers it, and — where it
-           answers on your behalf — the exact JSON Claude Code receives.</p>
+           answers on your behalf — the exact hook JSON the agent receives.</p>
       </header>
       <div id="action-list" class="actions"></div>
     </section>

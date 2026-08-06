@@ -53,6 +53,39 @@ test('a transcript adds up to session totals and a live context size', () => {
   assert.equal(u.contextLimit, 200_000);
 });
 
+test('Codex rollout token events produce totals and use the reported context window', () => {
+  const text = [
+    JSON.stringify({
+      timestamp: '2026-08-05T10:00:00Z',
+      type: 'turn_context',
+      payload: { model: 'gpt-5.6-codex' },
+    }),
+    JSON.stringify({
+      timestamp: '2026-08-05T10:00:01Z',
+      type: 'event_msg',
+      payload: {
+        type: 'token_count',
+        info: {
+          model_context_window: 128000,
+          last_token_usage: {
+            input_tokens: 1000,
+            cached_input_tokens: 600,
+            output_tokens: 200,
+            reasoning_output_tokens: 50,
+            total_tokens: 1200,
+          },
+        },
+      },
+    }),
+  ].join('\n');
+
+  const parsed = parseTranscript(text);
+  assert.equal(parsed.model, 'gpt-5.6-codex');
+  assert.equal(parsed.context, 1200);
+  assert.equal(parsed.contextLimit, 128000);
+  assert.deepEqual(parsed.totals, { input: 400, output: 200, cacheRead: 600, cacheCreate: 0 });
+});
+
 test('subagent sidechains never masquerade as the main context', () => {
   const text = [
     assistant('2026-08-02T10:00:00Z', usage(1, 10, 150_000)),

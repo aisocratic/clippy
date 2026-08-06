@@ -232,6 +232,15 @@ function describeToolCall(toolName, toolInput = {}) {
         detail: `${toolInput.file_path || '?'} (${n} edits)`,
       };
     }
+    case 'apply_patch': {
+      const patchText = String(toolInput.command || '');
+      const match = patchText.match(/^\*\*\* (?:Add|Update|Delete) File: (.+)$/m);
+      const file = match && match[1].trim();
+      return {
+        title: file ? `Edit ${path.basename(file)}` : 'Apply a patch',
+        detail: file || clip(patchText, 700) || '(patch details unavailable)',
+      };
+    }
     case 'NotebookEdit':
       return { title: 'Edit a notebook', detail: `${toolInput.notebook_path || '?'}` };
     case 'ExitPlanMode':
@@ -239,7 +248,8 @@ function describeToolCall(toolName, toolInput = {}) {
         title: '📋 Review the plan',
         detail: clip(toolInput.plan, 4000) || '(no plan text)',
       };
-    case 'AskUserQuestion': {
+    case 'AskUserQuestion':
+    case 'request_user_input': {
       const qs = Array.isArray(toolInput.questions) ? toolInput.questions : [];
       const first = qs[0] || {};
       const detail = qs
@@ -250,7 +260,7 @@ function describeToolCall(toolName, toolInput = {}) {
           return `${q.question}\n${opts}`;
         })
         .join('\n\n');
-      return { title: first.question ? clip(first.question, 90) : 'Claude is asking a question', detail };
+      return { title: first.question ? clip(first.question, 90) : 'The agent is asking a question', detail };
     }
     default:
       return { title: `Use tool: ${toolName}`, detail: clip(JSON.stringify(toolInput, null, 1), 400) };
@@ -275,6 +285,10 @@ function activityLabel(toolName, toolInput = {}) {
     case 'Edit':
     case 'MultiEdit':
       return `Editing ${base(toolInput.file_path)}`;
+    case 'apply_patch': {
+      const match = String(toolInput.command || '').match(/^\*\*\* (?:Add|Update|Delete) File: (.+)$/m);
+      return match ? `Editing ${base(match[1].trim())}` : 'Applying a patch';
+    }
     case 'NotebookEdit':
       return `Editing ${base(toolInput.notebook_path)}`;
     case 'WebFetch': {
@@ -291,6 +305,7 @@ function activityLabel(toolName, toolInput = {}) {
     case 'ExitPlanMode':
       return 'Presenting a plan';
     case 'AskUserQuestion':
+    case 'request_user_input':
       return 'Asking you a question';
     default:
       return /^mcp__/.test(toolName) ? `Using ${toolName.replace(/^mcp__/, '')}` : `Using ${toolName}`;
