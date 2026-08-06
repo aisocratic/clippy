@@ -39,8 +39,8 @@
           taps you when your agent needs a decision, and lets you <strong>answer right there.</strong>
           No tab hunting. No forgotten prompts.</p>
           <div class="hero-actions">
-            <a class="btn-primary" href="https://github.com/AISocratic/clippy/archive/refs/heads/main.zip" download>Download source <span>.zip ↓</span></a>
-            <a class="btn-secondary" href="#install">Install on macOS →</a>
+            <a class="btn-primary" href="https://github.com/AISocratic/clippy/releases/latest/download/Clippy-for-Claude-Code.dmg">Download for macOS <span>.dmg ↓</span></a>
+            <a class="btn-secondary" href="#install">How to install →</a>
           </div>
           <p class="badge-row">
             <span class="badge">macOS</span>
@@ -81,21 +81,19 @@
         <div class="download-strip">
           <div>
             <span class="download-kicker">DOWNLOAD &amp; INSTALL</span>
-            <strong>Build the native macOS app locally.</strong>
-            <small>The package command creates an app and a drag-to-install DMG.</small>
+            <strong>Download the macOS app.</strong>
+            <small>Open the DMG, drag Clippy into Applications, and run it. It is
+            unsigned, so right-click&nbsp;→&nbsp;Open the first time.</small>
           </div>
-          <a class="download-button" href="https://github.com/AISocratic/clippy/archive/refs/heads/main.zip" download>Download .zip <span>↓</span></a>
+          <a class="download-button" href="https://github.com/AISocratic/clippy/releases/latest/download/Clippy-for-Claude-Code.dmg">Download .dmg <span>↓</span></a>
         </div>
-        <div class="install-head">Or clone with Git <span class="install-note"># macOS · Node 18+ · Claude Code installed</span>
-          <button class="copy" data-copy="git clone https://github.com/AISocratic/clippy && cd clippy && npm install && npm run hooks:install && npm start">copy</button>
-        </div>
-        <pre><code><span class="p">$</span> git clone https://github.com/AISocratic/clippy <span class="p">&amp;&amp;</span> cd clippy
-<span class="p">$</span> npm install            <span class="c"># pulls Electron — the only dependency</span>
-<span class="p">$</span> npm run hooks:install  <span class="c"># registers hooks in ~/.claude/settings.json</span>
-<span class="p">$</span> npm start              <span class="c"># 📎 appears in the menu bar</span></code></pre>
-        <div class="install-alt"><strong>Install the app:</strong> run <code>npm run package</code>,
-        open <em>dist/Clippy-for-Claude-Code.dmg</em>, and drag Clippy into Applications.
-        It is unsigned, so right-click&nbsp;→&nbsp;Open the first time.</div>
+        <div class="install-alt"><strong>Then one click:</strong> on first launch Clippy offers to
+        install its hooks — no terminal needed. It writes only its own tagged entries to
+        <code>~/.claude/settings.json</code>, and the menu-bar 📎 can re-install or update
+        them any time.</div>
+        <div class="install-alt"><strong>Prefer source?</strong> <code>git clone https://github.com/AISocratic/clippy
+        &amp;&amp; cd clippy &amp;&amp; npm install &amp;&amp; npm run hooks:install &amp;&amp; npm start</code> —
+        and <code>npm run package</code> builds this same DMG locally.</div>
       </div>
 
       <div class="shots" aria-label="Real captures of Clippy's cards">
@@ -113,16 +111,6 @@
         </figure>
       </div>
       <p class="shots-note">Real captures of the app driven by simulated hook events. The dark backdrop stands in for your desktop — the real window is transparent.</p>
-    </div>
-  </section>
-
-  <!-- ================= Trust strip ================= -->
-  <section class="trust">
-    <div class="wrap trust-row">
-      <div class="stat"><b>1 / session</b><span>a distinct buddy for every agent</span></div>
-      <div class="stat"><b>9 poses</b><span>from thinking to cheering</span></div>
-      <div class="stat"><b>8 buddies</b><span>in the roster on this page</span></div>
-      <div class="stat"><b>127.0.0.1</b><span>the only address it binds</span></div>
     </div>
   </section>
 
@@ -225,8 +213,8 @@
         <div class="panel card">
           <h3><span class="glyph">✅</span> Review the turn</h3>
           <p>When Claude finishes, a review card leads with what it actually said it did.
-          <em>Looks good</em> lets it stop; type what's missing and
-          <em>Send feedback</em> — Claude keeps working with your note, no terminal
+          <em>Looks good</em> lets it stop; <em>Send feedback</em> opens a note box —
+          type what's missing and Claude keeps working with your note, no terminal
           round-trip.</p>
         </div>
 
@@ -313,7 +301,7 @@ Clippy app (Electron)
   <!-- ================= Safety ================= -->
   <section class="safety" id="safety">
     <div class="wrap">
-      <h2>Built to be un-scary</h2>
+      <h2>Built to be easy</h2>
       <ul class="safety-list">
         <li><strong>Nothing is ever auto-approved.</strong> If you don't answer in time
         (60s for approvals, 30s for reviews), Clippy answers “no decision” and the normal
@@ -388,7 +376,7 @@ Clippy app (Electron)
       </div>
       <h2>Give your agents a face.</h2>
       <p class="cta-sub">macOS · works with your existing Claude Code login · watch mode costs nothing extra</p>
-      <p class="cta-actions"><a class="btn-big" href="https://github.com/AISocratic/clippy/archive/refs/heads/main.zip" download>Download source .zip ↓</a><a class="cta-link" href="#install">Installation guide →</a></p>
+      <p class="cta-actions"><a class="btn-big" href="https://github.com/AISocratic/clippy/releases/latest/download/Clippy-for-Claude-Code.dmg">Download for macOS .dmg ↓</a><a class="cta-link" href="#install">Installation guide →</a></p>
     </div>
   </section>
 
