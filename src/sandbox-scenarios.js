@@ -346,6 +346,8 @@ function sandboxUsage(name = NAME) {
   return {
     name,
     now,
+    // The status summary's recap line — what "Claude" last said in this story.
+    recap: 'Wired up the settings pane; running the test suite next.',
     session: {
       model: 'claude-opus-5',
       turns: 24,

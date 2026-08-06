@@ -914,13 +914,34 @@ body:not(.compact) #statusline {
   text-overflow: ellipsis;
 }
 
-/* What the agent is doing right now — the first thing you came to find out,
+/* The panel opens collapsed: a status summary — state, recap, model, context.
+   Everything heavier (the allowance bars, the plan note, the composer) waits
+   behind the Expand button, which swaps in for Send while it's away. */
+#usage.collapsed #usage-detail,
+#usage.collapsed #btn-usage-send {
+  display: none;
+}
+
+#usage:not(.collapsed) #btn-usage-expand {
+  display: none;
+}
+
+/* The session's state, in plain words — the first thing you came to find out,
    so it sits above the numbers and reads as a sentence, not a stat. */
 #usage-status {
   margin-bottom: 7px;
   font-size: 11px;
   line-height: 1.35;
   color: #dbe1e8;
+}
+
+/* What the agent is doing right now: the live activity line while it works,
+   the last thing it said once it's done. */
+#usage-recap {
+  margin: -3px 0 7px;
+  font-size: 10.5px;
+  line-height: 1.35;
+  color: var(--muted);
 }
 
 #usage-bar {

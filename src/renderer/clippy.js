@@ -52,11 +52,13 @@ const usageEl = document.getElementById('usage');
 const usageName = document.getElementById('usage-name');
 const usageModel = document.getElementById('usage-model');
 const usageStatus = document.getElementById('usage-status');
+const usageRecap = document.getElementById('usage-recap');
 const usageBarFill = document.getElementById('usage-bar-fill');
 const usageContext = document.getElementById('usage-context');
 const usageBars = document.getElementById('usage-bars');
 const usageNote = document.getElementById('usage-note');
 const usageInput = document.getElementById('usage-input');
+const btnUsageExpand = document.getElementById('btn-usage-expand');
 
 const menuEl = document.getElementById('menu');
 const menuName = document.getElementById('menu-name');
@@ -381,9 +383,9 @@ function render() {
   // while the menu is on screen.
   if (menuOpen()) syncMenuItems();
   // The combined panel is meant to be left open while the agent works, so its
-  // status line follows the session rather than freezing at whatever it said
+  // status lines follow the session rather than freezing at whatever they said
   // when the panel opened.
-  if (!usageEl.classList.contains('hidden')) usageStatus.textContent = statusSummary();
+  if (!usageEl.classList.contains('hidden')) syncUsageStatus();
 
   refreshPose();
   syncMode();
@@ -436,10 +438,25 @@ function clearActivity() {
   activityEl.classList.remove('failed');
 }
 
-/** What this agent is up to, in one line: its state, and the tool it's on. */
-function statusSummary() {
-  const state = STATUS_TEXT[myStatus] || myStatus;
-  return latestActivity ? `${state} · ${latestActivity}` : state;
+// What Claude said as its last turn ended, from the usage payload — the
+// summary card's "doing right now" line falls back to it between turns.
+let latestRecap = '';
+
+/**
+ * The summary card's two lines, kept live while the panel is open: the state
+ * in plain words (running / paused / waiting on you), then what the agent is
+ * doing right now. The words are ClippySummary's (summary.js), so the tests
+ * can hold them still.
+ */
+function syncUsageStatus() {
+  usageStatus.textContent = ClippySummary.summaryState(myStatus);
+  const recap = ClippySummary.summaryRecap({
+    status: myStatus,
+    activity: latestActivity,
+    recap: latestRecap,
+  });
+  usageRecap.textContent = recap;
+  usageRecap.classList.toggle('hidden', !recap);
 }
 
 /* ---------- Read-only question card (AskUserQuestion surfacing) ---------- */
@@ -626,13 +643,25 @@ function windowBar(row, win, limit, weekTotal, now, estimated) {
   });
 }
 
+// Whether the panel is grown into the full view. A fresh open always starts
+// at the collapsed summary; Expand is a choice you make each visit — but a
+// parked panel comes back as you left it.
+let usageExpanded = false;
+
+function applyUsageExpansion() {
+  usageEl.classList.toggle('collapsed', !usageExpanded);
+}
+
 /**
- * The one panel a left click opens: what the agent is doing, what it has spent,
- * and a box to say the next thing. It used to take three separate visits — the
- * status line under the buddy, the token panel, the composer — for what is
- * really one question ("how is this session doing, and what now?").
+ * The one panel a left click opens — collapsed to a status summary first: the
+ * session's state, what the agent is doing right now, the model, and how full
+ * the context is. Expand grows the same window into the full view (the
+ * allowance bars and a box to say the next thing) for whoever wants more.
+ *
+ * `restore: true` is the parking path bringing the panel back as it was;
+ * everything else opens the collapsed summary.
  */
-async function showUsage() {
+async function showUsage({ restore = false } = {}) {
   const data = await window.clippyAPI.usage();
   if (!data) return;
   const { session, windows, limits, plan } = data;
@@ -643,9 +672,13 @@ async function showUsage() {
   qcardEl.classList.add('hidden');
   menuEl.classList.add('hidden');
 
+  if (!restore) usageExpanded = false;
+  applyUsageExpansion();
+
   usageName.textContent = data.name || me.name;
   usageModel.textContent = shortModel(session?.model);
-  usageStatus.textContent = statusSummary();
+  latestRecap = data.recap || '';
+  syncUsageStatus();
 
   if (session && session.turns > 0) {
     const pct = Math.min(100, Math.round((session.context / session.contextLimit) * 100));
@@ -749,15 +782,26 @@ async function showUsage() {
 
   usageEl.classList.remove('hidden');
   syncMode();
-  // The panel is also where you type the next prompt, so the caret starts there.
-  usageInput.focus();
+  // The full view is also where you type the next prompt, so the caret starts
+  // there — but only once it's on screen; the collapsed summary has no box.
+  if (usageExpanded) usageInput.focus();
 }
 
 function hideUsage() {
   parkedPanel = null; // an explicit close is not a parking — nothing comes back
+  usageExpanded = false; // the next open starts at the summary again
   usageEl.classList.add('hidden');
   syncMode();
 }
+
+// Expand: same window, grown — the bars and the composer were rendered on
+// open, so this only has to reveal them and ask main for the taller window.
+btnUsageExpand.addEventListener('click', () => {
+  usageExpanded = true;
+  applyUsageExpansion();
+  syncMode();
+  usageInput.focus();
+});
 
 /* ---------- Drive mode panel (Clippy-driven Agent SDK session) ---------- */
 
@@ -1041,8 +1085,11 @@ function handleEvent(evt) {
       document.body.classList.toggle('compact', Boolean(evt.compact));
       // Clicking a compact buddy opens the panel before main has grown the
       // window, and a display:none textarea can't take the caret — so the
-      // composer claims it here, once the panel is actually on screen.
-      if (!evt.compact && !usageEl.classList.contains('hidden')) usageInput.focus();
+      // composer claims it here, once the panel is actually on screen (and
+      // only in the expanded view, where the composer exists).
+      if (!evt.compact && usageExpanded && !usageEl.classList.contains('hidden')) {
+        usageInput.focus();
+      }
       break;
     }
     case 'pose': {
@@ -1299,9 +1346,10 @@ document.getElementById('btn-usage-send').addEventListener('click', sendPrompt);
 
 /**
  * What a plain click should just do, no menu in the way: a message you haven't
- * seen yet wins (it's why the buddy is bouncing), otherwise the one panel that
- * answers "how is this session doing, and what now?" opens — status, spend and
- * a box to type the next prompt into. Everything else is a right-click away.
+ * seen yet wins (it's why the buddy is bouncing), otherwise the session's
+ * status summary opens — "how is this session doing?", with Expand for the
+ * spend and a box to type the next prompt into. Everything else is a
+ * right-click away.
  */
 const CLICK_ACK_MS = 900;
 function primaryAction() {
@@ -1419,7 +1467,7 @@ function unparkPanels() {
   // Something louder took the stage while we were away — let it keep it.
   if (activeRequestId) return;
   if (!bubbleEl.classList.contains('hidden') || !qcardEl.classList.contains('hidden')) return;
-  if (which === 'usage') showUsage();
+  if (which === 'usage') showUsage({ restore: true }); // as you left it
   else openMenu();
 }
 

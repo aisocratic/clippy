@@ -1082,6 +1082,9 @@ async function collectUsage(key) {
     // allowance, shown first whenever it exists.
     official: await readOfficialUsage(),
     session,
+    // What Claude said as its last turn ended — the status summary's "doing
+    // right now" line falls back to it when no tool activity is fresher.
+    recap: await lastAssistantText(tracker.transcriptFor(key), { maxChars: 200 }),
     windows: usageCache.windows,
     now,
     limits: planLimitsFor(settings),
