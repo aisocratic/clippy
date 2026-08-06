@@ -87,11 +87,10 @@
           </div>
           <a class="download-button" href="https://github.com/AISocratic/clippy/releases/latest/download/Clippy-for-Claude-Code.dmg">Download .dmg <span>↓</span></a>
         </div>
-        <div class="install-head">Then register the hooks — once <span class="install-note"># macOS · Node 18+ · Claude Code installed</span>
-          <button class="copy" data-copy="node &quot;/Applications/Clippy for Claude Code.app/Contents/Resources/app/bin/clippy-hooks.js&quot; install">copy</button>
-        </div>
-        <pre><code><span class="p">$</span> node "/Applications/Clippy for Claude Code.app/Contents/Resources/app/bin/clippy-hooks.js" install
-<span class="c"># registers nine tagged hooks in ~/.claude/settings.json — 📎 appears in the menu bar</span></code></pre>
+        <div class="install-alt"><strong>Then one click:</strong> on first launch Clippy offers to
+        install its hooks — no terminal needed. It writes only its own tagged entries to
+        <code>~/.claude/settings.json</code>, and the menu-bar 📎 can re-install or update
+        them any time.</div>
         <div class="install-alt"><strong>Prefer source?</strong> <code>git clone https://github.com/AISocratic/clippy
         &amp;&amp; cd clippy &amp;&amp; npm install &amp;&amp; npm run hooks:install &amp;&amp; npm start</code> —
         and <code>npm run package</code> builds this same DMG locally.</div>
