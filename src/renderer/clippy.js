@@ -1156,13 +1156,24 @@ window.clippyAPI.onEvent(handleEvent);
 // It's the number you'd want to notice before Claude starts forgetting things.
 const CONTEXT_STRESS = 0.3;
 const CONTEXT_POLL_MS = 60 * 1000;
+let contextCheckInFlight = false;
 
 async function checkContext() {
+  // Hidden buddy windows do not need to reread transcripts just to choose a
+  // pose nobody can see. Visibility changes trigger a fresh check below, so a
+  // buddy still has the right expression as soon as it appears.
+  if (document.hidden || contextCheckInFlight) return;
+  contextCheckInFlight = true;
   let data = null;
   try {
-    data = await window.clippyAPI.usage();
+    // Context pressure only needs this session's latest transcript state. The
+    // full usage call also aggregates a week of every session on the machine
+    // and is reserved for the panel the user explicitly opens.
+    data = await window.clippyAPI.context();
   } catch {
     return; // no transcript yet, or main is busy — try again next time
+  } finally {
+    contextCheckInFlight = false;
   }
   const session = data && data.session;
   const tight = Boolean(
@@ -1174,7 +1185,10 @@ async function checkContext() {
 }
 
 setInterval(checkContext, CONTEXT_POLL_MS);
-checkContext();
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) checkContext();
+});
+if (!document.hidden) checkContext();
 
 /* ---------- Reminder loop: Clippy doesn't give up ---------- */
 
