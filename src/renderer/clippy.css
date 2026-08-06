@@ -214,11 +214,13 @@ button.dim {
 }
 
 #who-name,
+#who-project,
 #who-runtime {
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
+#who-project,
 #who-runtime {
   margin-top: 2px;
   color: var(--muted);
@@ -226,6 +228,11 @@ button.dim {
   font-weight: 600;
   letter-spacing: 0;
   white-space: normal;
+}
+
+#who-project {
+  margin-top: 1px;
+  color: var(--text);
 }
 
 #stage:hover #who,

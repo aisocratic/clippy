@@ -3,9 +3,8 @@
 /**
  * Every session gets its own Clippy, so every Clippy needs its own look —
  * otherwise five buddies on screen are five identical paperclips. The colour is
- * derived from the session's name (falling back to its id), so the same project
- * always gets the same buddy across restarts, and two sessions in different
- * projects rarely collide.
+ * derived from the session id, so two agents in the same project still get
+ * different-looking buddies. The project name remains the readable label.
  *
  * Pure and dependency-free — the renderer gets the result as query params, and
  * `npm run make-buddies` bakes one paperclip GIF per colour.
@@ -36,13 +35,13 @@ function hash(str) {
 
 /**
  * @param {string} key   session id (stable within a run)
- * @param {string} name  project name (stable across runs — preferred)
+ * @param {string} name  project name (the readable label)
  * @returns {{name: string, color: string, dark: string}}
  */
 function identityFor(key, name = '') {
-  const seed = String(name || key || 'clippy');
-  const palette = PALETTE[hash(seed) % PALETTE.length];
-  return { name: seed, color: palette.color, dark: palette.dark };
+  const label = String(name || key || 'clippy');
+  const palette = PALETTE[hash(String(key || label)) % PALETTE.length];
+  return { name: label, color: palette.color, dark: palette.dark };
 }
 
 module.exports = { identityFor, PALETTE, hash };

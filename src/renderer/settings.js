@@ -469,8 +469,8 @@ function renderSessions() {
 
     const show = document.createElement('button');
     show.className = 'session-name';
-    show.textContent = session.name;
-    show.title = 'Bring this buddy to the front';
+    show.textContent = `${labelFor(session.character)} · ${session.name}`;
+    show.title = `Bring ${labelFor(session.character)} to the front`;
     show.addEventListener('click', () => window.clippySettings.showBuddy(session.sessionId));
 
     const status = document.createElement('span');

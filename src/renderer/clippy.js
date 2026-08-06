@@ -80,6 +80,7 @@ let walkTimer = null;
 
 const whoEl = document.getElementById('who');
 const whoName = document.getElementById('who-name');
+const whoProject = document.getElementById('who-project');
 const whoRuntime = document.getElementById('who-runtime');
 const activityEl = document.getElementById('activity');
 const qcardEl = document.getElementById('qcard');
@@ -170,11 +171,14 @@ function syncMode() {
 /* ---------- UI helpers ---------- */
 
 function applyIdentity() {
-  whoName.textContent = me.name;
+  const character = settings.characters.find((candidate) => candidate.id === settings.character);
+  const buddyName = character?.label || 'Buddy';
   const harness = me.agent === 'codex' ? 'Codex' : 'Claude Code';
   const model = shortModel(me.model);
+  whoName.textContent = buddyName;
+  whoProject.textContent = me.name;
   whoRuntime.textContent = `${harness} · ${model}`;
-  whoEl.title = `${me.name} — running ${harness} with ${model}`;
+  whoEl.title = `${buddyName} in ${me.name} — running ${harness} with ${model}`;
 }
 
 // Hook payloads identify the harness, while its transcript is the reliable

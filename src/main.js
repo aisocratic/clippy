@@ -160,8 +160,8 @@ function setSetting(key, value) {
  * the cast and the size steps are defined in exactly one place.
  *
  * A buddy is told which character *it* is, which is the only "selected
- * character" the app has: every project is cast on its own, so the settings
- * window is handed the sessions and their buddies instead.
+ * character" the app has. Concurrent sessions in one project are cast apart,
+ * so the settings window is handed the sessions and their buddies instead.
  */
 function settingsPayload(buddy) {
   return {
@@ -181,8 +181,12 @@ function sendSettings() {
 
 /** Re-cast every buddy — a project was given a buddy of its own. */
 function recast() {
+  const usedByProject = new Map();
   for (const buddy of buddies.values()) {
-    buddy.character = characterFor(settings, buddy.name);
+    const used = usedByProject.get(buddy.name) || [];
+    buddy.character = characterFor(settings, buddy.name, buddy.sessionId, used);
+    used.push(buddy.character);
+    usedByProject.set(buddy.name, used);
   }
 }
 
@@ -274,7 +278,7 @@ function settingsState() {
       status: s.status,
       // Who this session's buddy is right now — which is what "Auto" means in
       // the picker next to it.
-      character: buddies.get(s.sessionId)?.character || characterFor(settings, s.name),
+      character: buddies.get(s.sessionId)?.character || characterFor(settings, s.name, s.sessionId),
     })),
   };
 }
@@ -445,7 +449,14 @@ function buddyFor(key, name = '', agent = '') {
     lastPlaced: { x, y }, // matches the constructor's own placement, above
     // Cast once, when this session first reports in, and only re-cast when you
     // give the project a buddy by hand.
-    character: characterFor(settings, identity.name),
+    character: characterFor(
+      settings,
+      identity.name,
+      key,
+      [...buddies.values()]
+        .filter((other) => other.name === identity.name)
+        .map((other) => other.character)
+    ),
   };
   buddies.set(key, buddy);
   pushSettingsState();

@@ -14,9 +14,10 @@ through terminal tabs.
 |---|---|---|
 | ![approval](shots/7-approval-card.png) | ![plan](shots/10-plan-card.png) | ![question](shots/11-question-card.png) |
 
-Each buddy wears a **name plate** with its session name plus the harness and model
-running it (`Codex · gpt-5.5`, for example), and its own colour, so five parallel
-agents are five distinguishable characters rather than one confused paperclip. A live
+Each buddy wears a **name plate** with its character name, project, and the harness + model
+running it (`Pixel cat` / `my-app` / `Codex · gpt-5.5`, for example), and its own
+colour. Concurrent agents in the same folder are assigned different available buddy
+animations, so five parallel agents are distinguishable characters rather than one confused paperclip. A live
 **activity line** under each shows what that session
 is doing — `⚙ my-app — Running: npm test`, `✏ Editing server.js`,
 `✓ done — your turn`, `⚠ Bash failed`.
@@ -338,9 +339,11 @@ port first wins.
 Every Claude Code session that reports in gets **its own little buddy**, so
 parallel agents never fight over one window:
 
-- a **name plate** above each Clippy says which session it's watching (the
-  project directory) and the harness + model running it, with a dot that
+- a **name plate** above each buddy says its character name, which session it's
+  watching (the project directory), and the harness + model running it, with a dot that
   pulses while that session is working
+- concurrent sessions in the same project use different available character
+  animations (until every installed buddy is already on duty)
 - each buddy has its own **colour**, derived from the project name, so the same
   project looks the same every run and two agents are rarely twins
 - buddies tile from the bottom-right corner leftwards, wrapping onto a row
@@ -439,14 +442,14 @@ and read, and it has five sections:
 
 - **Sessions** — everything reporting in right now, each with the buddy it's
   wearing and a picker to **give that project a buddy of its own**. That choice
-  is kept against the project name, so the same repo looks the same tomorrow,
-  and it outranks the automatic pick.
+  is kept against the project name and becomes the first preference; concurrent
+  sessions use the other available characters instead of becoming twins.
 - **Buddies** — every character with all nine of its animations playing side by
   side (the same layout as the test bench's workbench), and a size picker.
-  **Every project gets its own buddy**, chosen from the cast by the project
-  name: the same repo always gets the same face, and parallel agents rarely
-  match. Nothing to configure — click a character here to hand it to the
-  projects currently on screen, or pick one per project under **Sessions**.
+  **Every live session gets its own available buddy**, chosen from the cast by
+  session id, so parallel agents in the same repo do not match. Nothing to
+  configure — click a character here to make it the first choice for projects
+  currently on screen, or set that preference per project under **Sessions**.
   There's a link to [openpets.dev/gallery](https://openpets.dev/gallery) for
   downloading more.
 - **Usage & limits** — turns the token panel's spend bars into real allowance
