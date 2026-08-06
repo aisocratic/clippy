@@ -14,7 +14,7 @@
                 title="Bring this session's terminal window to the front">go to terminal ↗</button>
       </div>
       <div id="card-title"></div>
-      <pre id="card-detail" class="hidden"></pre>
+      <div id="card-detail" class="markdown hidden"></div>
       <div id="card-options" class="hidden"></div>
       <textarea id="card-input" rows="2" spellcheck="false"></textarea>
       <div id="card-actions">
@@ -45,7 +45,7 @@
     <div id="qcard" class="hidden">
       <div id="qcard-head"><span id="qcard-tag">asking you</span></div>
       <div id="qcard-title"></div>
-      <pre id="qcard-detail" class="hidden"></pre>
+      <div id="qcard-detail" class="markdown hidden"></div>
       <div id="qcard-actions">
         <button id="btn-qgoto" class="good hidden"
                 title="Bring this session's terminal window to the front, where the picker is waiting">go to terminal ↗</button>
@@ -72,7 +72,7 @@
     </div>
 
     <div id="bubble" class="hidden">
-      <div id="bubble-text"></div>
+      <div id="bubble-text" class="markdown"></div>
       <div id="bubble-actions">
         <button id="btn-fix" class="good hidden">Open Settings ↗</button>
         <button id="btn-ok">Got it</button>
@@ -139,6 +139,7 @@
     </div>
   </div>
   <script src="vector-buddies.js"></script>
+  <script src="markdown.js"></script>
   <script src="clippy.js"></script>
 </body>
 </html>
