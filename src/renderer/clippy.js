@@ -1488,6 +1488,8 @@ clippyEl.addEventListener('mousedown', (e) => {
   dragFrom = { x: e.screenX, y: e.screenY, moved: false };
 });
 
+let settleFacing = null; // puts him back to his usual stance after a carry
+
 window.addEventListener('mousemove', (e) => {
   if (!dragFrom) return;
   const dx = e.screenX - dragFrom.x;
@@ -1496,11 +1498,19 @@ window.addEventListener('mousemove', (e) => {
   dragFrom.moved = true;
   dragFrom.x = e.screenX;
   dragFrom.y = e.screenY;
+  // Face the way he's being pulled, like the walk does — a couple of pixels of
+  // sideways intent before flipping, so a shaky vertical carry doesn't flicker.
+  if (Math.abs(dx) >= 2) document.body.classList.toggle('facing-left', dx < 0);
   window.clippyAPI.moveBy(dx, dy);
 });
 
 window.addEventListener('mouseup', () => {
-  if (dragFrom?.moved) suppressClickUntil = Date.now() + 250;
+  if (dragFrom?.moved) {
+    suppressClickUntil = Date.now() + 250;
+    // He keeps looking the way he went for a beat, then settles back.
+    clearTimeout(settleFacing);
+    settleFacing = setTimeout(() => document.body.classList.remove('facing-left'), 500);
+  }
   dragFrom = null;
 });
 
