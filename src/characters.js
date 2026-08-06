@@ -53,15 +53,17 @@ const CHARACTERS = [
  * steps are 2x, 3x and 4x the 32x40 sprite.
  */
 // The compact window is the buddy plus headroom for everything hover reveals
-// around him: the three-line identity plate above (plus one wrapped line at S) and the small
-// controls below (~24px) — all rendered invisible until hover, so revealing
-// them never resizes the window. Short-changing this is how the plate got
-// clipped at the top once: the stage bottom-anchors, so missing room comes
-// out of whatever sits highest.
+// around him: the three-line identity plate above and the small controls below
+// (~24px) — all rendered invisible until hover, so revealing them never
+// resizes the window. Short-changing this is how the plate got clipped at the
+// top once: the stage bottom-anchors, so missing room comes out of whatever
+// sits highest. The width is the plate's, not the buddy's: its lines are the
+// same size at every buddy size, and the longest one ("Claude Code · " plus a
+// model id) needs ~190px to sit on one line instead of wrapping or ellipsizing.
 const SIZES = {
-  small: { buddy: 64, win: [92, 206] },
-  medium: { buddy: 96, win: [124, 234] },
-  large: { buddy: 128, win: [156, 262] },
+  small: { buddy: 64, win: [190, 206] },
+  medium: { buddy: 96, win: [190, 234] },
+  large: { buddy: 128, win: [210, 262] },
 };
 
 /**
