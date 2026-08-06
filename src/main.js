@@ -532,21 +532,29 @@ function hideBuddy(key, { unpin = false } = {}) {
  * `wantHeight`; a plan or a long diff is much taller than a one-line approval,
  * and a fixed window either cut them off or left a lot of empty glass. Main
  * still owns the geometry, so the ask is clamped to something that fits on the
- * display.
+ * display. `wantWidth` is the same deal sideways — only the plan card asks for
+ * it, and 0 means "back to the usual width".
  */
-function placeBuddy(buddy, mode, wantHeight) {
+function placeBuddy(buddy, mode, wantHeight, wantWidth) {
   if (buddy.win.isDestroyed()) return;
   // Mid-stroll the walk owns the window's position; whoever wants it back
   // calls stopWalking first.
   if (buddy.walk) return;
   buddy.mode = mode;
   if (Number.isFinite(wantHeight) && wantHeight > 0) buddy.wantHeight = wantHeight;
+  // Unlike the height, an explicit 0 resets the width: the wide window belongs
+  // to the plan card and goes away with it.
+  if (Number.isFinite(wantWidth)) buddy.wantWidth = wantWidth > 0 ? wantWidth : 0;
   const compact = mode === 'compact';
   const [compactW, compactH] = compactSize();
-  const width = compact ? compactW : WIN_W;
   const workArea = buddy.dock
     ? screen.getDisplayMatching(buddy.dock.bounds).workArea
     : screen.getPrimaryDisplay().workArea;
+  const width = compact
+    ? compactW
+    : Math.round(
+        Math.min(Math.max(WIN_W, buddy.wantWidth || WIN_W), workArea.width - WIN_GAP * 2)
+      );
   const height = compact
     ? compactH
     : Math.round(
@@ -1772,8 +1780,10 @@ app.whenReady().then(async () => {
     // The renderer knows whether it has anything on screen, and how tall that
     // is; main owns where the window goes and how big it may get.
     const buddy = buddyForSender(e.sender);
-    const { mode, height } = typeof payload === 'string' ? { mode: payload } : payload || {};
-    if (buddy && (mode === 'full' || mode === 'compact')) placeBuddy(buddy, mode, Number(height));
+    const { mode, height, width } = typeof payload === 'string' ? { mode: payload } : payload || {};
+    if (buddy && (mode === 'full' || mode === 'compact')) {
+      placeBuddy(buddy, mode, Number(height), Number(width));
+    }
   });
   ipcMain.on('clippy-open-window', (e, opts) => {
     const buddy = buddyForSender(e.sender);
