@@ -34,7 +34,13 @@ if (!response.ok) {
 
 await rm(output, { recursive: true, force: true });
 await mkdir(output, { recursive: true });
-await cp(path.join(root, "dist/client"), output, { recursive: true });
+await Promise.all([
+  cp(path.join(root, "dist/client/assets"), path.join(output, "assets"), { recursive: true }),
+  cp(path.join(root, "dist/client/buddies"), path.join(output, "buddies"), { recursive: true }),
+  cp(path.join(root, "dist/client/product"), path.join(output, "product"), { recursive: true }),
+  cp(path.join(root, "dist/client/og.png"), path.join(output, "og.png")),
+]);
+await rm(path.join(output, "assets/_vinext_fonts"), { recursive: true, force: true });
 await writeFile(path.join(output, "index.html"), await response.text());
 await writeFile(path.join(output, ".nojekyll"), "");
 
