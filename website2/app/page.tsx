@@ -94,11 +94,9 @@ export default function Home() {
           <div className="hero-actions">
             <a
               className="button button-primary"
-              href="https://github.com/AISocratic/clippy"
-              target="_blank"
-              rel="noreferrer"
+              href="https://github.com/AISocratic/clippy/releases/latest/download/Clippy-for-Claude-Code.dmg"
             >
-              Get Clippy free <Arrow />
+              Download for macOS — free <span aria-hidden="true">↓</span>
             </a>
             <a className="text-link" href="#how-it-works">
               See how it works <span aria-hidden="true">↓</span>
@@ -364,16 +362,17 @@ export default function Home() {
             <span className="section-kicker">UP AND RUNNING IN MINUTES</span>
             <h2>Give your agents a buddy.</h2>
             <p>
-              Clippy is open source and built for macOS. Install the hooks,
-              start the app, and your next agent session gets a tiny teammate.
+              Clippy is open source and built for macOS. Download the app, drag
+              it into Applications (right-click → Open the first time — it’s
+              unsigned), click “Install hooks” when it offers, and your next
+              agent session gets a tiny teammate. Prefer source? The terminal
+              path works too.
             </p>
             <a
               className="button button-dark"
-              href="https://github.com/AISocratic/clippy#quick-start"
-              target="_blank"
-              rel="noreferrer"
+              href="https://github.com/AISocratic/clippy/releases/latest/download/Clippy-for-Claude-Code.dmg"
             >
-              Read the quick start <Arrow />
+              Download Clippy for macOS <span aria-hidden="true">↓</span>
             </a>
           </div>
           <div className="install-terminal">
