@@ -157,7 +157,7 @@ section { padding: 88px 0; }
 .fakebtn.bad { border-color: rgba(239,129,122,.5); background: rgba(239,129,122,.12); color: #fac0bc; }
 .fakebtn.dim { background: transparent; color: var(--muted); }
 .stage-party { position: absolute; right: 20px; bottom: -27px; left: 18px; display: flex; align-items: flex-end; justify-content: flex-end; gap: 4px; pointer-events: none; }
-.stage-friend { width: 56px; opacity: .78; }
+.stage-friend { width: 56px; }
 .stage-star { width: 102px; }
 .stage-guests, .cta-guests { display: flex; align-items: flex-end; gap: 4px; }
 .pack-sprite { flex: none; background-repeat: no-repeat; image-rendering: pixelated; filter: drop-shadow(0 6px 9px rgba(0,0,0,.42)); }
