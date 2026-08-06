@@ -4,13 +4,17 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const {
   installHooks,
+  installCodexHooks,
   uninstallHooks,
   listInstalled,
   checkDrift,
+  checkCodexDrift,
   hookCommand,
   SPECS,
+  CODEX_SPECS,
   MARKER,
   MEANINGFUL_TOOLS,
+  CODEX_MEANINGFUL_TOOLS,
   QUESTION_TOOL,
 } = require('../bin/clippy-hooks');
 
@@ -35,6 +39,27 @@ test('install adds all hooks and is idempotent', () => {
   // re-install must not duplicate
   installHooks(settings, 43117);
   assert.equal(listInstalled(settings).length, SPECS.length);
+});
+
+test('Codex install uses its supported hook subset and tags the source', () => {
+  const settings = installCodexHooks({}, 43117);
+  assert.equal(listInstalled(settings).length, CODEX_SPECS.length);
+  assert.equal(settings.hooks.Notification, undefined);
+  assert.equal(settings.hooks.PostToolUseFailure, undefined);
+  assert.equal(groupFor(settings, 'PreToolUse', 'AskUserQuestion'), undefined);
+
+  const activity = groupFor(settings, 'PreToolUse', CODEX_MEANINGFUL_TOOLS);
+  assert.ok(activity);
+  assert.match(activity.hooks[0].command, /\?source=codex/);
+  assert.match(CODEX_MEANINGFUL_TOOLS, /apply_patch/);
+  assert.match(CODEX_MEANINGFUL_TOOLS, /request_user_input/);
+
+  assert.deepEqual(checkCodexDrift(settings, 43117), {
+    installed: true,
+    missing: [],
+    wrongPort: false,
+    noTerminalInfo: false,
+  });
 });
 
 test('uninstall removes only our hooks and preserves user hooks', () => {

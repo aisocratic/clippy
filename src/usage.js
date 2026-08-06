@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Token usage, read from Claude Code's own transcripts.
+ * Token usage, read from Claude Code and Codex's own transcripts.
  *
  * Every hook payload carries `transcript_path`, and each assistant line in that
  * JSONL file records the exact `usage` the API reported. That gives us the two
@@ -81,8 +81,15 @@ function contextOf(usage = {}) {
  * the panel and reading these files twice would show in the right-click.
  */
 function eachUsage(text, visit) {
+  let codexModel = '';
+  let codexTotalSignature = '';
   for (const line of String(text).split('\n')) {
-    if (!line || line.indexOf('"usage"') === -1) continue; // cheap pre-filter
+    if (
+      !line ||
+      (line.indexOf('"usage"') === -1 &&
+        line.indexOf('"turn_context"') === -1 &&
+        line.indexOf('"token_count"') === -1)
+    ) continue; // cheap pre-filter for both transcript formats
     let entry;
     try {
       entry = JSON.parse(line);
@@ -90,12 +97,53 @@ function eachUsage(text, visit) {
       continue; // a half-written last line while Claude is mid-turn
     }
     const message = entry.type === 'assistant' ? entry.message : null;
-    if (!message || !message.usage) continue;
-    visit(message.usage, {
-      at: Date.parse(entry.timestamp || '') || 0,
-      model: message.model || '',
-      sidechain: Boolean(entry.isSidechain),
-    });
+    if (message && message.usage) {
+      visit(message.usage, {
+        at: Date.parse(entry.timestamp || '') || 0,
+        model: message.model || '',
+        sidechain: Boolean(entry.isSidechain),
+      });
+      continue;
+    }
+
+    // Codex rollout JSONL keeps the current model on turn_context and emits a
+    // token_count event after model work. last_token_usage is the increment for
+    // this call; total_token_usage is cumulative and must not be added again.
+    if (entry.type === 'turn_context' && entry.payload?.model) codexModel = entry.payload.model;
+    const info = entry.type === 'event_msg' && entry.payload?.type === 'token_count'
+      ? entry.payload.info
+      : null;
+    const raw = info?.last_token_usage;
+    if (!raw) continue;
+    const cached = raw.cached_input_tokens || 0;
+    const cumulative = info.total_token_usage;
+    const signature = cumulative
+      ? [
+          cumulative.input_tokens,
+          cumulative.cached_input_tokens,
+          cumulative.output_tokens,
+          cumulative.reasoning_output_tokens,
+          cumulative.total_tokens,
+        ].join(':')
+      : '';
+    const count = !signature || signature !== codexTotalSignature;
+    if (signature) codexTotalSignature = signature;
+    visit(
+      {
+        input_tokens: Math.max(0, (raw.input_tokens || 0) - cached),
+        output_tokens: raw.output_tokens || 0,
+        cache_read_input_tokens: cached,
+        cache_creation_input_tokens: 0,
+      },
+      {
+        at: Date.parse(entry.timestamp || '') || 0,
+        model: codexModel,
+        sidechain: false,
+        contextLimit: Number(info.model_context_window) || 0,
+        context: Number(raw.total_tokens) || 0,
+        count,
+      }
+    );
   }
 }
 
@@ -113,23 +161,30 @@ function parseTranscript(text, { sinceMs = 0 } = {}) {
   let biggest = 0;
   let turns = 0;
   let lastAt = 0;
+  let reportedContextLimit = 0;
 
   eachUsage(text, (usage, line) => {
     if (sinceMs && line.at && line.at < sinceMs) return;
 
-    addUsage(totals, usage);
-    turns++;
+    if (line.count !== false) {
+      addUsage(totals, usage);
+      turns++;
+    }
     if (line.model) {
       model = line.model;
-      if (!byModel.has(model)) byModel.set(model, emptyTotals());
-      addUsage(byModel.get(model), usage);
+      if (line.count !== false) {
+        if (!byModel.has(model)) byModel.set(model, emptyTotals());
+        addUsage(byModel.get(model), usage);
+      }
     }
-    biggest = Math.max(biggest, contextOf(usage));
+    reportedContextLimit = Math.max(reportedContextLimit, line.contextLimit || 0);
+    const liveContext = line.context || contextOf(usage);
+    biggest = Math.max(biggest, liveContext);
     // The newest message is the live context; sidechains (subagents) run their
     // own smaller contexts, so they must not shrink the number we report.
     if (line.at >= lastAt && !line.sidechain) {
       lastAt = line.at;
-      context = contextOf(usage);
+      context = liveContext;
     }
   });
 
@@ -137,7 +192,7 @@ function parseTranscript(text, { sinceMs = 0 } = {}) {
   // so a context that has already run past the standard window is the only
   // evidence that this session has the bigger one.
   const contextLimit = Math.max(
-    contextLimitFor(model),
+    reportedContextLimit || contextLimitFor(model),
     biggest > DEFAULT_CONTEXT ? LONG_CONTEXT : 0
   );
   return { model, context, contextLimit, totals, turns, lastAt, byModel: Object.fromEntries(byModel) };
@@ -174,12 +229,19 @@ async function lastAssistantText(transcriptPath, { maxChars = 600 } = {}) {
     let lineParts = [];
 
     const recapFrom = (line) => {
-      if (!line.length || line.indexOf('"assistant"') === -1) return '';
+      if (!line.length) return '';
+      if (line.indexOf('"assistant"') === -1 && line.indexOf('"agent_message"') === -1) return '';
       let entry;
       try {
         entry = JSON.parse(line.toString('utf8'));
       } catch {
         return ''; // including a half-written final line
+      }
+      // Codex records model-facing response items as well as a convenient
+      // agent_message event — the event carries the words.
+      if (entry.type === 'event_msg' && entry.payload?.type === 'agent_message') {
+        const message = entry.payload.message;
+        return typeof message === 'string' ? message.trim() : '';
       }
       if (entry.type !== 'assistant' || entry.isSidechain) return '';
       const content = entry.message && entry.message.content;
@@ -241,24 +303,21 @@ async function lastAssistantText(transcriptPath, { maxChars = 600 } = {}) {
 /** Every `*.jsonl` under `~/.claude/projects`, newest first. */
 async function recentTranscripts(projectsDir, sinceMs) {
   const found = [];
-  let dirs = [];
-  try {
-    dirs = await fs.readdir(projectsDir, { withFileTypes: true });
-  } catch {
-    return found;
-  }
-  for (const dir of dirs) {
-    if (!dir.isDirectory()) continue;
-    const full = path.join(projectsDir, dir.name);
-    let files = [];
+  const walk = async (dir, depth = 0) => {
+    if (depth > 8 || found.length > MAX_FILES * 3) return;
+    let entries = [];
     try {
-      files = await fs.readdir(full);
+      entries = await fs.readdir(dir, { withFileTypes: true });
     } catch {
-      continue;
+      return;
     }
-    for (const name of files) {
-      if (!name.endsWith('.jsonl')) continue;
-      const file = path.join(full, name);
+    for (const entry of entries) {
+      const file = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        await walk(file, depth + 1);
+        continue;
+      }
+      if (!entry.isFile() || !entry.name.endsWith('.jsonl')) continue;
       try {
         const stat = await fs.stat(file);
         if (stat.mtimeMs >= sinceMs) found.push({ file, size: stat.size, mtimeMs: stat.mtimeMs });
@@ -266,7 +325,8 @@ async function recentTranscripts(projectsDir, sinceMs) {
         // vanished between readdir and stat
       }
     }
-  }
+  };
+  await walk(projectsDir);
   return found.sort((a, b) => b.mtimeMs - a.mtimeMs);
 }
 
@@ -323,6 +383,7 @@ function tallyInto(text, windows) {
   let carried = 0; // the last timestamp we could read, in file order
 
   eachUsage(text, (usage, line) => {
+    if (line.count === false) return;
     const at = line.at || carried;
     if (line.at) carried = line.at;
     for (const win of windows) {

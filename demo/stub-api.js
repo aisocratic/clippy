@@ -58,6 +58,11 @@
     openSettings: () => post('open-settings'),
     fix: (what) => post('fix', { what }),
     setMode: (mode, height) => post('mode', { mode, height }),
+    identity: async () => ({
+      name: new URLSearchParams(location.search).get('name') || 'session',
+      agent: new URLSearchParams(location.search).get('agent') === 'codex' ? 'codex' : 'claude',
+      model: usageData?.session?.model || new URLSearchParams(location.search).get('model') || '',
+    }),
     context: async () => ({ session: usageData?.session }),
     // main answers this over IPC invoke; here the panel pushes the data ahead
     // of time and we just hand back whatever it last set.

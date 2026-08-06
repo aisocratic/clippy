@@ -50,25 +50,26 @@ test('every character in the menus has art drawn for it', () => {
   assert.ok(!ids.includes('classic'), 'the duplicate paperclip is gone');
 });
 
-test('every project gets a buddy of its own, and a hand-picked one wins', () => {
+test('parallel sessions get different buddies, and a hand-picked one goes first', () => {
   const cast = allCharacters().map((c) => c.id);
 
-  // A buddy you assigned to that repo outranks the automatic pick.
+  // A buddy you assigned to that repo is the first session's preference.
   const assigned = { characterByProject: { 'billing-api': 'cat' } };
-  assert.equal(characterFor(assigned, 'billing-api'), 'cat');
+  assert.equal(characterFor(assigned, 'billing-api', 'session-a'), 'cat');
+  assert.notEqual(characterFor(assigned, 'billing-api', 'session-b', ['cat']), 'cat');
   // …and only for that repo: everyone else is still cast automatically.
-  assert.ok(cast.includes(characterFor(assigned, 'my-app')));
+  assert.ok(cast.includes(characterFor(assigned, 'my-app', 'session-c')));
 
-  // The automatic pick is stable for a name, and derived from it rather than
-  // the session id, so restarting a session doesn't change who shows up.
-  const first = characterFor({}, 'billing-api');
-  assert.equal(characterFor({}, 'billing-api'), first);
-  assert.equal(characterFor({ characterByProject: {} }, 'billing-api'), first);
+  // The automatic pick is stable for a session. A concurrent session excludes
+  // that animation and must get another while the cast has room.
+  const first = characterFor({}, 'billing-api', 'session-a');
+  assert.equal(characterFor({}, 'billing-api', 'session-a'), first);
+  assert.notEqual(characterFor({}, 'billing-api', 'session-b', [first]), first);
   assert.ok(cast.includes(first));
 
   // A character that has since been deleted (a sprite pack you removed) must
   // not leave a buddy with no art at all.
-  assert.ok(cast.includes(characterFor({ characterByProject: { x: 'gone' } }, 'x')));
+  assert.ok(cast.includes(characterFor({ characterByProject: { x: 'gone' } }, 'x', 'session-x')));
   assert.ok(cast.includes(characterFor({}, '')), 'and a nameless session still works');
 });
 

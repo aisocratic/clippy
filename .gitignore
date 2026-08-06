@@ -26,3 +26,7 @@ sprites/
 # website` rebuilds them, and downloaded packs keep their own licences.
 website/img/
 website/cast-data.js
+
+# Agent-session state (workflow worktrees, per-agent memory) — machine-local
+.claude/worktrees/
+.claude/agent-memory/

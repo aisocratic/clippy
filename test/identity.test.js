@@ -4,11 +4,12 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const { identityFor, PALETTE } = require('../src/identity');
 
-test('a session keeps the same look across runs', () => {
+test('sessions in the same project keep the label but get different looks', () => {
   const a = identityFor('sess-1', 'billing-api');
-  const b = identityFor('sess-999', 'billing-api'); // same project, new session id
-  assert.deepEqual(a, b);
+  const b = identityFor('sess-999', 'billing-api');
   assert.equal(a.name, 'billing-api');
+  assert.equal(b.name, 'billing-api');
+  assert.notEqual(a.color, b.color);
   assert.ok(PALETTE.some((p) => p.color === a.color && p.dark === a.dark));
 });
 

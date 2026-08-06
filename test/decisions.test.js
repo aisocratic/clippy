@@ -180,6 +180,14 @@ test('describeToolCall summarizes common tools', () => {
   assert.match(other.detail, /example\.com/);
 });
 
+test('Codex apply_patch calls name the edited file', () => {
+  const input = { command: '*** Begin Patch\n*** Update File: /repo/src/app.js\n@@\n-old\n+new\n*** End Patch' };
+  const described = describeToolCall('apply_patch', input);
+  assert.equal(described.title, 'Edit app.js');
+  assert.equal(described.detail, '/repo/src/app.js');
+  assert.equal(activityLabel('apply_patch', input), 'Editing app.js');
+});
+
 test('describeToolCall renders an ExitPlanMode plan', () => {
   const plan = describeToolCall('ExitPlanMode', { plan: '# Plan\n- step one\n- step two' });
   assert.match(plan.title, /plan/i);

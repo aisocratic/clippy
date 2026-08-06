@@ -186,7 +186,7 @@ button.dim {
    whenever there's something to read, this has to be readable too. */
 #who {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 5px;
   max-width: 100%;
   margin-bottom: 8px;
@@ -207,6 +207,35 @@ button.dim {
   transition: opacity 0.15s ease;
 }
 
+#who-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  line-height: 1.15;
+}
+
+#who-name,
+#who-project,
+#who-runtime {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#who-project,
+#who-runtime {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0;
+  white-space: normal;
+}
+
+#who-project {
+  margin-top: 1px;
+  color: var(--text);
+}
+
 #stage:hover #who,
 body:not(.compact) #who {
   opacity: 1;
@@ -218,6 +247,7 @@ body:not(.compact) #who {
   border-radius: 50%;
   background: var(--clip);
   flex: none;
+  margin-top: 5px;
 }
 
 #who.busy #who-dot {
