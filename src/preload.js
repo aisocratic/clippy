@@ -29,6 +29,7 @@ contextBridge.exposeInMainWorld('clippyAPI', {
   // Grow to fit a card (as tall as its contents need), or shrink back to a
   // bare paperclip.
   setMode: (mode, height) => ipcRenderer.send('clippy-mode', { mode, height }),
+  context: () => ipcRenderer.invoke('clippy-context'),
   usage: () => ipcRenderer.invoke('clippy-usage'),
   hide: () => ipcRenderer.send('clippy-hide'),
   quit: () => ipcRenderer.send('clippy-quit'),
