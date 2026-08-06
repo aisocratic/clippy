@@ -387,6 +387,10 @@ window.addEventListener('message', async (e) => {
       window.open('/settings/', '_blank', 'noopener');
       break;
 
+    case 'move-by':
+      log('in', 'moveBy', `would nudge the window by ${p.dx},${p.dy} (it stays put here)`);
+      break;
+
     case 'hide':
       log('in', 'hide', 'would hide the window (kept visible here so you can carry on)');
       break;
