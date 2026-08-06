@@ -1299,11 +1299,30 @@ function build() {
   return assets;
 }
 
+/**
+ * The quick-start path is safe only when every built-in output matches what
+ * this version of the generator would write. Custom sprite packs may sit
+ * beside these files, but do not count as proof that the built-ins are fresh.
+ */
+function builtInAssetsAreCurrent(dir, expected = build()) {
+  return Object.entries(expected).every(([name, bytes]) => {
+    try {
+      return fs.readFileSync(path.join(dir, name)).equals(bytes);
+    } catch {
+      return false;
+    }
+  });
+}
+
 function main() {
   const dir = path.join(__dirname, '..', 'src', 'renderer', 'assets');
+  let assets;
   // `npm start` runs this with --if-missing: a fresh clone gets its buddies
   // without anyone having to know they're generated.
-  if (process.argv.includes('--if-missing') && fs.existsSync(path.join(dir, 'themes'))) return;
+  if (process.argv.includes('--if-missing')) {
+    assets = build();
+    if (builtInAssetsAreCurrent(dir, assets)) return;
+  }
 
   if (process.argv.includes('--preview')) {
     const only = process.argv[process.argv.indexOf('--preview') + 1];
@@ -1332,7 +1351,7 @@ function main() {
   for (const stale of fs.existsSync(dir) ? fs.readdirSync(dir) : []) {
     if (stale.endsWith('.gif')) fs.rmSync(path.join(dir, stale)); // pre-themes layout
   }
-  for (const [name, bytes] of Object.entries(build())) {
+  for (const [name, bytes] of Object.entries(assets || build())) {
     const file = path.join(dir, name);
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, bytes);
@@ -1342,4 +1361,17 @@ function main() {
 
 if (require.main === module) main();
 
-module.exports = { drawCat, drawCatWalk, drawClip, drawClod, toAscii, build, THEMES, PALETTE, clipPalette, W, H };
+module.exports = {
+  drawCat,
+  drawCatWalk,
+  drawClip,
+  drawClod,
+  toAscii,
+  build,
+  builtInAssetsAreCurrent,
+  THEMES,
+  PALETTE,
+  clipPalette,
+  W,
+  H,
+};

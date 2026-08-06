@@ -644,7 +644,10 @@ Electron, the tests are `node:test`, and the pixel art is generated.
 ```bash
 npm install     # Electron (dev) — that's the only dependency
 npm test        # node:test: server, sessions, decisions, hooks, art, usage…
+npm run test:watch  # rerun the focused tests as files change
+npm run check   # syntax-check every JS file, then run the full suite
 npm start       # builds any missing buddies, then launches the app
+npm run dev     # the app under a file watcher — restarts when source changes
 npm run sandbox     # every state on one scrolling web page — no Electron
 npm run sandbox:app  # the app + a sandbox control window, no Claude Code
 npm run demo:web    # the single-state bench in a browser, with the show run
@@ -652,7 +655,7 @@ npm run mock-session  # drive a running app through a realistic session
 ```
 
 `src/renderer/assets/` is **generated** and gitignored — `npm run make-buddies`
-redraws every character, and `npm start` does it for you when it's missing.
+redraws every character, and startup repairs any missing or stale built-in art.
 `node scripts/make-buddies.js --preview` prints the frames as ASCII, which is
 the quickest way to iterate on a sprite.
 
