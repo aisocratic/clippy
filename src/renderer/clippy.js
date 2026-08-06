@@ -131,6 +131,12 @@ let docked = false; // perched on that window's top-right corner
 
 let modeSent = null;
 let heightSent = 0;
+let widthSent = 0;
+
+// How wide the window has to be while a plan card is up: the plan panel
+// (--plan-w in clippy.css) plus the same slack the normal window keeps around
+// the normal panel. Every other card leaves the width alone (0 = default).
+const PLAN_WIN_W = 440;
 
 const PANELS = ['card', 'bubble', 'qcard', 'usage', 'drive', 'menu'];
 
@@ -162,10 +168,13 @@ function syncMode() {
   const want = showing ? 'full' : 'compact';
   // Measure after layout has settled, so a card that just appeared is included.
   const height = want === 'full' ? contentHeight() : 0;
-  if (want === modeSent && Math.abs(height - heightSent) < 6) return;
+  // Only the plan card asks for extra width; 0 means "the usual".
+  const width = want === 'full' && document.body.classList.contains('plan') ? PLAN_WIN_W : 0;
+  if (want === modeSent && Math.abs(height - heightSent) < 6 && width === widthSent) return;
   modeSent = want;
   heightSent = height;
-  window.clippyAPI.setMode(want, height);
+  widthSent = width;
+  window.clippyAPI.setMode(want, height, width);
 }
 
 /* ---------- UI helpers ---------- */
@@ -841,6 +850,7 @@ function showNextRequest() {
   if (!next) {
     activeRequestId = null;
     cardEl.classList.add('hidden');
+    document.body.classList.remove('plan'); // the wide window goes with the plan card
     syncMode();
     setExcited(currentUrgent());
     // surface whatever passive nudge was waiting behind the card
@@ -857,6 +867,9 @@ function showNextRequest() {
   const isApproval = next.type === 'approval';
   const isAnswer = next.type === 'answer';
   const isPlan = next.variant === 'plan';
+  // A plan is a page, not a blurb: the card grows (clippy.css) and syncMode
+  // asks main for a window wide and tall enough to read it in.
+  document.body.classList.toggle('plan', isPlan);
   showQueueDepth();
   cardTitle.textContent = next.title;
 
