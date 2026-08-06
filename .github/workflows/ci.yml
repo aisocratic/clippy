@@ -13,7 +13,9 @@ jobs:
     strategy:
       matrix:
         node: [18, 20, 22]
-    runs-on: ubuntu-latest
+    # The root package intentionally declares macOS-only support, so npm will
+    # reject installation before tests on a Linux runner.
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
