@@ -458,8 +458,9 @@ window.clippySettings.ready();
 /* ---------- Updates ---------- */
 
 // The one deliberate network call in the app, made when you press the button
-// and never before. The result speaks plainly: a checkout compares commits,
-// the packaged app can only tell you what the newest commit is.
+// and never before. The result speaks plainly: a checkout compares commits
+// against main (git pull to catch up), the packaged app compares its version
+// against the newest release and links the fresh DMG.
 {
   const version = document.getElementById('update-version');
   const source = document.getElementById('update-source');
@@ -484,6 +485,29 @@ window.clippySettings.ready();
     if (info.error) {
       result.textContent = `couldn't reach GitHub: ${info.error}`;
       result.className = 'update-result bad';
+      return;
+    }
+    if (info.release) {
+      // The packaged app measured itself against the newest release.
+      const when = info.release.date ? new Date(info.release.date).toLocaleDateString() : '';
+      if (info.upToDate === true) {
+        result.textContent = `you're on the newest release (v${info.release.version}, ${when})`;
+        result.className = 'update-result good';
+      } else {
+        result.replaceChildren();
+        result.append(`v${info.release.version} is out (${when}) — `);
+        const link = document.createElement('a');
+        link.href = info.release.dmg || info.release.url;
+        link.textContent = 'download the new DMG';
+        // Born after the page-load pass that rewires anchors, so it routes
+        // itself: out to the browser, never navigating this window.
+        link.addEventListener('click', (e) => {
+          e.preventDefault();
+          window.clippySettings.openExternal(link.href);
+        });
+        result.append(link, ' and drag it into Applications again.');
+        result.className = info.upToDate === false ? 'update-result warn' : 'update-result';
+      }
       return;
     }
     if (!info.latest) return; // the offline fill — nothing has been checked yet
