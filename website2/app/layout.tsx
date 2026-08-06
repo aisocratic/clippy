@@ -40,8 +40,22 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const umamiScriptUrl = process.env.NEXT_PUBLIC_UMAMI_SCRIPT_URL;
+  const umamiWebsiteId = process.env.NEXT_PUBLIC_UMAMI_WEBSITE_ID;
+
   return (
     <html lang="en">
+      <head>
+        {umamiScriptUrl && umamiWebsiteId ? (
+          <script
+            defer
+            src={umamiScriptUrl}
+            data-website-id={umamiWebsiteId}
+            data-do-not-track="true"
+            data-exclude-hash="true"
+          />
+        ) : null}
+      </head>
       <body>{children}</body>
     </html>
   );

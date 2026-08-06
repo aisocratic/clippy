@@ -32,7 +32,12 @@ test("server-renders the finished Clippy landing page", async () => {
   assert.match(html, /Your coding agents have a/);
   assert.match(html, /tiny teammate/);
   assert.match(html, /100% local/);
+  assert.match(html, /No app telemetry/);
   assert.match(html, /Give your agents a buddy/);
   assert.match(html, /og\.png/);
+  assert.match(html, /data-umami-event="download_click"/);
+  assert.match(html, /data-umami-event="github_click"/);
+  assert.match(html, /data-umami-event="install_help_click"/);
+  assert.doesNotMatch(html, /cloud\.umami\.is|data-website-id=/i);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton|Starter Project/i);
 });

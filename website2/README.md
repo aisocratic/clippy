@@ -24,3 +24,12 @@ npm test
 
 The site uses the product's real buddy animations and interface captures from
 the parent Clippy project.
+
+## Optional website analytics
+
+The landing page supports Umami pageviews and click events without enabling
+analytics in the Clippy app. Copy `.env.example` to `.env.local`, set both
+`NEXT_PUBLIC_UMAMI_SCRIPT_URL` and `NEXT_PUBLIC_UMAMI_WEBSITE_ID`, and rebuild.
+If either variable is absent, the rendered site emits no analytics script.
+The tracker respects Do Not Track and records CTA location, never code, prompts,
+project names, or app activity.

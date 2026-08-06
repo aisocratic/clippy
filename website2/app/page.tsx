@@ -73,6 +73,8 @@ export default function Home() {
           href="https://github.com/AISocratic/clippy"
           target="_blank"
           rel="noreferrer"
+          data-umami-event="github_click"
+          data-umami-event-location="nav"
         >
           View on GitHub <Arrow />
         </a>
@@ -95,17 +97,24 @@ export default function Home() {
             <a
               className="button button-primary"
               href="https://github.com/AISocratic/clippy/releases/latest/download/Clippy-for-Claude-Code.dmg"
+              data-umami-event="download_click"
+              data-umami-event-location="hero"
             >
               Download for macOS — free <span aria-hidden="true">↓</span>
             </a>
-            <a className="text-link" href="#how-it-works">
+            <a
+              className="text-link"
+              href="#how-it-works"
+              data-umami-event="demo_view"
+              data-umami-event-location="hero"
+            >
               See how it works <span aria-hidden="true">↓</span>
             </a>
           </div>
           <div className="trust-row" aria-label="Product benefits">
             <span>Open source</span>
             <span>100% local</span>
-            <span>No account</span>
+            <span>No app telemetry</span>
           </div>
         </div>
 
@@ -333,7 +342,8 @@ export default function Home() {
             <h2>Your code stays between you and your agent.</h2>
             <p>
               Clippy runs entirely on your Mac and talks to Claude Code and
-              Codex over localhost. No account, no cloud relay, no telemetry.
+              Codex over localhost. No account, no cloud relay, no app
+              telemetry.
             </p>
             <div className="local-points">
               <span><i>✓</i> Uses native agent hooks</span>
@@ -371,14 +381,45 @@ export default function Home() {
             <a
               className="button button-dark"
               href="https://github.com/AISocratic/clippy/releases/latest/download/Clippy-for-Claude-Code.dmg"
+              data-umami-event="download_click"
+              data-umami-event-location="install"
             >
               Download Clippy for macOS <span aria-hidden="true">↓</span>
             </a>
+            <p className="compatibility-note">
+              Current DMG: Apple silicon · macOS 11+ · local sessions. Read the{" "}
+              <a
+                href="https://github.com/AISocratic/clippy/blob/main/docs/COMPATIBILITY.md"
+                target="_blank"
+                rel="noreferrer"
+                data-umami-event="install_help_click"
+                data-umami-event-location="install"
+              >
+                compatibility notes
+              </a>{" "}
+              or{" "}
+              <a
+                href="https://github.com/AISocratic/clippy/blob/main/docs/TROUBLESHOOTING.md"
+                target="_blank"
+                rel="noreferrer"
+                data-umami-event="install_help_click"
+                data-umami-event-location="install"
+              >
+                troubleshooting guide
+              </a>
+              .
+            </p>
           </div>
           <div className="install-terminal">
             <div className="install-terminal-bar">
               <span>Terminal</span>
-              <button type="button" onClick={copyInstall} aria-live="polite">
+              <button
+                type="button"
+                onClick={copyInstall}
+                aria-live="polite"
+                data-umami-event="source_install_copy"
+                data-umami-event-location="install"
+              >
                 {copied ? "Copied!" : "Copy"}
               </button>
             </div>
@@ -396,7 +437,14 @@ export default function Home() {
         </a>
         <p>A tiny teammate for Claude Code + Codex.</p>
         <div>
-          <a href="https://github.com/AISocratic/clippy" target="_blank" rel="noreferrer">GitHub <Arrow /></a>
+          <a
+            href="https://github.com/AISocratic/clippy"
+            target="_blank"
+            rel="noreferrer"
+            data-umami-event="github_click"
+            data-umami-event-location="footer"
+          >GitHub <Arrow /></a>
+          <a href="https://github.com/AISocratic/clippy/blob/main/docs/PRIVACY.md" target="_blank" rel="noreferrer">Privacy <Arrow /></a>
           <a href="https://aisocratic.org" target="_blank" rel="noreferrer">AI Socratic <Arrow /></a>
         </div>
       </footer>

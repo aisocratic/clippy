@@ -1024,6 +1024,20 @@ h1 em {
   line-height: 1.65;
 }
 
+.install-copy .compatibility-note {
+  margin: 17px 0 0;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 10px;
+  line-height: 1.55;
+}
+
+.compatibility-note a {
+  color: var(--ink);
+  font-weight: 750;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
 .install-terminal {
   overflow: hidden;
   border: 2px solid var(--ink);
