@@ -187,6 +187,59 @@ test('PermissionRequest marks the session as needing permission', () => {
   assert.deepEqual(t.counts(), { total: 1, waiting: 0 });
 });
 
+test('Codex sessions keep their identity and detect non-zero PostToolUse exits', () => {
+  const t = new SessionTracker();
+  const codex = { ...payload('cx'), agent: 'codex' };
+  const start = t.handle('SessionStart', null, codex);
+  assert.equal(start.agent, 'codex');
+  assert.equal(start.agentName, 'Codex');
+
+  const failed = t.handle('PostToolUse', null, {
+    ...codex,
+    tool_name: 'Bash',
+    tool_input: { command: 'false' },
+    tool_response: { exit_code: 1 },
+  });
+  assert.equal(failed.activity.ok, false);
+  assert.match(failed.message, /failed/);
+  assert.equal(t.agentFor('cx'), 'codex');
+});
+
+test('OpenClaw sessions keep their identity, unknown agents fall back to Claude', () => {
+  const t = new SessionTracker();
+  const openclaw = { ...payload('openclaw:tg-42'), agent: 'openclaw' };
+  const start = t.handle('SessionStart', null, openclaw);
+  assert.equal(start.agent, 'openclaw');
+  assert.equal(start.agentName, 'OpenClaw');
+
+  const stop = t.handle('Stop', null, openclaw);
+  assert.match(stop.message, /OpenClaw finished/);
+  assert.equal(t.agentFor('openclaw:tg-42'), 'openclaw');
+  // A later payload without an agent doesn't reset the session to Claude.
+  t.handle('UserPromptSubmit', null, payload('openclaw:tg-42'));
+  assert.equal(t.agentFor('openclaw:tg-42'), 'openclaw');
+
+  const unknown = t.handle('SessionStart', null, { ...payload('u1'), agent: 'mystery' });
+  assert.equal(unknown.agent, 'claude');
+  assert.equal(unknown.agentName, 'Claude');
+});
+
+test('remembers a model reported by session hooks', () => {
+  const t = new SessionTracker();
+  const start = t.handle('SessionStart', null, {
+    ...payload('modelled'),
+    model: 'claude-sonnet-5',
+  });
+  assert.equal(start.model, 'claude-sonnet-5');
+  assert.equal(t.modelFor('modelled'), 'claude-sonnet-5');
+
+  t.handle('UserPromptSubmit', null, {
+    ...payload('modelled'),
+    model: { id: 'claude-opus-5', display_name: 'Opus' },
+  });
+  assert.equal(t.modelFor('modelled'), 'claude-opus-5');
+});
+
 test('handles missing cwd and unknown events gracefully', () => {
   const t = new SessionTracker();
   const r = t.handle('Notification', null, { session_id: 'deadbeefcafe' });

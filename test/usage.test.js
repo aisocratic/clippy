@@ -3,10 +3,13 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
+const fsPromises = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const {
   parseTranscript,
+  modelFromTranscript,
+  lastAssistantText,
   contextLimitFor,
   contextOf,
   rollingWindow,
@@ -36,6 +39,21 @@ const usage = (input, output, cacheRead = 0, cacheCreate = 0) => ({
   cache_creation_input_tokens: cacheCreate,
 });
 
+const assistantText = (content, extra = {}) =>
+  JSON.stringify({
+    type: 'assistant',
+    ...extra,
+    message: { content },
+  });
+
+const transcriptFile = (t, contents) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clippy-transcript-tail-'));
+  const file = path.join(dir, 'session.jsonl');
+  fs.writeFileSync(file, contents);
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  return file;
+};
+
 test('a transcript adds up to session totals and a live context size', () => {
   const text = [
     JSON.stringify({ type: 'user', timestamp: '2026-08-02T10:00:00Z' }),
@@ -51,6 +69,58 @@ test('a transcript adds up to session totals and a live context size', () => {
   // The newest message is what the context currently holds.
   assert.equal(u.context, 2 + 90_000 + 500 + 300);
   assert.equal(u.contextLimit, 200_000);
+});
+
+test('Codex rollout token events produce totals and use the reported context window', () => {
+  const text = [
+    JSON.stringify({
+      timestamp: '2026-08-05T10:00:00Z',
+      type: 'turn_context',
+      payload: { model: 'gpt-5.6-codex' },
+    }),
+    JSON.stringify({
+      timestamp: '2026-08-05T10:00:01Z',
+      type: 'event_msg',
+      payload: {
+        type: 'token_count',
+        info: {
+          model_context_window: 128000,
+          last_token_usage: {
+            input_tokens: 1000,
+            cached_input_tokens: 600,
+            output_tokens: 200,
+            reasoning_output_tokens: 50,
+            total_tokens: 1200,
+          },
+        },
+      },
+    }),
+  ].join('\n');
+
+  const parsed = parseTranscript(text);
+  assert.equal(parsed.model, 'gpt-5.6-codex');
+  assert.equal(parsed.context, 1200);
+  assert.equal(parsed.contextLimit, 128000);
+  assert.deepEqual(parsed.totals, { input: 400, output: 200, cacheRead: 600, cacheCreate: 0 });
+});
+
+test('finds a model before any token usage has been written', () => {
+  const claude = JSON.stringify({
+    type: 'assistant',
+    timestamp: '2026-08-05T10:00:00Z',
+    message: { model: 'claude-sonnet-5', content: [] },
+  });
+  const codex = JSON.stringify({
+    type: 'turn_context',
+    timestamp: '2026-08-05T10:00:00Z',
+    payload: { model: 'gpt-5.6-codex' },
+  });
+
+  assert.equal(modelFromTranscript(claude), 'claude-sonnet-5');
+  assert.equal(parseTranscript(claude).model, 'claude-sonnet-5');
+  assert.equal(parseTranscript(claude).turns, 0);
+  assert.equal(modelFromTranscript(codex), 'gpt-5.6-codex');
+  assert.equal(parseTranscript(codex).model, 'gpt-5.6-codex');
 });
 
 test('subagent sidechains never masquerade as the main context', () => {
@@ -83,8 +153,85 @@ test('only lines inside the window count when one is given', () => {
 
 test('the long-context models get the bigger budget', () => {
   assert.equal(contextLimitFor('claude-opus-5[1m]'), 1_000_000);
-  assert.equal(contextLimitFor('claude-sonnet-5'), 200_000);
+  assert.equal(contextLimitFor('claude-fable-5'), 1_000_000);
+  assert.equal(contextLimitFor('claude-sonnet-4-5'), 200_000);
   assert.equal(contextLimitFor(''), 200_000);
+});
+
+/* ---------- Stop review transcript tail ---------- */
+
+test('the latest prose-bearing main assistant turn wins', async (t) => {
+  const file = transcriptFile(
+    t,
+    [
+      assistantText([{ type: 'text', text: 'older recap' }]),
+      assistantText([
+        { type: 'text', text: '  latest recap  ' },
+        { type: 'tool_use', name: 'Read' },
+        { type: 'text', text: 'with detail' },
+      ]),
+      assistantText([{ type: 'text', text: 'sidechain words' }], { isSidechain: true }),
+      assistantText([{ type: 'tool_use', name: 'Bash' }]),
+    ].join('\n')
+  );
+
+  assert.equal(await lastAssistantText(file), 'latest recap  \nwith detail');
+});
+
+test('a large transcript prefix is not read when the recap is in the tail', async (t) => {
+  const oldLine = `${JSON.stringify({ type: 'user', message: { content: 'old history' } })}\n`;
+  const file = transcriptFile(
+    t,
+    `${oldLine.repeat(80_000)}${assistantText([{ type: 'text', text: 'tail recap' }])}\n`
+  );
+  const fileSize = fs.statSync(file).size;
+  const originalOpen = fsPromises.open;
+  let bytesRead = 0;
+
+  fsPromises.open = async (...args) => {
+    const handle = await originalOpen(...args);
+    const originalRead = handle.read.bind(handle);
+    handle.read = async (...readArgs) => {
+      const result = await originalRead(...readArgs);
+      bytesRead += result.bytesRead;
+      return result;
+    };
+    return handle;
+  };
+  try {
+    assert.equal(await lastAssistantText(file), 'tail recap');
+  } finally {
+    fsPromises.open = originalOpen;
+  }
+
+  assert.ok(fileSize > 3_000_000);
+  assert.ok(bytesRead < fileSize / 20, `read ${bytesRead} of ${fileSize} bytes`);
+});
+
+test('an assistant record can cross tail block boundaries and still clip identically', async (t) => {
+  const prose = `abcdefghij   ${'x'.repeat(80_000)}`;
+  const file = transcriptFile(t, assistantText([{ type: 'text', text: prose }]));
+
+  // Clipping happens after the whole record is decoded, and trims whitespace
+  // introduced at the cut just as the original forward scan did.
+  assert.equal(await lastAssistantText(file, { maxChars: 13 }), 'abcdefghij…');
+});
+
+test('a malformed partial final line is skipped even when it spans blocks', async (t) => {
+  const valid = assistantText([{ type: 'text', text: 'complete recap' }]);
+  const partial = `{"type":"assistant","message":{"content":[{"type":"text","text":"${'z'.repeat(
+    80_000
+  )}`;
+  const file = transcriptFile(t, `${valid}\n${partial}`);
+
+  assert.equal(await lastAssistantText(file), 'complete recap');
+});
+
+test('an absent or prose-free transcript has no Stop recap', async (t) => {
+  const file = transcriptFile(t, assistantText([{ type: 'tool_use', name: 'Read' }]));
+  assert.equal(await lastAssistantText(file), '');
+  assert.equal(await lastAssistantText(path.join(path.dirname(file), 'missing.jsonl')), '');
+  assert.equal(await lastAssistantText(''), '');
 });
 
 /* ---------- The windows /usage reports on ---------- */

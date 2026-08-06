@@ -40,35 +40,43 @@ test('the drawn cast and the sizes line up with what the menus need', () => {
 
 test('every character in the menus has art drawn for it', () => {
   const { THEMES } = require('../scripts/make-buddies');
+  const vectors = require('../src/renderer/vector-buddies');
   const drawn = THEMES.map((t) => t.id);
   const ids = CHARACTERS.map((c) => c.id);
 
   assert.deepEqual([...new Set(ids)], ids, 'nobody may be listed twice');
-  for (const id of ids) assert.ok(drawn.includes(id), `${id} is offered but never drawn`);
+  for (const character of CHARACTERS) {
+    const available = drawn.includes(character.id) || (character.vector && vectors.has(character.vector));
+    assert.ok(available, `${character.id} is offered but never drawn`);
+  }
+  for (const character of CHARACTERS.filter((c) => c.vector)) {
+    assert.deepEqual(vectors.poses, character.poses, `${character.id} must speak every pose`);
+  }
   // 🖇 Clippy (classic) was folded back into 📎 Clippy the moment Clippy got the
   // original silhouette back: two identical paperclips in a menu helps nobody.
   assert.ok(!ids.includes('classic'), 'the duplicate paperclip is gone');
 });
 
-test('every project gets a buddy of its own, and a hand-picked one wins', () => {
+test('parallel sessions get different buddies, and a hand-picked one goes first', () => {
   const cast = allCharacters().map((c) => c.id);
 
-  // A buddy you assigned to that repo outranks the automatic pick.
+  // A buddy you assigned to that repo is the first session's preference.
   const assigned = { characterByProject: { 'billing-api': 'cat' } };
-  assert.equal(characterFor(assigned, 'billing-api'), 'cat');
+  assert.equal(characterFor(assigned, 'billing-api', 'session-a'), 'cat');
+  assert.notEqual(characterFor(assigned, 'billing-api', 'session-b', ['cat']), 'cat');
   // …and only for that repo: everyone else is still cast automatically.
-  assert.ok(cast.includes(characterFor(assigned, 'my-app')));
+  assert.ok(cast.includes(characterFor(assigned, 'my-app', 'session-c')));
 
-  // The automatic pick is stable for a name, and derived from it rather than
-  // the session id, so restarting a session doesn't change who shows up.
-  const first = characterFor({}, 'billing-api');
-  assert.equal(characterFor({}, 'billing-api'), first);
-  assert.equal(characterFor({ characterByProject: {} }, 'billing-api'), first);
+  // The automatic pick is stable for a session. A concurrent session excludes
+  // that animation and must get another while the cast has room.
+  const first = characterFor({}, 'billing-api', 'session-a');
+  assert.equal(characterFor({}, 'billing-api', 'session-a'), first);
+  assert.notEqual(characterFor({}, 'billing-api', 'session-b', [first]), first);
   assert.ok(cast.includes(first));
 
   // A character that has since been deleted (a sprite pack you removed) must
   // not leave a buddy with no art at all.
-  assert.ok(cast.includes(characterFor({ characterByProject: { x: 'gone' } }, 'x')));
+  assert.ok(cast.includes(characterFor({ characterByProject: { x: 'gone' } }, 'x', 'session-x')));
   assert.ok(cast.includes(characterFor({}, '')), 'and a nameless session still works');
 });
 

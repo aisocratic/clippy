@@ -72,7 +72,9 @@ function findAppAncestor(pid, table, { maxHops = 12 } = {}) {
     const entry = table.get(current);
     if (!entry) return null;
     const name = appNameFromComm(entry.comm);
-    if (name) return { pid: current, name };
+    // The bundle path rides along: `open <bundle>` is how the app gets raised
+    // without any Automation grant (see activateApp below).
+    if (name) return { pid: current, name, bundle: entry.comm.split('.app/')[0] + '.app' };
     current = entry.ppid;
   }
   return null;
@@ -306,8 +308,36 @@ async function resolveTarget(term, hint = '') {
   return { program: term.program, tty: term.tty, app, hint };
 }
 
+/**
+ * Bring the terminal's app to the front the way a Dock click would.
+ *
+ * The AppleScript route (`set frontmost of proc to true`) needs macOS's
+ * Automation permission for System Events, and when that's missing it fails
+ * *inside a try block* — the script still measures and returns bounds, so
+ * Clippy perches on a window that never actually came forward. `/usr/bin/open`
+ * on the app bundle needs no permission at all: it activates a running app
+ * and launches a stopped one. It can't pick the exact window or tab — the
+ * script still does that afterwards, where it's allowed to.
+ */
+async function activateApp(target) {
+  const args = target?.app?.bundle
+    ? [target.app.bundle]
+    : target?.program === TERMINAL_APP
+    ? ['-a', 'Terminal']
+    : target?.program === ITERM_APP
+    ? ['-a', 'iTerm']
+    : null;
+  if (!args) return;
+  try {
+    await run('/usr/bin/open', args, { timeout: 3000 });
+  } catch {
+    // best effort — the script's own frontmost/AXRaise still gets its turn
+  }
+}
+
 /** Raise a session's terminal window. Resolves with its bounds, or null. */
 async function revealWindow(target) {
+  await activateApp(target);
   return runWindowScript(target, { reveal: true });
 }
 

@@ -1,8 +1,15 @@
-# 📎 Clippy for Claude Code
+# 📎 Clippy for Claude Code + Codex
 
 By [AI Socratic](https://aisocratic.org).
 
-**One little Clippy per Claude Code session**, living on your MacBook, each one
+**[Download the latest Apple-silicon DMG](https://github.com/AISocratic/clippy/releases/latest/download/Clippy-for-Claude-Code.dmg)** · [Compatibility](docs/COMPATIBILITY.md) · [Troubleshooting](docs/TROUBLESHOOTING.md) · [Privacy](docs/PRIVACY.md)
+
+Current packaged release: **Apple silicon, macOS 11+**. Intel users can build
+from source. The public `v0.1.0` DMG is ad-hoc signed, so it requires
+right-click → **Open** on first launch; signed/notarized release packaging is
+now enforced by `npm run package:release` once Apple credentials are configured.
+
+**One little Clippy per Claude Code or Codex session**, living on your MacBook, each one
 knowing what its session is doing right now — and letting you **answer it right
 there**: approve or deny permission requests, approve or revise a plan, pick an
 answer to Claude's question, and review the work when it finishes. No hunting
@@ -14,9 +21,11 @@ through terminal tabs.
 |---|---|---|
 | ![approval](shots/7-approval-card.png) | ![plan](shots/10-plan-card.png) | ![question](shots/11-question-card.png) |
 
-Each buddy wears a **name plate** for its session and its own colour, so five
-parallel agents are five distinguishable characters rather than one confused
-paperclip. A live **activity line** under each shows what that session
+Each buddy wears a **name plate** with its character name, project, and the harness + model
+running it (`Pixel cat` / `my-app` / `Codex · gpt-5.5`, for example), and its own
+colour. Concurrent agents in the same folder are assigned different available buddy
+animations, so five parallel agents are distinguishable characters rather than one confused paperclip. A live
+**activity line** under each shows what that session
 is doing — `⚙ my-app — Running: npm test`, `✏ Editing server.js`,
 `✓ done — your turn`, `⚠ Bash failed`.
 
@@ -24,7 +33,7 @@ is doing — `⚙ my-app — Running: npm test`, `✏ Editing server.js`,
 `npx electron scripts/demo-screenshots.js`, or under `xvfb-run` on Linux. The
 dark backdrop stands in for your desktop: the real window is transparent.)*
 
-You kick off a long Claude Code task, switch to Slack, and twenty minutes later
+You kick off a long coding-agent task, switch to Slack, and twenty minutes later
 discover it's been sitting at a permission prompt the whole time. Clippy fixes
 that: floating, draggable paperclips (always on top, on every Space) that know
 the live state of every session — and they don't give up, re-nudging every 90
@@ -53,15 +62,15 @@ bar, plus real allowance bars for the rolling 5-hour block, the week, and
 Opus's own week once you tell Clippy your plan), and a box to type the next
 prompt into — he raises that session's terminal and types it in for you.
 **Right-click** for everything else — the same stats, Settings, and hide.
-**Double-click** just says hi back, for about a second. The buddies are **pixel
-art**: Clippy himself in your session's colour, a pixel cat, and Clod, all drawn in
-code with no image assets in the repo — and any sprite pack you drop in,
-swappable from the menu.
+**Double-click** just says hi back, for about a second. The built-in buddies are
+all drawn in code: Clippy, the cat, and Clod are generated pixel art; Orbit and
+Loopy are live SVG that stays smooth at every size. Any sprite pack you drop in
+is swappable from the menu too.
 
 ## How it works
 
 ```
-Claude Code session(s)
+Claude Code / Codex session(s)
    │  hooks: PermissionRequest / Stop / Pre+PostToolUse / Notification / Session*
    ▼  curl POST → http://127.0.0.1:43117/hook/<event>   (response = hook decision)
 Clippy app (Electron)
@@ -73,10 +82,10 @@ Clippy app (Electron)
    └─ menu bar item 📎 with a count of sessions waiting on you
 ```
 
-Claude Code's [hooks](https://code.claude.com/docs/en/hooks) fire shell
+Claude Code and Codex lifecycle hooks fire shell
 commands on lifecycle events, and a hook's stdout JSON can *answer* the event.
-The installer registers nine tiny `curl` hooks in `~/.claude/settings.json`
-that POST each event's JSON to the app on localhost. Two of them are
+The installer registers tiny `curl` hooks in `~/.claude/settings.json` and
+`~/.codex/hooks.json` that POST each event's JSON to the app on localhost. Interactive hooks are
 interactive — their HTTP response is the hook's decision:
 
 | Hook event | Clippy reaction |
@@ -120,17 +129,53 @@ Safety properties of the interactive hooks:
 - Both behaviors can be toggled from **📎 menu bar → Quick settings**
   ("Permission requests" / "Review when Claude finishes"), and the toggles persist.
 
+### Codex support
+
+Codex uses its native [lifecycle hooks](https://learn.chatgpt.com/docs/hooks) and reports into the
+same local server. Clippy tracks Codex sessions, tool activity, permission requests, completed
+turns, terminal windows, review feedback, and token/context totals from local rollout transcripts.
+The permission and `Stop` decision formats are compatible with the Claude path, so Allow, Deny,
+Looks good, and Send feedback work from the same cards.
+
+There are three deliberate differences in the current Codex integration:
+
+- Codex has no `Notification` or `PostToolUseFailure` hook. Clippy detects non-zero shell exits
+  from `PostToolUse`, while idle reminders rely on the turn/question/permission hooks it does have.
+- A Codex `request_user_input` call is surfaced as a read-only question card that takes you to the
+  native picker. Claude's `AskUserQuestion` hook can still be answered directly inside Clippy.
+- Drive mode and Claude plan/allowance calibration remain Claude-specific. Codex context and token
+  totals are shown from its rollout files without pretending they are account-limit percentages.
+
+### OpenClaw support
+
+[OpenClaw](https://openclaw.ai) sessions get a buddy too, in **watch mode only**: the buddy shows
+an activity line while the gateway works and nudges you when a reply lands, but there are no
+interactive cards (no permission/review/question buttons) in this integration yet.
+
+```bash
+npm run hooks:install -- --agent openclaw
+```
+
+This copies a dependency-free handler to `~/.openclaw/hooks/clippy-hook.mjs` and registers it in
+`~/.openclaw/openclaw.json` (`hooks.internal.handlers`, for the `message` and `command` event
+families). Restart the OpenClaw gateway to load it. The plain `npm run hooks:install` also picks
+OpenClaw up automatically when `~/.openclaw` exists. The handler fires and forgets with a 1s
+timeout, so a stopped Clippy never slows the gateway down.
+
 ## Quick start
 
 ```bash
 npm install            # pulls Electron
-npm run hooks:install  # registers hooks in ~/.claude/settings.json
+npm run hooks:install  # registers Claude + Codex hooks in both user config files
 npm start              # Clippy appears bottom-right; 📎 appears in the menu bar
 ```
 
-Restart any already-running Claude Code sessions so they pick up the hooks,
-then ask Claude to do something that needs permission — Clippy will let you
-know.
+Restart any already-running agent sessions so they pick up the hooks. Codex requires one extra
+trust step: open `/hooks`, review the new Clippy definitions, and trust them. Then ask either agent
+to do something that needs permission — Clippy will let you know.
+
+Use `npm run hooks:install -- --agent claude` or `--agent codex` to install only one integration.
+The matching options also work with `hooks:status` and `hooks:uninstall`.
 
 ## Installing the app
 
@@ -141,6 +186,11 @@ distribution:
 ```bash
 npm run package   # dist/Clippy for Claude Code.app + dist/Clippy-for-Claude-Code.dmg
 ```
+
+That command intentionally makes an ad-hoc local build. Maintainers producing
+a public artifact must follow [the release checklist](docs/RELEASING.md) and
+use `npm run package:release`, which fails unless Developer ID signing and
+Apple notarization are configured.
 
 That copies the prebuilt Electron.app out of `node_modules`, puts this app's
 source into `Contents/Resources/app/` with the buddy art pre-drawn, rewrites
@@ -274,19 +324,23 @@ port first wins.
   to show and asks for exactly that much height (clamped to your display), so a
   long plan or a queue of approvals isn't cut off and a bare buddy isn't sitting
   in a tall pane of empty glass.
-- **Three buddies in the box, more a download away**: 📎 Clippy himself, a
+- **Five buddies in the box, more a download away**: 📎 Clippy himself, a
   🐱 pixel cat, and ✳️ **Clod** — a squat terracotta box in the spirit of a
-  certain mascot, transcribed into the cast (he was already pixel art) — all **drawn in code**
-  — every frame is primitives in
+  certain mascot, transcribed into the cast (he was already pixel art) — plus
+  two live-SVG buddies: **Orbit**, a round floating robot with smooth curves and
+  a session-colour halo, and **Loopy**, the paperclip redrawn as pure vector —
+  the same wire, no pixels, blinking and waggling his eyebrows in the session
+  colour. They are all **drawn in code**: the pixel frames are primitives in
   `scripts/make-buddies.js`, encoded by this repo's own GIF encoder, which is
-  what lets Clippy ship with no image assets and no third-party art. Clippy is
+  what lets Clippy ship with no third-party art, while Orbit and Loopy live in
+  `src/renderer/vector-buddies.js` and never become pixels. Clippy is
   built once per session colour, since a GIF can't be recoloured by CSS. His
   silhouette is traced from the original 1997 paperclip's own path data — one
   continuous wire, round over the top, down both sides, the inner hook left
   open — rather than a blockier stand-in, so there's no separate "classic"
   variant to pick between anymore; `clip` just *is* that shape now.
 
-  All three speak the full **nine-pose vocabulary** — and the buddy picks its own
+  All five speak the full **nine-pose vocabulary** — and the buddy picks its own
   pose from what the session is doing:
 
   | pose | when |
@@ -317,8 +371,11 @@ port first wins.
 Every Claude Code session that reports in gets **its own little buddy**, so
 parallel agents never fight over one window:
 
-- a **name plate** above each Clippy says which session it's watching (the
-  project directory), with a dot that pulses while that session is working
+- a **name plate** above each buddy says its character name, which session it's
+  watching (the project directory), and the harness + model running it, with a dot that
+  pulses while that session is working
+- concurrent sessions in the same project use different available character
+  animations (until every installed buddy is already on duty)
 - each buddy has its own **colour**, derived from the project name, so the same
   project looks the same every run and two agents are rarely twins
 - buddies tile from the bottom-right corner leftwards, wrapping onto a row
@@ -417,14 +474,14 @@ and read, and it has five sections:
 
 - **Sessions** — everything reporting in right now, each with the buddy it's
   wearing and a picker to **give that project a buddy of its own**. That choice
-  is kept against the project name, so the same repo looks the same tomorrow,
-  and it outranks the automatic pick.
+  is kept against the project name and becomes the first preference; concurrent
+  sessions use the other available characters instead of becoming twins.
 - **Buddies** — every character with all nine of its animations playing side by
   side (the same layout as the test bench's workbench), and a size picker.
-  **Every project gets its own buddy**, chosen from the cast by the project
-  name: the same repo always gets the same face, and parallel agents rarely
-  match. Nothing to configure — click a character here to hand it to the
-  projects currently on screen, or pick one per project under **Sessions**.
+  **Every live session gets its own available buddy**, chosen from the cast by
+  session id, so parallel agents in the same repo do not match. Nothing to
+  configure — click a character here to make it the first choice for projects
+  currently on screen, or set that preference per project under **Sessions**.
   There's a link to [openpets.dev/gallery](https://openpets.dev/gallery) for
   downloading more.
 - **Usage & limits** — turns the token panel's spend bars into real allowance
@@ -639,12 +696,16 @@ perching, tray), `npm start` + `npm run mock-session` for end-to-end.
 ## Development
 
 No build step and no runtime dependencies: the app is plain CommonJS run by
-Electron, the tests are `node:test`, and the pixel art is generated.
+Electron, the tests are `node:test`, the pixel art is generated, and the vector
+buddies are live SVG.
 
 ```bash
 npm install     # Electron (dev) — that's the only dependency
 npm test        # node:test: server, sessions, decisions, hooks, art, usage…
+npm run test:watch  # rerun the focused tests as files change
+npm run check   # syntax-check every JS file, then run the full suite
 npm start       # builds any missing buddies, then launches the app
+npm run dev     # the app under a file watcher — restarts when source changes
 npm run sandbox     # every state on one scrolling web page — no Electron
 npm run sandbox:app  # the app + a sandbox control window, no Claude Code
 npm run demo:web    # the single-state bench in a browser, with the show run
@@ -652,7 +713,8 @@ npm run mock-session  # drive a running app through a realistic session
 ```
 
 `src/renderer/assets/` is **generated** and gitignored — `npm run make-buddies`
-redraws every character, and `npm start` does it for you when it's missing.
+redraws the pixel characters, and startup repairs any missing or stale built-in
+art. The vector buddies' SVG source lives directly in `src/renderer/vector-buddies.js`.
 `node scripts/make-buddies.js --preview` prints the frames as ASCII, which is
 the quickest way to iterate on a sprite.
 
@@ -693,11 +755,11 @@ Two things worth knowing before changing the UI:
   the machine, and the Pro/Max/Custom plan estimates those windows are measured
   against
 - `src/gif.js` — a small animated-GIF encoder (GIF89a + LZW), used by
-  `scripts/make-buddies.js` to draw and build every character's animations
+  `scripts/make-buddies.js` to draw and build the pixel characters' animations
 - `src/sdk-session.js` — Drive mode: wraps the Agent SDK `query()` and routes
   `canUseTool` (incl. answerable AskUserQuestion) to Clippy's cards
 - `src/renderer/` — the buddy himself: one transparent always-on-top page with
-  the cards, the menu, and the sprite the window is built around
+  the cards, the menu, and the sprite or live SVG the window is built around
 - `bin/clippy-hooks.js` — hook installer/uninstaller for `~/.claude/settings.json`
 - `scripts/mock-session.js` — mock Claude Code session (above)
 - `scripts/demo-web.js` + `demo/` — the browser test bench (above); it also

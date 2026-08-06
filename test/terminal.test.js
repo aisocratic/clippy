@@ -43,7 +43,11 @@ test('the process table gets us from claude to its terminal app', () => {
   4690     1 /Applications/Ghostty.app/Contents/MacOS/ghostty
 `);
   assert.equal(table.size, 3);
-  assert.deepEqual(findAppAncestor(4711, table), { pid: 4690, name: 'Ghostty' });
+  assert.deepEqual(findAppAncestor(4711, table), {
+    pid: 4690,
+    name: 'Ghostty',
+    bundle: '/Applications/Ghostty.app',
+  });
 
   // The chain runs out (process gone) -> nothing to aim at.
   assert.equal(findAppAncestor(9999, table), null);
@@ -70,7 +74,13 @@ test("VS Code's nested helper is skipped for the window-owning app", () => {
   2802  1196 /Applications/Visual Studio Code.app/Contents/Frameworks/Code Helper.app/Contents/MacOS/Code Helper
   1196     1 /Applications/Visual Studio Code.app/Contents/MacOS/Code
 `);
-  assert.deepEqual(findAppAncestor(24047, table), { pid: 1196, name: 'Visual Studio Code' });
+  // The bundle is the OUTER app, not the helper's nested bundle — `open` on
+  // the helper would be meaningless.
+  assert.deepEqual(findAppAncestor(24047, table), {
+    pid: 1196,
+    name: 'Visual Studio Code',
+    bundle: '/Applications/Visual Studio Code.app',
+  });
 });
 
 test('windowScript targets the tty for Terminal and iTerm, the app otherwise', () => {

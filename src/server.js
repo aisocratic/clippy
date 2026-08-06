@@ -4,8 +4,13 @@ const http = require('node:http');
 
 const MAX_BODY = 1024 * 1024; // 1 MB
 
+// Agents allowed to tag themselves via ?source=. Anything else (including a
+// missing param, i.e. hooks from an older install) is treated as Claude.
+const KNOWN_SOURCES = new Set(['claude', 'codex', 'openclaw']);
+
 /**
- * Tiny dependency-free HTTP server that receives Claude Code hook events.
+ * Tiny dependency-free HTTP server that receives Claude Code, Codex, and
+ * OpenClaw hook events.
  *
  * Hooks POST their stdin JSON to:  POST /hook/<EventName>[?kind=<matcher>]
  * Debugging endpoint:              GET  /status
@@ -19,7 +24,7 @@ const MAX_BODY = 1024 * 1024; // 1 MB
  * then. `ctx.onClose(fn)` fires if the hook's curl gives up first.
  *
  * @param {object} opts
- * @param {(eventName: string, kind: string|null, payload: object, ctx: {onClose: (fn: () => void) => void, headers: object}) => (object|void|Promise<object|void>)} opts.onEvent
+ * @param {(eventName: string, kind: string|null, payload: object, ctx: {onClose: (fn: () => void) => void, headers: object, source: string}) => (object|void|Promise<object|void>)} opts.onEvent
  * @param {() => object} [opts.getStatus]  Returns JSON for GET /status
  * @param {number} [opts.port]
  * @param {string} [opts.host]
@@ -66,7 +71,9 @@ function createHookServer({ onEvent, getStatus, port = 43117, host = '127.0.0.1'
       const closeHandlers = [];
       // `headers` carries the terminal context the hook shipped (X-Clippy-*),
       // which is how the app finds the window a session is running in.
-      const ctx = { onClose: (fn) => closeHandlers.push(fn), headers: req.headers };
+      const requested = url.searchParams.get('source');
+      const source = KNOWN_SOURCES.has(requested) ? requested : 'claude';
+      const ctx = { onClose: (fn) => closeHandlers.push(fn), headers: req.headers, source };
       res.on('close', () => {
         for (const fn of closeHandlers) {
           try {

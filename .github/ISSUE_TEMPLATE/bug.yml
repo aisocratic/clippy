@@ -1,0 +1,73 @@
+name: Bug report
+description: Report a reproducible Clippy problem without sharing private code or prompts.
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping. Remove secrets, prompts, code, usernames, and private paths from anything you attach. Report security issues privately through SECURITY.md.
+  - type: input
+    id: version
+    attributes:
+      label: Clippy version or commit
+      placeholder: v0.1.0 or full commit SHA
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: Installation
+      options:
+        - GitHub release DMG
+        - Source checkout
+    validations:
+      required: true
+  - type: input
+    id: mac
+    attributes:
+      label: Mac
+      description: macOS version and Apple silicon or Intel
+      placeholder: macOS 15.6, Apple M3
+    validations:
+      required: true
+  - type: input
+    id: agent
+    attributes:
+      label: Agent and version
+      placeholder: Claude Code 2.x or Codex 0.x
+    validations:
+      required: true
+  - type: input
+    id: terminal
+    attributes:
+      label: Terminal or editor
+      placeholder: Terminal.app, iTerm2, VS Code, Cursor, Ghostty…
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Minimal safe reproduction
+      description: Include whether hook status is healthy and which card/event is involved.
+    validations:
+      required: true
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy check
+      options:
+        - label: I removed code, prompts, credentials, usernames, and private paths.
+          required: true

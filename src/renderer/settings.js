@@ -26,10 +26,17 @@ const sheetTimers = [];
 /* ---------- Buddies ---------- */
 
 /**
- * Draw one animation. Generated characters are GIFs that animate themselves;
- * sprite-sheet packs are stepped here, one frame at a time.
+ * Draw one animation. Vector buddies are live SVG, generated characters are
+ * GIFs that animate themselves, and sprite-sheet packs are stepped here.
  */
 function poseArt(character, pose, height = 64) {
+  if (character.vector) {
+    const colour = (state.sessions[0] || {}).color || '#9aa3ad';
+    const svg = window.ClippyVectors.create(character.vector, pose.name, colour);
+    svg.style.height = `${height}px`;
+    svg.style.width = `${Math.round(height * 0.8)}px`;
+    return svg;
+  }
   if (!character.sheet) {
     const img = document.createElement('img');
     img.src = pose.file;
@@ -82,8 +89,11 @@ function posesOf(character) {
     // session that has reported in, or the default steel.
     const colour = ((state.sessions[0] || {}).color || '#9aa3ad').replace('#', '');
     const art = (pose) =>
-      `assets/themes/${character.id}/${character.perColour ? `${colour}-` : ''}${pose}.gif`;
+      character.vector
+        ? ''
+        : `assets/themes/${character.id}/${character.perColour ? `${colour}-` : ''}${pose}.gif`;
     return (character.poses || ['idle', 'excited']).map((pose) => ({
+      name: pose,
       label: POSE_LABEL[pose] || pose,
       file: art(pose),
       named: true,
@@ -125,7 +135,7 @@ function renderCast() {
     ? `Clicking one gives it to every project reporting in right now (${projects.join(', ')}). ` +
       'For one project at a time, use the picker beside it under Sessions.'
     : 'Nothing is reporting in, so there is no project to give a buddy to yet — start ' +
-      'Claude Code and it gets one from this cast automatically.';
+      'Claude Code or Codex and it gets one from this cast automatically.';
 
   for (const character of state.characters) {
     const row = document.createElement('div');
@@ -136,7 +146,7 @@ function renderCast() {
     who.disabled = !projects.length;
     who.title = projects.length
       ? `Give ${projects.join(', ')} ${character.label}`
-      : 'No projects yet — start Claude Code somewhere and it gets a buddy of its own';
+      : 'No projects yet — start Claude Code or Codex somewhere and it gets a buddy of its own';
     const name = document.createElement('span');
     name.className = 'cast-name';
     name.textContent = character.label;
@@ -144,6 +154,8 @@ function renderCast() {
     origin.className = 'cast-origin';
     origin.textContent = character.sheet
       ? `sprite pack · ${character.sheet.frameWidth}×${character.sheet.frameHeight}`
+      : character.vector
+      ? 'live SVG · session colour'
       : character.perColour
       ? 'drawn in code · per session colour'
       : 'drawn in code';
@@ -332,7 +344,14 @@ function renderActions() {
       const tag = document.createElement('span');
       tag.className = 'tag';
       tag.textContent = action.hook;
-      tag.title = 'the Claude Code hook that triggers this';
+      tag.title = 'the lifecycle hook that triggers this';
+      head.appendChild(tag);
+    }
+    if (action.appliesTo) {
+      const tag = document.createElement('span');
+      tag.className = 'tag';
+      tag.textContent = action.appliesTo;
+      tag.title = 'supported agents';
       head.appendChild(tag);
     }
     // Say plainly when this one is switched off, and where the switch is: the
@@ -372,7 +391,7 @@ function renderActions() {
         const json = document.createElement('code');
         json.className = `choice-json${choice.json === '{}' ? ' empty' : ''}`;
         json.textContent =
-          choice.json === '{}' ? '{}  · no opinion, Claude Code carries on as normal' : choice.json;
+          choice.json === '{}' ? '{}  · no opinion, the agent carries on as normal' : choice.json;
         row.append(label, effect, json);
         choices.appendChild(row);
       }
@@ -447,7 +466,7 @@ function renderSessions() {
     const empty = document.createElement('div');
     empty.className = 'empty-note';
     empty.textContent =
-      'No sessions yet. Start Claude Code in a project and its buddy appears here.';
+      'No sessions yet. Start Claude Code or Codex in a project and its buddy appears here.';
     host.appendChild(empty);
     return;
   }
@@ -462,13 +481,14 @@ function renderSessions() {
 
     const show = document.createElement('button');
     show.className = 'session-name';
-    show.textContent = session.name;
-    show.title = 'Bring this buddy to the front';
+    show.textContent = `${labelFor(session.character)} · ${session.name}`;
+    show.title = `Bring ${labelFor(session.character)} to the front`;
     show.addEventListener('click', () => window.clippySettings.showBuddy(session.sessionId));
 
     const status = document.createElement('span');
     status.className = 'session-status';
-    status.textContent = STATUS_TEXT[session.status] || session.status || '';
+    const agentName = { claude: 'Claude', codex: 'Codex', openclaw: 'OpenClaw' }[session.agent] || 'Claude';
+    status.textContent = `${agentName} · ${STATUS_TEXT[session.status] || session.status || ''}`;
 
     // A buddy of its own, kept against the project name so the same repo looks
     // the same tomorrow.
@@ -524,7 +544,7 @@ function render() {
 
   const text = document.getElementById('server-text');
   text.textContent = state.port ? `listening on 127.0.0.1:${state.port}` : 'hook server';
-  text.title = 'Where the Claude Code hooks report in';
+  text.title = 'Where Claude Code and Codex hooks report in';
 }
 
 // Anything linked out of here opens in the browser, not in this window.

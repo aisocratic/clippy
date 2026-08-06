@@ -41,6 +41,30 @@ test('receives hook events posted like the curl hook does', async () => {
   ]);
 });
 
+test('identifies Codex hook sources from the local callback URL', async () => {
+  let source;
+  await withServer(
+    (_event, _kind, _payload, ctx) => { source = ctx.source; },
+    async (base) => {
+      await fetch(`${base}/hook/SessionStart?source=codex`, { method: 'POST', body: '{}' });
+    }
+  );
+  assert.equal(source, 'codex');
+});
+
+test('accepts the OpenClaw source and defaults anything unknown to Claude', async () => {
+  const sources = [];
+  await withServer(
+    (_event, _kind, _payload, ctx) => sources.push(ctx.source),
+    async (base) => {
+      await fetch(`${base}/hook/Stop?source=openclaw`, { method: 'POST', body: '{}' });
+      await fetch(`${base}/hook/Stop?source=mystery`, { method: 'POST', body: '{}' });
+      await fetch(`${base}/hook/Stop`, { method: 'POST', body: '{}' });
+    }
+  );
+  assert.deepEqual(sources, ['openclaw', 'claude', 'claude']);
+});
+
 test('tolerates empty and malformed bodies', async () => {
   const seen = [];
   await withServer(

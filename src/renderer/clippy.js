@@ -1,5 +1,14 @@
 'use strict';
 
+const { setMarkdown } = window.ClippyMarkdown;
+
+document.addEventListener('click', (event) => {
+  const link = event.target.closest?.('a[data-clippy-external]');
+  if (!link) return;
+  event.preventDefault();
+  window.clippyAPI.openExternal(link.href);
+});
+
 const REMIND_AFTER_MS = 90 * 1000; // re-bounce if a session is still ignored
 const SNOOZE_MS = 5 * 60 * 1000;
 const CHECK_INTERVAL_MS = 15 * 1000;
@@ -8,10 +17,16 @@ const GHOST_GRACE_MS = 5 * 1000; // how long past its deadline a card may linger
 
 /* ---------- Identity: this window watches exactly one session ---------- */
 
+// Which harness this buddy watches (mirrors AGENTS in src/sessions.js —
+// renderers run without node integration, so the map is repeated here).
+const HARNESS_NAMES = { claude: 'Claude Code', codex: 'Codex', openclaw: 'OpenClaw' };
+
 const params = new URLSearchParams(location.search);
 const me = {
   name: params.get('name') || 'session',
   color: params.get('color') || '#9aa3ad',
+  agent: HARNESS_NAMES[params.get('agent')] ? params.get('agent') : 'claude',
+  model: '',
 };
 
 document.documentElement.style.setProperty('--clip', me.color);
@@ -66,6 +81,7 @@ const menuStatus = document.getElementById('menu-status');
 const menuWaiting = document.getElementById('menu-waiting');
 
 const sheetEl = document.getElementById('buddy-sheet');
+const vectorEl = document.getElementById('buddy-vector');
 let sheetTimer = null;
 let pose = 'idle'; // what the buddy is doing right now, by name
 let pointing = false; // standing on a prompt
@@ -80,6 +96,8 @@ let walkTimer = null;
 
 const whoEl = document.getElementById('who');
 const whoName = document.getElementById('who-name');
+const whoProject = document.getElementById('who-project');
+const whoRuntime = document.getElementById('who-runtime');
 const activityEl = document.getElementById('activity');
 const qcardEl = document.getElementById('qcard');
 const qcardTitle = document.getElementById('qcard-title');
@@ -129,6 +147,12 @@ let docked = false; // perched on that window's top-right corner
 
 let modeSent = null;
 let heightSent = 0;
+let widthSent = 0;
+
+// How wide the window has to be while a plan card is up: the plan panel
+// (--plan-w in clippy.css) plus the same slack the normal window keeps around
+// the normal panel. Every other card leaves the width alone (0 = default).
+const PLAN_WIN_W = 510;
 
 const PANELS = ['card', 'bubble', 'qcard', 'usage', 'drive', 'menu'];
 
@@ -160,17 +184,54 @@ function syncMode() {
   const want = showing ? 'full' : 'compact';
   // Measure after layout has settled, so a card that just appeared is included.
   const height = want === 'full' ? contentHeight() : 0;
-  if (want === modeSent && Math.abs(height - heightSent) < 6) return;
+  // Only the plan card asks for extra width; 0 means "the usual".
+  const width = want === 'full' && document.body.classList.contains('plan') ? PLAN_WIN_W : 0;
+  if (want === modeSent && Math.abs(height - heightSent) < 6 && width === widthSent) return;
   modeSent = want;
   heightSent = height;
-  window.clippyAPI.setMode(want, height);
+  widthSent = width;
+  window.clippyAPI.setMode(want, height, width);
 }
 
 /* ---------- UI helpers ---------- */
 
 function applyIdentity() {
-  whoName.textContent = me.name;
-  whoEl.title = `Claude Code session: ${me.name}`;
+  const character = settings.characters.find((candidate) => candidate.id === settings.character);
+  const buddyName = character?.label || 'Buddy';
+  const harness = HARNESS_NAMES[me.agent] || HARNESS_NAMES.claude;
+  const model = shortModel(me.model);
+  whoName.textContent = buddyName;
+  whoProject.textContent = me.name;
+  whoRuntime.textContent = `${harness} · ${model}`;
+  whoEl.title = `${buddyName} in ${me.name} — running ${harness} with ${model}`;
+}
+
+// Hook payloads identify the harness, while its transcript is the reliable
+// source for the model. Refresh on activity so switching models during a long
+// session eventually updates the plate, without re-reading the transcript for
+// every noisy tool event.
+let identityRefreshAt = 0;
+let identityRefreshTimer = null;
+async function refreshIdentity({ force = false } = {}) {
+  const now = Date.now();
+  const interval = me.model ? 30_000 : 2_000;
+  if (!force && now - identityRefreshAt < interval) {
+    clearTimeout(identityRefreshTimer);
+    identityRefreshTimer = setTimeout(refreshIdentity, interval - (now - identityRefreshAt));
+    return;
+  }
+  identityRefreshAt = now;
+  let identity;
+  try {
+    identity = await window.clippyAPI.identity();
+  } catch {
+    return; // the window/app may be closing while the IPC request is in flight
+  }
+  if (!identity) return;
+  if (identity.name) me.name = identity.name;
+  if (identity.agent) me.agent = identity.agent;
+  me.model = identity.model || '';
+  applyIdentity();
 }
 
 /**
@@ -204,9 +265,21 @@ function currentSheet() {
   return who && who.sheet ? who.sheet : null;
 }
 
+/** The built-in SVG drawing name for the current character, if it has one. */
+function currentVector() {
+  const who = (settings.characters || []).find((c) => c.id === settings.character);
+  return who && who.vector ? who.vector : null;
+}
+
 /** Show a pose by name — `walk`, `point`, `excited`, `idle`… */
 function setPose(name) {
   pose = poseFor(name);
+  const vector = currentVector();
+  if (vector) {
+    const art = window.ClippyVectors.create(vector, pose, me.color);
+    if (art) vectorEl.replaceChildren(art);
+    return;
+  }
   const sheet = currentSheet();
   if (sheet) {
     playSheet(sheet, pose);
@@ -252,9 +325,12 @@ function refreshPose() {
 /** Same buddy, same behaviour, different shape — and one constant size. */
 function applyCharacter() {
   const sheet = currentSheet();
-  buddyEl.classList.toggle('hidden', Boolean(sheet));
+  const vector = currentVector();
+  buddyEl.classList.toggle('hidden', Boolean(sheet || vector));
   sheetEl.classList.toggle('hidden', !sheet);
+  vectorEl.classList.toggle('hidden', !vector);
   if (!sheet) stopSheet();
+  if (!vector) vectorEl.replaceChildren();
   applySize();
   setPose(pose);
 }
@@ -313,7 +389,7 @@ buddyEl.addEventListener('error', () => {
 });
 
 function showBubble(text, { fix = null } = {}) {
-  bubbleText.textContent = text;
+  setMarkdown(bubbleText, text);
   bubbleFix = fix;
   btnFix.classList.toggle('hidden', !fix);
   usageEl.classList.add('hidden'); // news wins over the token panel
@@ -463,7 +539,7 @@ function syncUsageStatus() {
 
 function showQuestion(evt) {
   qcardTitle.textContent = evt.title || 'Claude is asking you a question';
-  qcardDetail.textContent = evt.detail || '';
+  setMarkdown(qcardDetail, evt.detail || '');
   qcardDetail.classList.toggle('hidden', !evt.detail);
   // The picker is up in the terminal — the question is readable here, and this
   // takes you to where it can be answered.
@@ -596,7 +672,7 @@ function covers(win, now) {
  * except for the week itself, which is that share's denominator and so gets no
  * bar rather than one pinned full of itself.
  */
-function windowBar(row, win, limit, weekTotal, now, estimated) {
+function windowBar(row, win, limit, weekTotal, now, estimated, agent = 'claude') {
   const spent = allTokens(win.totals);
   const sub = covers(win, now);
   // The star is the old panel's: this total is a floor, and the row says why.
@@ -604,9 +680,10 @@ function windowBar(row, win, limit, weekTotal, now, estimated) {
   const capped = win.truncated
     ? ' Some older transcripts were skipped to keep this quick, so the total is a floor.'
     : '';
-  const clock =
-    ' The grey line is where the spend Clippy can see begins, not a reset: run /usage in Claude ' +
-    'Code for the block the server keeps.';
+  const clock = agent === 'codex'
+    ? ' The grey line is where the spend Clippy can see begins, not an account-limit reset.'
+    : ' The grey line is where the spend Clippy can see begins, not a reset: run /usage in Claude ' +
+      'Code for the block the server keeps.';
 
   if (limit > 0) {
     const pct = Math.round((spent / limit) * 100);
@@ -678,6 +755,10 @@ async function showUsage({ restore = false } = {}) {
   usageName.textContent = data.name || me.name;
   usageModel.textContent = shortModel(session?.model);
   latestRecap = data.recap || '';
+  if (session?.model && session.model !== me.model) {
+    me.model = session.model;
+    applyIdentity();
+  }
   syncUsageStatus();
 
   if (session && session.turns > 0) {
@@ -732,11 +813,12 @@ async function showUsage({ restore = false } = {}) {
       `From /usage, cached ${fetched}` +
       `${age > 6 * 60 * 60 * 1000 ? ' — getting stale: open /usage in any session to refresh' : ''}.`;
   } else {
-    for (const row of WINDOWS) {
+    const rows = data.agent === 'codex' ? WINDOWS.filter((row) => row.key !== 'weekOpus') : WINDOWS;
+    for (const row of rows) {
       const win = windows && windows[row.key];
       if (!win) continue;
       const limit = (limits && limits[row.key]) || 0;
-      usageBars.append(windowBar(row, win, limit, weekTotal, now, plan && plan.estimated));
+      usageBars.append(windowBar(row, win, limit, weekTotal, now, plan && plan.estimated, data.agent));
     }
   }
 
@@ -768,7 +850,9 @@ async function showUsage({ restore = false } = {}) {
   // wording below belongs to the measured-spend fallback only.
   if (!(data.official && data.official.limits && data.official.limits.length)) {
     const named = plan && plan.id && plan.id !== 'unknown';
-    usageNote.textContent = !named
+    usageNote.textContent = data.agent === 'codex'
+      ? 'Measured from local Codex rollout transcripts. These are token totals, not your remaining account allowance.'
+      : !named
       ? 'No allowance set — bars are shares of the last 7 days. Set your plan under Usage & limits ' +
         'in Settings (📎 in the menu bar) to measure them against something, and run /usage in ' +
         'Claude Code for the real numbers.'
@@ -827,7 +911,17 @@ function addDriveLine(role, text) {
   if (!text) return;
   const line = document.createElement('div');
   line.className = `drive-line ${role}`;
-  line.textContent = (role === 'user' ? 'you: ' : role === 'system' ? '' : 'claude: ') + text;
+  const prefix = role === 'user' ? 'you:' : role === 'system' ? '' : 'claude:';
+  if (prefix) {
+    const label = document.createElement('span');
+    label.className = 'drive-role';
+    label.textContent = prefix;
+    line.appendChild(label);
+  }
+  const copy = document.createElement('div');
+  copy.className = 'drive-copy markdown';
+  setMarkdown(copy, text);
+  line.appendChild(copy);
   driveTranscript.appendChild(line);
   driveTranscript.scrollTop = driveTranscript.scrollHeight;
 }
@@ -839,6 +933,7 @@ function showNextRequest() {
   if (!next) {
     activeRequestId = null;
     cardEl.classList.add('hidden');
+    document.body.classList.remove('plan'); // the wide window goes with the plan card
     syncMode();
     setExcited(currentUrgent());
     // surface whatever passive nudge was waiting behind the card
@@ -855,6 +950,9 @@ function showNextRequest() {
   const isApproval = next.type === 'approval';
   const isAnswer = next.type === 'answer';
   const isPlan = next.variant === 'plan';
+  // A plan is a page, not a blurb: the card grows (clippy.css) and syncMode
+  // asks main for a window wide and tall enough to read it in.
+  document.body.classList.toggle('plan', isPlan);
   showQueueDepth();
   cardTitle.textContent = next.title;
 
@@ -882,11 +980,14 @@ function showNextRequest() {
 
   cardOptions.classList.add('hidden');
   cardOptions.innerHTML = '';
-  cardInput.classList.remove('hidden');
+  // The review card leads with its two actions; the feedback box only appears
+  // once "Send feedback" is clicked. Approvals keep the always-there box — the
+  // note rides along with whichever button you press.
+  cardInput.classList.toggle('hidden', !isApproval);
   btnSubmit.classList.add('hidden');
   btnDismiss.classList.add('hidden');
 
-  cardDetail.textContent = next.detail || '';
+  setMarkdown(cardDetail, next.detail || '');
   cardDetail.classList.toggle('hidden', !next.detail);
   cardInput.value = '';
   cardInput.placeholder = isPlan
@@ -903,7 +1004,9 @@ function showNextRequest() {
   btnPass.classList.toggle('hidden', !isApproval || next.noPass); // Drive has no terminal
   btnGood.classList.toggle('hidden', isApproval);
   btnFeedback.classList.toggle('hidden', isApproval);
-  btnFeedback.disabled = true;
+  // On a review card the first click on "Send feedback" opens the box, so the
+  // button starts enabled; once the box is open it disables until there's text.
+  btnFeedback.disabled = false;
 
   cardEl.classList.remove('hidden');
   syncMode();
@@ -1000,6 +1103,7 @@ setInterval(() => {
 window.clippyAPI.onSettings((s) => {
   settings = s;
   applyCharacter();
+  applyIdentity();
   render();
 });
 
@@ -1010,10 +1114,17 @@ window.clippyAPI.onIdentity((id) => {
 
 function handleEvent(evt) {
   if (evt.status) myStatus = evt.status;
-  if (evt.name && evt.name !== me.name) {
+  if (evt.agent && evt.agent !== me.agent) {
+    me.agent = evt.agent;
+    applyIdentity();
+  }
+  // The workbench's private pose event describes artwork, not a session. Older
+  // benches put that pose in `name`, so explicitly keep it away from identity.
+  if (evt.kind !== 'pose' && evt.name && evt.name !== me.name) {
     me.name = evt.name;
     applyIdentity();
   }
+  refreshIdentity();
 
   switch (evt.kind) {
     case 'approval':
@@ -1095,8 +1206,8 @@ function handleEvent(evt) {
     case 'pose': {
       // A dev hook: the test bench uses it to look at one animation. Nothing in
       // the app sends this — the buddy picks its own pose from what it knows.
-      setPose(evt.name || 'idle');
-      break;
+      setPose(evt.pose || evt.name || 'idle');
+      return; // render() would immediately replace this forced pose from state
     }
     case 'walk': {
       // Main is stepping the window across the terminal; all we do is put him
@@ -1203,13 +1314,24 @@ window.clippyAPI.onEvent(handleEvent);
 // It's the number you'd want to notice before Claude starts forgetting things.
 const CONTEXT_STRESS = 0.3;
 const CONTEXT_POLL_MS = 60 * 1000;
+let contextCheckInFlight = false;
 
 async function checkContext() {
+  // Hidden buddy windows do not need to reread transcripts just to choose a
+  // pose nobody can see. Visibility changes trigger a fresh check below, so a
+  // buddy still has the right expression as soon as it appears.
+  if (document.hidden || contextCheckInFlight) return;
+  contextCheckInFlight = true;
   let data = null;
   try {
-    data = await window.clippyAPI.usage();
+    // Context pressure only needs this session's latest transcript state. The
+    // full usage call also aggregates a week of every session on the machine
+    // and is reserved for the panel the user explicitly opens.
+    data = await window.clippyAPI.context();
   } catch {
     return; // no transcript yet, or main is busy — try again next time
+  } finally {
+    contextCheckInFlight = false;
   }
   const session = data && data.session;
   const tight = Boolean(
@@ -1221,7 +1343,10 @@ async function checkContext() {
 }
 
 setInterval(checkContext, CONTEXT_POLL_MS);
-checkContext();
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) checkContext();
+});
+if (!document.hidden) checkContext();
 
 /* ---------- Reminder loop: Clippy doesn't give up ---------- */
 
@@ -1250,7 +1375,17 @@ btnPass.addEventListener('click', () => {
   if (canOpen) window.clippyAPI.openWindow({ point: true });
 });
 btnGood.addEventListener('click', () => decide('ok'));
+// Two-step on the review card: the first click opens the feedback box (it is
+// hidden until then), the second — once there's text — sends the note back to
+// Claude through the same decide('feedback', …) wiring as before.
 btnFeedback.addEventListener('click', () => {
+  if (cardInput.classList.contains('hidden')) {
+    cardInput.classList.remove('hidden');
+    btnFeedback.disabled = true; // nothing typed yet
+    syncMode(); // the card just got taller — the window follows
+    cardInput.focus();
+    return;
+  }
   const msg = cardInput.value.trim();
   if (msg) decide('feedback', msg);
 });
@@ -1511,3 +1646,4 @@ document.getElementById('menu-hide').addEventListener('click', () => {
 applyIdentity();
 applyCharacter();
 render();
+refreshIdentity({ force: true });

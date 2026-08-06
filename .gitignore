@@ -21,5 +21,11 @@ src/renderer/assets/
 # Downloaded sprite packs (third-party art, kept out of the repo)
 sprites/
 
-# Marketing site — kept out of the repo's history for now
+# Marketing site — the already-tracked static source (index.html, style.css,
+# script.js, build.js) stays tracked; everything else in the folder (generated
+# assets, the in-progress next-gen site) stays local.
 website/
+
+# Agent-session state (workflow worktrees, per-agent memory) — machine-local
+.claude/worktrees/
+.claude/agent-memory/

@@ -14,7 +14,7 @@
                 title="Bring this session's terminal window to the front">go to terminal ↗</button>
       </div>
       <div id="card-title"></div>
-      <pre id="card-detail" class="hidden"></pre>
+      <div id="card-detail" class="markdown hidden"></div>
       <div id="card-options" class="hidden"></div>
       <textarea id="card-input" rows="2" spellcheck="false"></textarea>
       <div id="card-actions">
@@ -45,7 +45,7 @@
     <div id="qcard" class="hidden">
       <div id="qcard-head"><span id="qcard-tag">asking you</span></div>
       <div id="qcard-title"></div>
-      <pre id="qcard-detail" class="hidden"></pre>
+      <div id="qcard-detail" class="markdown hidden"></div>
       <div id="qcard-actions">
         <button id="btn-qgoto" class="good hidden"
                 title="Bring this session's terminal window to the front, where the picker is waiting">go to terminal ↗</button>
@@ -78,7 +78,7 @@
     </div>
 
     <div id="bubble" class="hidden">
-      <div id="bubble-text"></div>
+      <div id="bubble-text" class="markdown"></div>
       <div id="bubble-actions">
         <button id="btn-fix" class="good hidden">Open Settings ↗</button>
         <button id="btn-ok">Got it</button>
@@ -105,14 +105,22 @@
       <button id="menu-hide" class="menu-item dim"><span class="mi">×</span>Hide Clippy</button>
     </div>
 
-    <div id="who" title="Which Claude Code session this Clippy is watching">
-      <span id="who-dot"></span><span id="who-name">…</span>
+    <div id="who" title="Which coding-agent session this buddy is watching">
+      <span id="who-dot"></span>
+      <span id="who-copy">
+        <span id="who-name">…</span>
+        <span id="who-project">…</span>
+        <span id="who-runtime">…</span>
+      </span>
     </div>
 
     <div id="clippy" title="Drag me around. Click for this session's status — expand it for usage and a box to talk to this agent; right-click for more; double-click to say hi.">
-      <!-- Every character is an animated GIF built by `npm run make-buddies`:
-           one calm, one excited, and the paperclip in each session colour. -->
+      <!-- Generated characters animate inside GIFs built by `npm run make-buddies`;
+           the paperclip has one set per session colour. -->
       <img id="buddy" width="96" height="120" alt="" />
+      <!-- Built-in SVG buddies are drawn live, so their curves stay smooth at
+           every size and their accent can follow the session colour. -->
+      <div id="buddy-vector" class="hidden"></div>
       <!-- A dropped-in sprite-sheet theme is drawn here instead: one PNG per
            mood, stepped frame by frame (see applySheet in clippy.js). -->
       <div id="buddy-sheet" class="hidden"></div>
@@ -136,6 +144,8 @@
               class="wide">hide</span><span class="narrow">×</span></button>
     </div>
   </div>
+  <script src="vector-buddies.js"></script>
+  <script src="markdown.js"></script>
   <script src="summary.js"></script>
   <script src="clippy.js"></script>
 </body>

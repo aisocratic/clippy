@@ -3,6 +3,11 @@
 const path = require('node:path');
 const { activityLabel } = require('./decisions');
 
+// Agents that can report in, and how their buddies are labeled. Unknown ids
+// fall back to Claude, matching the hook server's ?source= whitelist.
+const AGENTS = { claude: 'Claude', codex: 'Codex', openclaw: 'OpenClaw' };
+const agentDisplayName = (agent) => AGENTS[agent] || AGENTS.claude;
+
 // Session statuses
 const WORKING = 'working';
 const NEEDS_PERMISSION = 'needs_permission';
@@ -17,9 +22,17 @@ const STALE_ACTIVE_MS = 30 * 60 * 1000;
 const STALE_PARKED_MS = 6 * 60 * 60 * 1000;
 
 const firstLine = (s) => String(s ?? '').split('\n')[0].slice(0, 200);
+const modelId = (value) =>
+  typeof value === 'string'
+    ? value
+    : typeof value?.id === 'string'
+    ? value.id
+    : typeof value?.display_name === 'string'
+    ? value.display_name
+    : '';
 
 /**
- * Tracks the state of every Claude Code session that reports in via hooks,
+ * Tracks the state of every agent session (Claude Code, Codex, OpenClaw) that reports in via hooks,
  * and turns raw hook events into "reactions" for the UI:
  *
  *   { kind: 'attention'|'info'|'clear'|'remove',
@@ -37,10 +50,19 @@ class SessionTracker {
     const id = payload.session_id || 'unknown';
     let s = this.sessions.get(id);
     if (!s) {
-      s = { sessionId: id, cwd: payload.cwd || '', status: IDLE, activity: null, updatedAt: 0 };
+      s = {
+        sessionId: id,
+        agent: AGENTS[payload.agent] ? payload.agent : 'claude',
+        cwd: payload.cwd || '',
+        status: IDLE,
+        activity: null,
+        updatedAt: 0,
+      };
       this.sessions.set(id, s);
     }
+    if (AGENTS[payload.agent]) s.agent = payload.agent;
     if (payload.cwd) s.cwd = payload.cwd;
+    if (modelId(payload.model)) s.model = modelId(payload.model);
     s.name = s.cwd ? path.basename(s.cwd) : id.slice(0, 8);
     s.updatedAt = Date.now();
     return s;
@@ -55,6 +77,9 @@ class SessionTracker {
       cwd: s.cwd,
       status: s.status,
       activity: s.activity,
+      agent: s.agent,
+      agentName: agentDisplayName(s.agent),
+      model: s.model || '',
       message,
     };
   }
@@ -95,11 +120,18 @@ class SessionTracker {
       }
 
       case 'PostToolUse': {
-        // Claude Code only fires PostToolUse when the tool *succeeded* —
-        // failures come through PostToolUseFailure below. The extra checks are
-        // belt-and-braces for tools that report a soft error in their result.
+        // Claude has a separate failure event; Codex sends PostToolUse even for
+        // a non-zero shell exit. Accept both shapes without inventing success.
         const tool = payload.tool_name || 'tool';
-        const ok = payload.success !== false && !payload.tool_response?.is_error;
+        const response = payload.tool_response;
+        const exitCode = response && typeof response === 'object'
+          ? response.exit_code ?? response.metadata?.exit_code ?? response.structuredContent?.exit_code
+          : undefined;
+        const ok =
+          payload.success !== false &&
+          !response?.is_error &&
+          !response?.isError &&
+          (exitCode === undefined || exitCode === 0);
         s.status = WORKING;
         s.activity = {
           tool,
@@ -139,7 +171,7 @@ class SessionTracker {
           'approval',
           'urgent',
           s,
-          `Claude wants to do something in “${s.name}” — approve it?`
+          `${agentDisplayName(s.agent)} wants to do something in “${s.name}” — approve it?`
         );
 
       case 'Stop':
@@ -148,7 +180,7 @@ class SessionTracker {
           'attention',
           'normal',
           s,
-          `Claude finished in “${s.name}” — it's your turn!`
+          `${agentDisplayName(s.agent)} finished in “${s.name}” — it's your turn!`
         );
 
       case 'Notification':
@@ -216,6 +248,15 @@ class SessionTracker {
     return this.sessions.get(sessionId)?.cwd || '';
   }
 
+  agentFor(sessionId) {
+    return this.sessions.get(sessionId)?.agent || 'claude';
+  }
+
+  /** Model reported directly by SessionStart or another hook payload. */
+  modelFor(sessionId) {
+    return this.sessions.get(sessionId)?.model || '';
+  }
+
   /** Where Claude Code is writing this session's transcript (for token usage). */
   setTranscript(sessionId, transcriptPath) {
     if (sessionId && transcriptPath) this.transcripts.set(sessionId, transcriptPath);
@@ -271,6 +312,8 @@ class SessionTracker {
 
 module.exports = {
   SessionTracker,
+  AGENTS,
+  agentDisplayName,
   WORKING,
   NEEDS_PERMISSION,
   WAITING,

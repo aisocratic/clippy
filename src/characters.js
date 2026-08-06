@@ -11,10 +11,9 @@ const { hash } = require('./identity');
  * list: the main process (menus, settings validation), the renderer (its own
  * menu, via the settings payload), and the web test bench.
  *
- * Every character is original pixel art drawn by `npm run make-buddies` into
- * `src/renderer/assets/themes/<id>/` — arcade *idiom*, not arcade sprites, so
- * the repo keeps shipping no third-party art. The paperclip is the one built
- * per session colour, since a GIF can't be recoloured by CSS.
+ * Every character is original art drawn in this repo. The pixel cast is built
+ * by `npm run make-buddies` into `src/renderer/assets/themes/<id>/`; vector
+ * characters are live SVG created by `src/renderer/vector-buddies.js`.
  */
 
 /**
@@ -41,6 +40,11 @@ const CHARACTERS = [
   // pixel art, so this is a transcription; the name keeps a polite distance.
   // One colour, like the cat: Clod is that orange.
   { id: 'clod', label: 'Clod', poses: POSES },
+  { id: 'orbit', label: 'Orbit', poses: POSES, vector: 'orbit', usesColour: true },
+  // The paperclip again, but drawn as live SVG: the same wire, smooth at any
+  // size, recoloured per session by CSS-free markup instead of baked GIFs.
+  // A different name so both clips can sit in the menu side by side.
+  { id: 'loopy', label: 'Loopy', poses: POSES, vector: 'loopy', usesColour: true },
 ];
 
 /**
@@ -49,15 +53,15 @@ const CHARACTERS = [
  * steps are 2x, 3x and 4x the 32x40 sprite.
  */
 // The compact window is the buddy plus headroom for everything hover reveals
-// around him: the name plate above (~38px with its margin) and the small
+// around him: the three-line identity plate above (plus one wrapped line at S) and the small
 // controls below (~24px) — all rendered invisible until hover, so revealing
 // them never resizes the window. Short-changing this is how the plate got
 // clipped at the top once: the stage bottom-anchors, so missing room comes
 // out of whatever sits highest.
 const SIZES = {
-  small: { buddy: 64, win: [92, 156] },
-  medium: { buddy: 96, win: [124, 196] },
-  large: { buddy: 128, win: [156, 236] },
+  small: { buddy: 64, win: [92, 206] },
+  medium: { buddy: 96, win: [124, 234] },
+  large: { buddy: 128, win: [156, 262] },
 };
 
 /**
@@ -168,27 +172,34 @@ function allCharacters() {
 }
 
 /**
- * Which character this session's buddy should be — one per project, always.
+ * Which character this session's buddy should be.
  *
- * With several agents running at once, "who is this one?" matters as much as
- * what it says, so the project name picks the buddy: the same repo always gets
- * the same face, parallel agents rarely match, and nothing has to be chosen
- * before the first session ever reports in.
+ * A session id picks the starting point in the cast. `used` lets main avoid
+ * giving two live sessions in the same project the same animation; once the
+ * whole cast is on screen, reuse is unavoidable and the stable pick wins.
  *
  * @param {object} settings  the app's settings (any per-project assignments)
- * @param {string} name      the project name — what the cast is hashed on
+ * @param {string} name      the project name — what manual assignments use
+ * @param {string} sessionId the live session — what the automatic pick hashes
+ * @param {string[]} used    character ids already active in this project
  */
-function characterFor(settings, name) {
+function characterFor(settings, name, sessionId = '', used = []) {
   const cast = allCharacters();
+  const unavailable = new Set(used);
 
-  // A buddy assigned to this project by hand outranks the hash: you asked for
-  // that one, on that repo, and it should stay put. An id that has since gone
-  // (a sprite pack you deleted) falls through to the hash rather than leaving a
-  // buddy with no art at all.
+  // A buddy assigned to this project by hand is the first choice. A second live
+  // session still gets a different animation when the cast has one available.
   const assigned = (settings.characterByProject || {})[name];
-  if (assigned && cast.some((c) => c.id === assigned)) return assigned;
+  const assignedAt = cast.findIndex((c) => c.id === assigned);
+  const start = assignedAt >= 0
+    ? assignedAt
+    : hash(String(sessionId || name || 'clippy')) % cast.length;
 
-  return cast[hash(String(name || 'clippy')) % cast.length].id;
+  for (let offset = 0; offset < cast.length; offset++) {
+    const id = cast[(start + offset) % cast.length].id;
+    if (!unavailable.has(id)) return id;
+  }
+  return cast[start].id;
 }
 
 module.exports = {

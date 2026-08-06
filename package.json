@@ -1,11 +1,13 @@
 {
   "name": "clippy-for-claude",
   "version": "0.1.0",
-  "description": "A Clippy for your Mac that watches your Claude Code sessions and lets you answer them without hunting through terminal tabs",
+  "description": "A Clippy for your Mac that watches Claude Code and Codex sessions and lets you answer them without hunting through terminal tabs",
   "author": "AI Socratic (https://aisocratic.org)",
   "keywords": [
     "claude",
     "claude-code",
+    "codex",
+    "openai-codex",
     "electron",
     "hooks",
     "macos",
@@ -17,15 +19,20 @@
     "darwin"
   ],
   "engines": {
-    "node": ">=18"
+    "node": ">=18.13"
   },
   "scripts": {
     "start": "node scripts/make-buddies.js --if-missing && electron .",
+    "dev": "node scripts/make-buddies.js --if-missing && node scripts/dev.js",
+    "dev:once": "node scripts/make-buddies.js --if-missing && CLIPPY_DEV=1 electron .",
     "sandbox": "node scripts/demo-web.js --open /gallery",
     "sandbox:app": "node scripts/make-buddies.js --if-missing && CLIPPY_SANDBOX=1 electron .",
-    "test": "node --test",
+    "test": "node --test test/*.test.js",
+    "test:watch": "node --test --watch test/*.test.js",
+    "check": "find bin demo scripts src test -name '*.js' -exec node --check {} \\; && node --test test/*.test.js",
     "make-buddies": "node scripts/make-buddies.js",
     "package": "node scripts/package-app.js",
+    "package:release": "node scripts/package-app.js --require-release-signing",
     "add-sprite-pack": "node scripts/add-sprite-pack.js",
     "mock-session": "node scripts/mock-session.js",
     "demo:web": "node scripts/demo-web.js",

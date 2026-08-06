@@ -18,14 +18,16 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { createHookServer } = require('./server');
-const { SessionTracker, WORKING, WAITING } = require('./sessions');
+const { SessionTracker, AGENTS, agentDisplayName, WORKING, WAITING } = require('./sessions');
 const { DecisionBroker, toHookResponse, describeToolCall } = require('./decisions');
 const { DriveSession } = require('./sdk-session');
-const { checkDrift } = require('../bin/clippy-hooks');
+const { checkDrift, checkCodexDrift, checkOpenclawDrift, installToFiles } = require('../bin/clippy-hooks');
 const { identityFor } = require('./identity');
+const { sessionBannerOutput } = require('./session-banner');
 const { SIZES, sizeList, allCharacters, characterFor } = require('./characters');
 const { ACTIONS } = require('./actions');
 const { windowActionFor } = require('./visibility');
+const { EDGE_OPTIONS, EDGE_IDS, edgeLineup, edgeHome } = require('./arrange');
 const {
   terminalFromHeaders,
   resolveTarget,
@@ -39,13 +41,14 @@ const { sessionUsage, lastAssistantText, usageWindows, readOfficialUsage, planLi
   require('./usage');
 const { checkForUpdates, localBuild } = require('./updates');
 const { DEV_SESSION, eventsFor, storyList, sandboxUsage } = require('./sandbox-scenarios');
+const { startCompletionPoll, coalesceAsync } = require('./async-control');
 
 const PORT = Number(process.env.CLIPPY_PORT || 43117);
 
 // Clippy is a small paperclip by default — the size it is when perched on a
 // window — and only takes the full window when there's a card to read.
-const WIN_W = 268;
-const WIN_H = 470; // fallback until the renderer reports what it needs
+const WIN_W = 310;
+const WIN_H = 520; // fallback until the renderer reports what it needs
 const WIN_GAP = 6;
 const ROW_STEP = 160; // how far a second row of Clippys sits above the first
 
@@ -75,6 +78,7 @@ const broker = new DecisionBroker({ hardCapMs: 100_000 });
 let drive = null; // the active Clippy-driven (Agent SDK) session, if any
 let tray = null;
 let hookDrift = null; // set when the installed hooks are older than this build
+let hooksAbsent = false; // no agent has any Clippy hooks — a fresh (DMG) install
 
 /* ---------------- Settings (persisted across restarts) ---------------- */
 
@@ -87,12 +91,14 @@ const settings = {
   size: 'medium', // how big that buddy is drawn, and stays
   plan: 'unknown', // which plan's allowance the usage bars are measured against
   planLimits: {}, // your own token allowances, when the plan is "custom"
+  arrangeEdge: '', // screen edge new buddies line up on; '' = the classic corner
 };
 
 // Settings that aren't simple on/off switches, with the values they accept.
 const CHOICES = {
   size: () => Object.keys(SIZES),
   plan: () => PLANS.map((p) => p.id),
+  arrangeEdge: () => EDGE_IDS,
 };
 
 // The cast is read fresh each time so a sprite theme dropped into
@@ -160,8 +166,8 @@ function setSetting(key, value) {
  * the cast and the size steps are defined in exactly one place.
  *
  * A buddy is told which character *it* is, which is the only "selected
- * character" the app has: every project is cast on its own, so the settings
- * window is handed the sessions and their buddies instead.
+ * character" the app has. Concurrent sessions in one project are cast apart,
+ * so the settings window is handed the sessions and their buddies instead.
  */
 function settingsPayload(buddy) {
   return {
@@ -181,8 +187,12 @@ function sendSettings() {
 
 /** Re-cast every buddy — a project was given a buddy of its own. */
 function recast() {
+  const usedByProject = new Map();
   for (const buddy of buddies.values()) {
-    buddy.character = characterFor(settings, buddy.name);
+    const used = usedByProject.get(buddy.name) || [];
+    buddy.character = characterFor(settings, buddy.name, buddy.sessionId, used);
+    used.push(buddy.character);
+    usedByProject.set(buddy.name, used);
   }
 }
 
@@ -269,11 +279,12 @@ function settingsState() {
     sessions: tracker.list().map((s) => ({
       sessionId: s.sessionId,
       name: s.name,
+      agent: s.agent,
       color: identityFor(s.sessionId, s.name).color,
       status: s.status,
       // Who this session's buddy is right now — which is what "Auto" means in
       // the picker next to it.
-      character: buddies.get(s.sessionId)?.character || characterFor(settings, s.name),
+      character: buddies.get(s.sessionId)?.character || characterFor(settings, s.name, s.sessionId),
     })),
   };
 }
@@ -313,6 +324,50 @@ function cornerBounds(slot, width, height) {
   // A tall card must not push the window off the top of the screen — that's
   // what used to cut the head off long plans on a short display.
   return { x: right - width, y: Math.max(workArea.y, bottom - height) };
+}
+
+/**
+ * A buddy's default spot on screen: the classic bottom-right corner stack,
+ * unless "Organize buddies" has made an edge the house style — then new (and
+ * un-dragged) buddies file along that edge instead, until you pick another.
+ */
+function homeBounds(slot, width, height) {
+  const edge = settings.arrangeEdge;
+  if (!edge) return cornerBounds(slot, width, height);
+  const { workArea } = screen.getPrimaryDisplay();
+  // Slots step by the full panel width along horizontal edges (so an open card
+  // never lands on the neighbour) and by the compact height along vertical
+  // ones — the same pitches cornerBounds uses for its columns and rows.
+  const [, compactH] = compactSize();
+  const step = edge === 'top' || edge === 'bottom' ? WIN_W + WIN_GAP : compactH + WIN_GAP;
+  return edgeHome(workArea, edge, slot, { width, height }, WIN_GAP, step);
+}
+
+/**
+ * "Organize buddies" from the tray: line the buddies up along one edge of the
+ * screen, evenly spaced, and remember the edge as the default spot for new
+ * ones. Perched (docked) buddies are left alone — a perch tracks the terminal
+ * window its session lives in, and yanking it to a screen edge would undo the
+ * follow-the-window behaviour the user (or autoPerch) asked for. Only the
+ * free-floating buddies fall in.
+ */
+function organizeBuddies(edge) {
+  settings.arrangeEdge = edge;
+  saveSettings();
+  const free = [...buddies.values()].filter((b) => !b.dock && !b.win.isDestroyed());
+  const [width, height] = compactSize();
+  const { workArea } = screen.getPrimaryDisplay();
+  const spots = edgeLineup(workArea, edge, free.length, { width, height }, WIN_GAP);
+  free.forEach((buddy, i) => {
+    stopWalking(buddy); // the lineup owns the window now, not the stroll
+    // From here the lineup spot outranks the corner, exactly like a hand move:
+    // cards and menus grow around it instead of snapping back.
+    buddy.dragged = true;
+    // Park the compact footprint on the spot, then let placeBuddy re-grow any
+    // open card around it — same as a card opening over a hand-placed buddy.
+    setBuddyBounds(buddy, { ...spots[i], width, height });
+    placeBuddy(buddy, buddy.mode || 'compact');
+  });
 }
 
 /**
@@ -360,19 +415,20 @@ function nextFreeSlot() {
  * The window for a session, created on first sight. Each one carries its own
  * identity (name + colour) so you can tell your agents apart at a glance.
  */
-function buddyFor(key, name = '') {
+function buddyFor(key, name = '', agent = '') {
   const existing = buddies.get(key);
   if (existing) {
     if (name && name !== existing.name) {
       existing.name = name;
       existing.win.webContents.send('clippy-identity', { name });
     }
+    if (agent && agent !== existing.agent) existing.agent = agent;
     return existing;
   }
 
   const slot = nextFreeSlot();
   const [compactW, compactH] = compactSize();
-  const { x, y } = cornerBounds(slot, compactW, compactH);
+  const { x, y } = homeBounds(slot, compactW, compactH);
   const identity = identityFor(key, name);
   const win = new BrowserWindow({
     width: compactW,
@@ -401,6 +457,7 @@ function buddyFor(key, name = '') {
       session: key,
       name: identity.name,
       color: identity.color,
+      agent: agent || 'claude',
     },
   });
   // CLIPPY_SANDBOXTOOLS=1 npm start opens an inspector per buddy, detached so it
@@ -415,7 +472,10 @@ function buddyFor(key, name = '') {
       value: Boolean(tracker.terminalFor(key)),
     });
   });
-  win.on('closed', () => buddies.delete(key));
+  win.on('closed', () => {
+    buddies.get(key)?.dock?.poll?.cancel();
+    buddies.delete(key);
+  });
   // Every reposition we do ourselves goes through placeBuddy, which records
   // exactly where it put the window. A `moved` that lands anywhere else is
   // you dragging him by hand — from then on his own spot outranks the corner
@@ -435,13 +495,21 @@ function buddyFor(key, name = '') {
     slot,
     name: identity.name,
     sessionId: key,
+    agent: agent || 'claude',
     pinned: false,
     dock: null,
     dragged: false, // moved by hand — placeBuddy grows around that spot instead
     lastPlaced: { x, y }, // matches the constructor's own placement, above
     // Cast once, when this session first reports in, and only re-cast when you
     // give the project a buddy by hand.
-    character: characterFor(settings, identity.name),
+    character: characterFor(
+      settings,
+      identity.name,
+      key,
+      [...buddies.values()]
+        .filter((other) => other.name === identity.name)
+        .map((other) => other.character)
+    ),
   };
   buddies.set(key, buddy);
   pushSettingsState();
@@ -457,7 +525,7 @@ function buddyForSender(sender) {
 /** Send an event to one session's Clippy, creating its window if needed. */
 function sendTo(sessionId, event) {
   if (!sessionId) return null;
-  const buddy = buddyFor(sessionId, event?.name);
+  const buddy = buddyFor(sessionId, event?.name, event?.agent);
   buddy.win.webContents.send('clippy-event', event);
   return buddy;
 }
@@ -465,7 +533,7 @@ function sendTo(sessionId, event) {
 function closeBuddy(key) {
   const buddy = buddies.get(key);
   if (!buddy) return;
-  if (buddy.dock) clearInterval(buddy.dock.timer);
+  buddy.dock?.poll?.cancel();
   buddies.delete(key);
   if (!buddy.win.isDestroyed()) buddy.win.destroy();
   pushSettingsState();
@@ -532,21 +600,29 @@ function hideBuddy(key, { unpin = false } = {}) {
  * `wantHeight`; a plan or a long diff is much taller than a one-line approval,
  * and a fixed window either cut them off or left a lot of empty glass. Main
  * still owns the geometry, so the ask is clamped to something that fits on the
- * display.
+ * display. `wantWidth` is the same deal sideways — only the plan card asks for
+ * it, and 0 means "back to the usual width".
  */
-function placeBuddy(buddy, mode, wantHeight) {
+function placeBuddy(buddy, mode, wantHeight, wantWidth) {
   if (buddy.win.isDestroyed()) return;
   // Mid-stroll the walk owns the window's position; whoever wants it back
   // calls stopWalking first.
   if (buddy.walk) return;
   buddy.mode = mode;
   if (Number.isFinite(wantHeight) && wantHeight > 0) buddy.wantHeight = wantHeight;
+  // Unlike the height, an explicit 0 resets the width: the wide window belongs
+  // to the plan card and goes away with it.
+  if (Number.isFinite(wantWidth)) buddy.wantWidth = wantWidth > 0 ? wantWidth : 0;
   const compact = mode === 'compact';
   const [compactW, compactH] = compactSize();
-  const width = compact ? compactW : WIN_W;
   const workArea = buddy.dock
     ? screen.getDisplayMatching(buddy.dock.bounds).workArea
     : screen.getPrimaryDisplay().workArea;
+  const width = compact
+    ? compactW
+    : Math.round(
+        Math.min(Math.max(WIN_W, buddy.wantWidth || WIN_W), workArea.width - WIN_GAP * 2)
+      );
   const height = compact
     ? compactH
     : Math.round(
@@ -563,7 +639,7 @@ function placeBuddy(buddy, mode, wantHeight) {
         height,
         screen.getDisplayMatching(buddy.dock.bounds).workArea
       )
-    : cornerBounds(buddy.slot, width, height);
+    : homeBounds(buddy.slot, width, height);
 
   setBuddyBounds(buddy, { ...spot, width, height });
   buddy.win.webContents.send('clippy-event', {
@@ -648,13 +724,16 @@ async function perchOn(key, { raise = false, auto = false, mode = null } = {}) {
     }
     if (buddy.win.isDestroyed()) return false;
 
-    buddy.dock = { target: buddy.target, bounds, misses: 0, lastError: '', auto, timer: null };
+    const dock = { target: buddy.target, bounds, misses: 0, lastError: '', auto, poll: null };
+    buddy.dock = dock;
     if (!auto) buddy.pinned = true; // asked for by hand -> stays until dismissed
     if (raise) buddy.dragged = false; // asked to go to the terminal -> that's where he goes
     // A held card needs the full window; a quiet perch is just the paperclip.
     placeBuddy(buddy, mode || (broker.hasPending(key) ? 'full' : 'compact'));
     buddy.win.showInactive();
-    buddy.dock.timer = setInterval(() => followWindow(key), DOCK_POLL_MS);
+    dock.poll = startCompletionPoll(() => followWindow(key, dock), DOCK_POLL_MS, {
+      onError: (err) => console.warn('clippy: could not follow the terminal window:', err.message),
+    });
     return true;
   } catch (err) {
     console.warn('clippy: could not reach the terminal window:', err.message);
@@ -834,17 +913,24 @@ function isRunning(pid) {
 }
 
 /** Keep up with a window that the user moved, resized, or closed. */
-async function followWindow(key) {
+async function followWindow(key, expectedDock = null) {
   const buddy = buddies.get(key);
-  if (!buddy || !buddy.dock || buddy.win.isDestroyed()) return;
+  if (
+    !buddy ||
+    !buddy.dock ||
+    (expectedDock && buddy.dock !== expectedDock) ||
+    buddy.win.isDestroyed()
+  )
+    return;
+  const dock = buddy.dock;
   let bounds = null;
   try {
-    bounds = await windowBounds(buddy.dock.target);
+    bounds = await windowBounds(dock.target);
   } catch (err) {
     // permission revoked, app quit, or a transient AppleEvent error
-    buddy.dock.lastError = err.message;
+    dock.lastError = err.message;
   }
-  if (!buddy.dock) return; // undocked while we were asking
+  if (buddy.dock !== dock) return; // undocked (or re-docked) while we were asking
   if (!bounds) {
     // Minimised, on another Space, or the app is mid-redraw: hold the perch
     // where it is. Only an app that has actually quit ends it.
@@ -879,7 +965,7 @@ async function followWindow(key) {
 function undock(buddy) {
   if (!buddy?.dock) return;
   stopWalking(buddy);
-  clearInterval(buddy.dock.timer);
+  buddy.dock.poll?.cancel();
   buddy.dock = null;
   buddy.dragged = false; // letting go is its own fresh start, back in the corner
   placeBuddy(buddy, buddy.mode || 'compact');
@@ -1054,9 +1140,22 @@ function maybeNudgePlanCalibration(payload) {
 
 /* ---------------- Token usage (right-click) ---------------- */
 
-const PROJECTS_DIR = path.join(os.homedir(), '.claude', 'projects');
+const CLAUDE_PROJECTS_DIR = path.join(os.homedir(), '.claude', 'projects');
+const CODEX_SESSIONS_DIR = path.join(os.homedir(), '.codex', 'sessions');
 const USAGE_CACHE_MS = 60 * 1000;
-let usageCache = { at: 0, windows: null };
+const usageCache = new Map();
+// One coalesced sweep per agent: concurrent right-clicks share a single
+// directory walk instead of each paying for their own.
+const usageRefreshers = new Map();
+function refreshUsageWindowsFor(agent) {
+  let refresh = usageRefreshers.get(agent);
+  if (!refresh) {
+    const dir = agent === 'codex' ? CODEX_SESSIONS_DIR : CLAUDE_PROJECTS_DIR;
+    refresh = coalesceAsync((now) => usageWindows(dir, now));
+    usageRefreshers.set(agent, refresh);
+  }
+  return refresh;
+}
 
 /**
  * What this session (and the machine) has spent. Session context comes straight
@@ -1070,25 +1169,37 @@ let usageCache = { at: 0, windows: null };
  * of inventing a percentage.
  */
 async function collectUsage(key) {
-  const session = await sessionUsage(tracker.transcriptFor(key));
+  const agent = tracker.agentFor(key);
+  const transcriptSession = await sessionUsage(tracker.transcriptFor(key));
+  const trackedModel = tracker.modelFor(key);
+  const session = transcriptSession
+    ? { ...transcriptSession, model: transcriptSession.model || trackedModel }
+    : trackedModel
+    ? { model: trackedModel, context: 0, contextLimit: 0, totals: {}, turns: 0 }
+    : null;
   const now = Date.now();
-  if (now - usageCache.at > USAGE_CACHE_MS) {
-    usageCache = { at: now, windows: await usageWindows(PROJECTS_DIR, now) };
+  let cached = usageCache.get(agent);
+  if (!cached || now - cached.at > USAGE_CACHE_MS) {
+    cached = { at: now, windows: await refreshUsageWindowsFor(agent)(now) };
+    usageCache.set(agent, cached);
   }
   const plan = PLANS.find((p) => p.id === settings.plan) || PLANS[0];
   return {
     name: buddies.get(key)?.name || '',
+    agent,
     // The percentages Claude Code itself cached from /usage — the real
     // allowance, shown first whenever it exists.
-    official: await readOfficialUsage(),
+    official: agent === 'claude' ? await readOfficialUsage() : null,
     session,
     // What Claude said as its last turn ended — the status summary's "doing
     // right now" line falls back to it when no tool activity is fresher.
     recap: await lastAssistantText(tracker.transcriptFor(key), { maxChars: 200 }),
-    windows: usageCache.windows,
+    windows: cached.windows,
     now,
-    limits: planLimitsFor(settings),
-    plan: { id: plan.id, label: plan.label, estimated: Boolean(plan.estimated) },
+    limits: agent === 'claude' ? planLimitsFor(settings) : null,
+    plan: agent === 'claude'
+      ? { id: plan.id, label: plan.label, estimated: Boolean(plan.estimated) }
+      : { id: 'unknown', label: agentDisplayName(agent), estimated: false },
   };
 }
 
@@ -1127,6 +1238,17 @@ function trayMenu() {
         for (const b of buddies.values()) hideBuddy(b.sessionId, { unpin: true });
       },
     },
+    {
+      // Lines the free-floating buddies up along an edge, and makes that edge
+      // the default spot for new ones. Perched buddies stay on their windows.
+      label: 'Organize buddies',
+      submenu: EDGE_OPTIONS.map(({ id, label }) => ({
+        label,
+        type: 'radio',
+        checked: settings.arrangeEdge === id,
+        click: () => organizeBuddies(id),
+      })),
+    },
     ...(sessionItems.length ? [{ type: 'separator' }, ...sessionItems] : []),
     { type: 'separator' },
     drive
@@ -1136,9 +1258,15 @@ function trayMenu() {
     // The quick switches stay a click away; the window has the rest.
     { label: 'Quick settings', submenu: globalSettingsMenu() },
     { type: 'separator' },
+    ...(hooksAbsent
+      ? [
+          { label: '📎 Install hooks — Clippy can’t see sessions yet', click: installHooksNow },
+          { type: 'separator' },
+        ]
+      : []),
     ...(hookDrift
       ? [
-          { label: '⚠ Hooks are out of date — run `npm run hooks:install`', enabled: false },
+          { label: '⚠ Hooks are out of date — update them now', click: installHooksNow },
           { type: 'separator' },
         ]
       : []),
@@ -1175,7 +1303,7 @@ function globalSettingsMenu() {
       click: (item) => setSetting('answerQuestions', item.checked),
     },
     {
-      label: 'Review when Claude finishes',
+      label: 'Review when an agent finishes',
       type: 'checkbox',
       checked: settings.reviewOnStop,
       click: (item) => setSetting('reviewOnStop', item.checked),
@@ -1205,12 +1333,33 @@ function globalSettingsMenu() {
   ];
 }
 
+/**
+ * The menu bar item wears a real image: the paperclip, rendered from the same
+ * pixel grid the app icon uses, as a macOS *template* (black + alpha) so it
+ * follows light and dark menu bars. The old empty-image-plus-emoji-title tray
+ * could end up invisible — an item with no image is fragile, and a full menu
+ * bar hides what it can't fit with nothing to grab onto.
+ */
+function trayIcon() {
+  try {
+    const { encodePng, renderIconPixels } = require('../scripts/package-app');
+    const size = 36; // rendered @2x for an 18pt menu bar item
+    const black = new Array(16).fill([0, 0, 0]);
+    const png = encodePng(size, size, renderIconPixels(size, undefined, black));
+    const icon = nativeImage.createFromBuffer(png, { scaleFactor: 2 });
+    icon.setTemplateImage(true);
+    return icon;
+  } catch (err) {
+    console.warn('clippy: tray icon render failed, falling back to text:', err.message);
+    return nativeImage.createEmpty();
+  }
+}
+
 function createTray() {
-  // Empty image + emoji title gives us a menu bar presence on macOS
-  // without shipping icon assets.
-  tray = new Tray(nativeImage.createEmpty());
-  tray.setTitle('📎');
-  tray.setToolTip('Clippy for Claude Code — click for settings');
+  const icon = trayIcon();
+  tray = new Tray(icon);
+  if (icon.isEmpty()) tray.setTitle('📎'); // the old fallback, better than nothing
+  tray.setToolTip('Clippy for Claude Code + Codex — click for settings');
   // Click opens the settings window; right-click (or ctrl-click) drops the
   // menu. The menu is *not* attached with setContextMenu, because on macOS that
   // makes the icon swallow left-clicks and we'd never see one.
@@ -1221,7 +1370,8 @@ function createTray() {
 function updateTray() {
   if (!tray) return;
   const { waiting } = tracker.counts();
-  tray.setTitle(waiting > 0 ? `📎 ${waiting}` : '📎');
+  // The count rides beside the icon; quiet means just the clip.
+  tray.setTitle(waiting > 0 ? ` ${waiting}` : '');
 }
 
 function notify(title, body, { silent = true, sessionId } = {}) {
@@ -1348,7 +1498,7 @@ function startSandbox() {
 // sized for a full card side by side, and cards get a hold long enough that
 // nothing expires while you're comparing states across the screen.
 const GALLERY_CELL_W = WIN_W + 14;
-const GALLERY_CELL_H = 470;
+const GALLERY_CELL_H = 520;
 const GALLERY_HOLD_SECS = 60 * 60;
 
 /**
@@ -1424,7 +1574,7 @@ function emitPassive(reaction, { osNotification = true } = {}) {
 
   if (reaction.kind === 'attention' && osNotification) {
     notify(
-      reaction.urgency === 'urgent' ? '📎 Claude needs you!' : '📎 Clippy',
+      reaction.urgency === 'urgent' ? `📎 ${reaction.agentName} needs you!` : '📎 Clippy',
       reaction.message,
       { silent: reaction.urgency !== 'urgent', sessionId: reaction.sessionId }
     );
@@ -1440,6 +1590,7 @@ async function handlePermissionRequest(payload, ctx) {
   if (!settings.approvals) return {};
 
   const reaction = tracker.handle('PermissionRequest', null, payload);
+  const agentName = reaction.agentName;
   updateTray();
 
   const isPlan = payload.tool_name === 'ExitPlanMode';
@@ -1463,7 +1614,7 @@ async function handlePermissionRequest(payload, ctx) {
   });
   showBuddy(reaction.sessionId);
   notify(
-    isPlan ? '📎 Claude has a plan' : '📎 Claude needs your approval',
+    isPlan ? `📎 ${agentName} has a plan` : `📎 ${agentName} needs your approval`,
     `${reaction.name}: ${title}`,
     { silent: false, sessionId: reaction.sessionId }
   );
@@ -1500,8 +1651,11 @@ async function handlePermissionRequest(payload, ctx) {
  */
 async function handleStop(payload, ctx) {
   const reaction = tracker.handle('Stop', null, payload);
+  const agentName = reaction.agentName;
 
-  if (!settings.reviewOnStop) {
+  // OpenClaw is watch-mode only: its handler fires and forgets, so a held
+  // review card could never send feedback anywhere. Plain nudge instead.
+  if (!settings.reviewOnStop || payload.agent === 'openclaw') {
     emitPassive(reaction);
     return {};
   }
@@ -1527,15 +1681,15 @@ async function handleStop(payload, ctx) {
     ...reaction,
     kind: 'review',
     message: short
-      ? `Claude finished: “${short}”`
-      : `Claude finished in “${reaction.name}”. Looks good, or should it keep going?`,
+      ? `${agentName} finished: “${short}”`
+      : `${agentName} finished in “${reaction.name}”. Looks good, or should it keep going?`,
     detail: recap !== firstLine ? recap : '',
     counts: tracker.counts(),
     requestId: id,
     expiresAt,
   });
   showBuddy(reaction.sessionId);
-  notify('📎 Claude finished', short || `“${reaction.name}” — review it from Clippy`, {
+  notify(`📎 ${agentName} finished`, short || `“${reaction.name}” — review it from Clippy`, {
     silent: true,
     sessionId: reaction.sessionId,
   });
@@ -1652,11 +1806,11 @@ function surfaceQuestion(reaction, title, detail, { osNotification = true } = {}
     counts: tracker.counts(),
     title,
     detail,
-    message: `Claude is asking in “${reaction.name}” — answer in your terminal.`,
+    message: `${reaction.agentName} is asking in “${reaction.name}” — answer in your terminal.`,
   });
   showBuddy(reaction.sessionId);
   if (osNotification) {
-    notify('📎 Claude is asking you', `${reaction.name}: ${title}`, {
+    notify(`📎 ${reaction.agentName} is asking you`, `${reaction.name}: ${title}`, {
       silent: false,
       sessionId: reaction.sessionId,
     });
@@ -1684,6 +1838,10 @@ function noteTerminal(payload, ctx) {
 }
 
 function handleHookEvent(eventName, kind, payload, ctx) {
+  // The hook command tags its source in the local URL. Keep the upstream hook
+  // payload untouched on the wire, then carry the source through our session
+  // model so one app can label Claude, Codex, and OpenClaw buddies correctly.
+  payload = { ...(payload || {}), agent: AGENTS[ctx?.source] ? ctx.source : 'claude' };
   noteTerminal(payload, ctx);
 
   if (eventName === 'PermissionRequest') return handlePermissionRequest(payload, ctx);
@@ -1693,6 +1851,22 @@ function handleHookEvent(eventName, kind, payload, ctx) {
     return handleQuestion(payload, ctx);
   }
 
+  // Codex's question tool is observable but its result is not answerable by a
+  // PreToolUse rewrite. Surface a read-only card while Codex's own picker stays
+  // authoritative; the hook itself remains fire-and-forget.
+  if (
+    eventName === 'PreToolUse' &&
+    payload.agent === 'codex' &&
+    payload.tool_name === 'request_user_input'
+  ) {
+    const reaction = tracker.handle(eventName, kind, payload);
+    const { title, detail } = describeToolCall(payload.tool_name, payload.tool_input);
+    tracker.setStatus(reaction.sessionId, WAITING);
+    updateTray();
+    surfaceQuestion(reaction, title, detail);
+    return undefined;
+  }
+
   if (eventName === 'UserPromptSubmit' || eventName === 'SessionEnd') {
     // The user moved on in the terminal — pending cards for this session are moot.
     broker.cancelBySession(payload.session_id || 'unknown');
@@ -1700,39 +1874,114 @@ function handleHookEvent(eventName, kind, payload, ctx) {
 
   const reaction = tracker.handle(eventName, kind, payload);
   if (reaction) emitPassive(reaction);
-  if (eventName === 'SessionStart') maybeNudgePlanCalibration(payload);
+  if (eventName === 'SessionStart' && payload.agent === 'claude') maybeNudgePlanCalibration(payload);
+  if (eventName === 'SessionStart' && reaction) {
+    const buddy = buddies.get(reaction.sessionId);
+    const character = buddy?.character || 'clip';
+    const label = allCharacters().find((item) => item.id === character)?.label || 'Clippy';
+    return sessionBannerOutput({
+      character,
+      label,
+      project: reaction.name,
+      agent: reaction.agentName,
+      model: reaction.model,
+    });
+  }
   return undefined;
 }
 
 /* ---------------- App lifecycle ---------------- */
 
 /**
- * Hooks are written once into ~/.claude/settings.json, so a Clippy that has
+ * Hooks are written once into each agent's user config, so a Clippy that has
  * learned to handle new events (answerable questions, tool failures) can be
  * running against an older install and silently never hear about them. Say so
  * instead of looking broken.
  */
 function warnOnHookDrift() {
-  try {
-    const file = path.join(os.homedir(), '.claude', 'settings.json');
-    const raw = fs.readFileSync(file, 'utf8');
-    const drift = checkDrift(raw.trim() ? JSON.parse(raw) : {}, PORT);
-    if (!drift.installed) {
-      console.warn('clippy: no hooks installed yet — run `npm run hooks:install`');
-      return;
+  const configs = [
+    { agent: 'Claude', file: path.join(os.homedir(), '.claude', 'settings.json'), check: checkDrift },
+    { agent: 'Codex', file: path.join(os.homedir(), '.codex', 'hooks.json'), check: checkCodexDrift },
+    { agent: 'OpenClaw', file: path.join(os.homedir(), '.openclaw', 'openclaw.json'), check: checkOpenclawDrift },
+  ];
+  const installed = [];
+  const stale = [];
+  for (const config of configs) {
+    try {
+      if (!fs.existsSync(config.file)) continue;
+      const raw = fs.readFileSync(config.file, 'utf8');
+      const drift = config.check(raw.trim() ? JSON.parse(raw) : {}, PORT);
+      if (!drift.installed) continue;
+      installed.push(config.agent);
+      if (drift.missing.length || drift.wrongPort || drift.noTerminalInfo) {
+        stale.push({ agent: config.agent, ...drift });
+      }
+    } catch (err) {
+      console.warn(`clippy: could not check ${config.agent} hooks:`, err.message);
     }
-    if (drift.missing.length || drift.wrongPort || drift.noTerminalInfo) {
-      hookDrift = drift;
-      console.warn(
-        `clippy: installed hooks are out of date — run \`npm run hooks:install\`` +
-          (drift.missing.length ? `\n  missing: ${drift.missing.join(', ')}` : '') +
-          (drift.wrongPort ? `\n  some hooks don't point at port ${PORT}` : '') +
-          (drift.noTerminalInfo ? `\n  they don't report which terminal window a session is in` : '')
-      );
-    }
-  } catch (err) {
-    console.warn('clippy: could not check installed hooks:', err.message);
+
+
   }
+  // Re-run after every install, so a fixed state clears the tray warnings.
+  hooksAbsent = installed.length === 0;
+  hookDrift = stale.length ? { agents: stale } : null;
+  if (hooksAbsent) {
+    console.warn('clippy: no hooks installed yet — use "Install hooks" in the 📎 menu');
+  }
+  if (hookDrift) {
+    console.warn(
+      `clippy: installed hooks are out of date for ${stale.map((d) => d.agent).join(', ')} — ` +
+        'use "update them now" in the 📎 menu'
+    );
+  }
+}
+
+/**
+ * The one-click path: write the hooks with the very code `npm run hooks:install`
+ * uses, then re-check so the menu and warnings reflect the fix immediately.
+ * Codex hooks are only written when ~/.codex already exists — no point seeding
+ * a config for an agent that isn't there.
+ */
+function installHooksNow() {
+  const agents = ['claude'];
+  if (fs.existsSync(path.join(os.homedir(), '.codex'))) agents.push('codex');
+  const results = installToFiles({ port: PORT, agents });
+  warnOnHookDrift();
+  const failed = results.filter((r) => !r.ok);
+  if (failed.length) {
+    dialog.showMessageBox({
+      type: 'warning',
+      message: 'Some hooks could not be installed',
+      detail: failed.map((f) => `${f.agent}: ${f.error}`).join('\n'),
+    });
+    return;
+  }
+  notify(
+    'Hooks installed',
+    `${agents.map((a) => (a === 'claude' ? 'Claude Code' : 'Codex')).join(' and ')} will report here — restart any running sessions.`,
+    { silent: false }
+  );
+}
+
+/**
+ * A fresh install (the DMG path) has no hooks yet, so the app would just sit
+ * silent. Offer the one-click install instead of pointing at a terminal.
+ */
+async function offerHookInstall() {
+  const { response } = await dialog.showMessageBox({
+    type: 'info',
+    message: 'Install the agent hooks?',
+    detail:
+      'Clippy sees your sessions through small hooks that POST lifecycle events to ' +
+      `127.0.0.1:${PORT} — nothing leaves your machine, and nothing is ever ` +
+      'auto-approved. This adds tagged entries to ~/.claude/settings.json ' +
+      '(and Codex’s hooks.json, if you use Codex) — only Clippy’s own tagged ' +
+      'entries are ever touched, and uninstalling removes exactly those.',
+    buttons: ['Install hooks', 'Not now'],
+    defaultId: 0,
+    cancelId: 1,
+  });
+  if (response === 0) installHooksNow();
 }
 
 /** Forget sessions whose terminal vanished, and release anything held for them. */
@@ -1761,8 +2010,19 @@ app.whenReady().then(async () => {
   loadSettings();
   warnOnHookDrift();
   createTray();
+  // The DMG path: first launch has no hooks and no terminal in sight. Ask once
+  // per run; the tray menu keeps the same action for later.
+  if (hooksAbsent) offerHookInstall();
   setInterval(sweepStaleSessions, SWEEP_INTERVAL_MS).unref?.();
 
+  ipcMain.handle('clippy-context', async (e) => {
+    const buddy = buddyForSender(e.sender);
+    if (!buddy) return null;
+    if (buddy.sessionId.startsWith('dev:')) {
+      return { session: devUsage(buddy.name).session };
+    }
+    return { session: await sessionUsage(tracker.transcriptFor(buddy.sessionId)) };
+  });
   ipcMain.handle('clippy-usage', (e) => {
     const buddy = buddyForSender(e.sender);
     if (!buddy) return null;
@@ -1771,12 +2031,26 @@ app.whenReady().then(async () => {
     if (buddy.sessionId.startsWith('sandbox:')) return sandboxUsage(buddy.name);
     return collectUsage(buddy.sessionId);
   });
+  ipcMain.handle('clippy-session-identity', async (e) => {
+    const buddy = buddyForSender(e.sender);
+    if (!buddy) return null;
+    const session = buddy.sessionId.startsWith('sandbox:')
+      ? sandboxUsage(buddy.name).session
+      : await sessionUsage(tracker.transcriptFor(buddy.sessionId));
+    return {
+      name: buddy.name,
+      agent: buddy.agent,
+      model: session?.model || tracker.modelFor(buddy.sessionId) || '',
+    };
+  });
   ipcMain.on('clippy-mode', (e, payload) => {
     // The renderer knows whether it has anything on screen, and how tall that
     // is; main owns where the window goes and how big it may get.
     const buddy = buddyForSender(e.sender);
-    const { mode, height } = typeof payload === 'string' ? { mode: payload } : payload || {};
-    if (buddy && (mode === 'full' || mode === 'compact')) placeBuddy(buddy, mode, Number(height));
+    const { mode, height, width } = typeof payload === 'string' ? { mode: payload } : payload || {};
+    if (buddy && (mode === 'full' || mode === 'compact')) {
+      placeBuddy(buddy, mode, Number(height), Number(width));
+    }
   });
   ipcMain.on('clippy-open-window', (e, opts) => {
     const buddy = buddyForSender(e.sender);
@@ -1896,7 +2170,7 @@ app.whenReady().then(async () => {
   });
   try {
     await server.listenOn();
-    console.log(`clippy: listening for Claude Code hooks on 127.0.0.1:${PORT}`);
+    console.log(`clippy: listening for Claude Code and Codex hooks on 127.0.0.1:${PORT}`);
   } catch (err) {
     console.error(
       `clippy: could not bind 127.0.0.1:${PORT} (${err.code}). ` +

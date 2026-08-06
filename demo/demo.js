@@ -360,9 +360,9 @@ window.addEventListener('message', async (e) => {
       send('event', { kind: 'drive-status', status: 'ended' });
       break;
 
-    case 'undock':
-      log('in', 'undock', 'let go of the terminal window');
-      setDocked(false);
+    case 'send-prompt':
+      log('in', 'sendPrompt', `would type into the terminal: ${p.text}`);
+      setDocked(true);
       break;
 
     case 'open-window':
@@ -382,9 +382,17 @@ window.addEventListener('message', async (e) => {
       log('in', 'fix', `would open macOS ${p.what} settings`);
       break;
 
+    case 'open-external':
+      log('in', 'openExternal', `would open ${p.url} in the browser`);
+      break;
+
     case 'open-settings':
       log('in', 'openSettings', 'would open the settings window (/settings/ here)');
       window.open('/settings/', '_blank', 'noopener');
+      break;
+
+    case 'move-by':
+      log('in', 'moveBy', `would nudge the window by ${p.dx},${p.dy} (it stays put here)`);
       break;
 
     case 'hide':
@@ -554,8 +562,15 @@ const POSE_LABEL = {
   wave: 'hello',
 };
 
-/** One animation, playing: a GIF for the drawn buddies, a stepped sheet for packs. */
+/** One animation, playing: live SVG, a generated GIF, or a stepped sheet. */
 function poseArt(character, poseName, height = 44) {
+  if (character.vector) {
+    const colour = document.getElementById('opt-color').value || '#9aa3ad';
+    const svg = window.ClippyVectors.create(character.vector, poseName, colour);
+    svg.style.height = `${height}px`;
+    svg.style.width = `${Math.round(height * 0.8)}px`;
+    return svg;
+  }
   if (!character.sheet) {
     const img = document.createElement('img');
     const colour = (document.getElementById('opt-color').value || '#9aa3ad').replace('#', '');
@@ -608,6 +623,8 @@ function renderSprites() {
     origin.className = 'sprite-origin';
     origin.textContent = character.sheet
       ? `${character.sheet.frameWidth}×${character.sheet.frameHeight} sheet`
+      : character.vector
+      ? 'live SVG'
       : 'drawn in code';
     who.append(name, origin);
 
