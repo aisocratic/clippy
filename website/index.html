@@ -39,8 +39,8 @@
           taps you when your agent needs a decision, and lets you <strong>answer right there.</strong>
           No tab hunting. No forgotten prompts.</p>
           <div class="hero-actions">
-            <a class="btn-primary" href="https://github.com/AISocratic/clippy/archive/refs/heads/main.zip" download>Download source <span>.zip ↓</span></a>
-            <a class="btn-secondary" href="#install">Install on macOS →</a>
+            <a class="btn-primary" href="https://github.com/AISocratic/clippy/releases/latest/download/Clippy-for-Claude-Code.dmg">Download for macOS <span>.dmg ↓</span></a>
+            <a class="btn-secondary" href="#install">How to install →</a>
           </div>
           <p class="badge-row">
             <span class="badge">macOS</span>
@@ -81,21 +81,20 @@
         <div class="download-strip">
           <div>
             <span class="download-kicker">DOWNLOAD &amp; INSTALL</span>
-            <strong>Build the native macOS app locally.</strong>
-            <small>The package command creates an app and a drag-to-install DMG.</small>
+            <strong>Download the macOS app.</strong>
+            <small>Open the DMG, drag Clippy into Applications, and run it. It is
+            unsigned, so right-click&nbsp;→&nbsp;Open the first time.</small>
           </div>
-          <a class="download-button" href="https://github.com/AISocratic/clippy/archive/refs/heads/main.zip" download>Download .zip <span>↓</span></a>
+          <a class="download-button" href="https://github.com/AISocratic/clippy/releases/latest/download/Clippy-for-Claude-Code.dmg">Download .dmg <span>↓</span></a>
         </div>
-        <div class="install-head">Or clone with Git <span class="install-note"># macOS · Node 18+ · Claude Code installed</span>
-          <button class="copy" data-copy="git clone https://github.com/AISocratic/clippy && cd clippy && npm install && npm run hooks:install && npm start">copy</button>
+        <div class="install-head">Then register the hooks — once <span class="install-note"># macOS · Node 18+ · Claude Code installed</span>
+          <button class="copy" data-copy="node &quot;/Applications/Clippy for Claude Code.app/Contents/Resources/app/bin/clippy-hooks.js&quot; install">copy</button>
         </div>
-        <pre><code><span class="p">$</span> git clone https://github.com/AISocratic/clippy <span class="p">&amp;&amp;</span> cd clippy
-<span class="p">$</span> npm install            <span class="c"># pulls Electron — the only dependency</span>
-<span class="p">$</span> npm run hooks:install  <span class="c"># registers hooks in ~/.claude/settings.json</span>
-<span class="p">$</span> npm start              <span class="c"># 📎 appears in the menu bar</span></code></pre>
-        <div class="install-alt"><strong>Install the app:</strong> run <code>npm run package</code>,
-        open <em>dist/Clippy-for-Claude-Code.dmg</em>, and drag Clippy into Applications.
-        It is unsigned, so right-click&nbsp;→&nbsp;Open the first time.</div>
+        <pre><code><span class="p">$</span> node "/Applications/Clippy for Claude Code.app/Contents/Resources/app/bin/clippy-hooks.js" install
+<span class="c"># registers nine tagged hooks in ~/.claude/settings.json — 📎 appears in the menu bar</span></code></pre>
+        <div class="install-alt"><strong>Prefer source?</strong> <code>git clone https://github.com/AISocratic/clippy
+        &amp;&amp; cd clippy &amp;&amp; npm install &amp;&amp; npm run hooks:install &amp;&amp; npm start</code> —
+        and <code>npm run package</code> builds this same DMG locally.</div>
       </div>
 
       <div class="shots" aria-label="Real captures of Clippy's cards">
@@ -378,7 +377,7 @@ Clippy app (Electron)
       </div>
       <h2>Give your agents a face.</h2>
       <p class="cta-sub">macOS · works with your existing Claude Code login · watch mode costs nothing extra</p>
-      <p class="cta-actions"><a class="btn-big" href="https://github.com/AISocratic/clippy/archive/refs/heads/main.zip" download>Download source .zip ↓</a><a class="cta-link" href="#install">Installation guide →</a></p>
+      <p class="cta-actions"><a class="btn-big" href="https://github.com/AISocratic/clippy/releases/latest/download/Clippy-for-Claude-Code.dmg">Download for macOS .dmg ↓</a><a class="cta-link" href="#install">Installation guide →</a></p>
     </div>
   </section>
 
