@@ -40,11 +40,18 @@ test('the drawn cast and the sizes line up with what the menus need', () => {
 
 test('every character in the menus has art drawn for it', () => {
   const { THEMES } = require('../scripts/make-buddies');
+  const vectors = require('../src/renderer/vector-buddies');
   const drawn = THEMES.map((t) => t.id);
   const ids = CHARACTERS.map((c) => c.id);
 
   assert.deepEqual([...new Set(ids)], ids, 'nobody may be listed twice');
-  for (const id of ids) assert.ok(drawn.includes(id), `${id} is offered but never drawn`);
+  for (const character of CHARACTERS) {
+    const available = drawn.includes(character.id) || (character.vector && vectors.has(character.vector));
+    assert.ok(available, `${character.id} is offered but never drawn`);
+  }
+  for (const character of CHARACTERS.filter((c) => c.vector)) {
+    assert.deepEqual(vectors.poses, character.poses, `${character.id} must speak every pose`);
+  }
   // 🖇 Clippy (classic) was folded back into 📎 Clippy the moment Clippy got the
   // original silhouette back: two identical paperclips in a menu helps nobody.
   assert.ok(!ids.includes('classic'), 'the duplicate paperclip is gone');

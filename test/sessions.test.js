@@ -205,6 +205,22 @@ test('Codex sessions keep their identity and detect non-zero PostToolUse exits',
   assert.equal(t.agentFor('cx'), 'codex');
 });
 
+test('remembers a model reported by session hooks', () => {
+  const t = new SessionTracker();
+  const start = t.handle('SessionStart', null, {
+    ...payload('modelled'),
+    model: 'claude-sonnet-5',
+  });
+  assert.equal(start.model, 'claude-sonnet-5');
+  assert.equal(t.modelFor('modelled'), 'claude-sonnet-5');
+
+  t.handle('UserPromptSubmit', null, {
+    ...payload('modelled'),
+    model: { id: 'claude-opus-5', display_name: 'Opus' },
+  });
+  assert.equal(t.modelFor('modelled'), 'claude-opus-5');
+});
+
 test('handles missing cwd and unknown events gracefully', () => {
   const t = new SessionTracker();
   const r = t.handle('Notification', null, { session_id: 'deadbeefcafe' });

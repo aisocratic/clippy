@@ -21,8 +21,9 @@ const { createHookServer } = require('./server');
 const { SessionTracker, WORKING, WAITING } = require('./sessions');
 const { DecisionBroker, toHookResponse, describeToolCall } = require('./decisions');
 const { DriveSession } = require('./sdk-session');
-const { checkDrift, checkCodexDrift } = require('../bin/clippy-hooks');
+const { checkDrift, checkCodexDrift, installToFiles } = require('../bin/clippy-hooks');
 const { identityFor } = require('./identity');
+const { sessionBannerOutput } = require('./session-banner');
 const { SIZES, sizeList, allCharacters, characterFor } = require('./characters');
 const { ACTIONS } = require('./actions');
 const { windowActionFor } = require('./visibility');
@@ -45,8 +46,8 @@ const PORT = Number(process.env.CLIPPY_PORT || 43117);
 
 // Clippy is a small paperclip by default — the size it is when perched on a
 // window — and only takes the full window when there's a card to read.
-const WIN_W = 268;
-const WIN_H = 470; // fallback until the renderer reports what it needs
+const WIN_W = 310;
+const WIN_H = 520; // fallback until the renderer reports what it needs
 const WIN_GAP = 6;
 const ROW_STEP = 160; // how far a second row of Clippys sits above the first
 
@@ -76,6 +77,7 @@ const broker = new DecisionBroker({ hardCapMs: 100_000 });
 let drive = null; // the active Clippy-driven (Agent SDK) session, if any
 let tray = null;
 let hookDrift = null; // set when the installed hooks are older than this build
+let hooksAbsent = false; // no agent has any Clippy hooks — a fresh (DMG) install
 
 /* ---------------- Settings (persisted across restarts) ---------------- */
 
@@ -1121,7 +1123,13 @@ function refreshUsageWindowsFor(agent) {
  */
 async function collectUsage(key) {
   const agent = tracker.agentFor(key);
-  const session = await sessionUsage(tracker.transcriptFor(key));
+  const transcriptSession = await sessionUsage(tracker.transcriptFor(key));
+  const trackedModel = tracker.modelFor(key);
+  const session = transcriptSession
+    ? { ...transcriptSession, model: transcriptSession.model || trackedModel }
+    : trackedModel
+    ? { model: trackedModel, context: 0, contextLimit: 0, totals: {}, turns: 0 }
+    : null;
   const now = Date.now();
   let cached = usageCache.get(agent);
   if (!cached || now - cached.at > USAGE_CACHE_MS) {
@@ -1189,9 +1197,15 @@ function trayMenu() {
     // The quick switches stay a click away; the window has the rest.
     { label: 'Quick settings', submenu: globalSettingsMenu() },
     { type: 'separator' },
+    ...(hooksAbsent
+      ? [
+          { label: '📎 Install hooks — Clippy can’t see sessions yet', click: installHooksNow },
+          { type: 'separator' },
+        ]
+      : []),
     ...(hookDrift
       ? [
-          { label: '⚠ Hooks are out of date — run `npm run hooks:install`', enabled: false },
+          { label: '⚠ Hooks are out of date — update them now', click: installHooksNow },
           { type: 'separator' },
         ]
       : []),
@@ -1423,7 +1437,7 @@ function startSandbox() {
 // sized for a full card side by side, and cards get a hold long enough that
 // nothing expires while you're comparing states across the screen.
 const GALLERY_CELL_W = WIN_W + 14;
-const GALLERY_CELL_H = 470;
+const GALLERY_CELL_H = 520;
 const GALLERY_HOLD_SECS = 60 * 60;
 
 /**
@@ -1798,6 +1812,18 @@ function handleHookEvent(eventName, kind, payload, ctx) {
   const reaction = tracker.handle(eventName, kind, payload);
   if (reaction) emitPassive(reaction);
   if (eventName === 'SessionStart' && payload.agent === 'claude') maybeNudgePlanCalibration(payload);
+  if (eventName === 'SessionStart' && reaction) {
+    const buddy = buddies.get(reaction.sessionId);
+    const character = buddy?.character || 'clip';
+    const label = allCharacters().find((item) => item.id === character)?.label || 'Clippy';
+    return sessionBannerOutput({
+      character,
+      label,
+      project: reaction.name,
+      agent: reaction.agentName,
+      model: reaction.model,
+    });
+  }
   return undefined;
 }
 
@@ -1829,17 +1855,68 @@ function warnOnHookDrift() {
     } catch (err) {
       console.warn(`clippy: could not check ${config.agent} hooks:`, err.message);
     }
+
   }
-  if (installed.length === 0) {
-    console.warn('clippy: no hooks installed yet — run `npm run hooks:install`');
+  // Re-run after every install, so a fixed state clears the tray warnings.
+  hooksAbsent = installed.length === 0;
+  hookDrift = stale.length ? { agents: stale } : null;
+  if (hooksAbsent) {
+    console.warn('clippy: no hooks installed yet — use "Install hooks" in the 📎 menu');
   }
-  if (stale.length) {
-    hookDrift = { agents: stale };
+  if (hookDrift) {
     console.warn(
       `clippy: installed hooks are out of date for ${stale.map((d) => d.agent).join(', ')} — ` +
-        'run `npm run hooks:install`'
+        'use "update them now" in the 📎 menu'
     );
   }
+}
+
+/**
+ * The one-click path: write the hooks with the very code `npm run hooks:install`
+ * uses, then re-check so the menu and warnings reflect the fix immediately.
+ * Codex hooks are only written when ~/.codex already exists — no point seeding
+ * a config for an agent that isn't there.
+ */
+function installHooksNow() {
+  const agents = ['claude'];
+  if (fs.existsSync(path.join(os.homedir(), '.codex'))) agents.push('codex');
+  const results = installToFiles({ port: PORT, agents });
+  warnOnHookDrift();
+  const failed = results.filter((r) => !r.ok);
+  if (failed.length) {
+    dialog.showMessageBox({
+      type: 'warning',
+      message: 'Some hooks could not be installed',
+      detail: failed.map((f) => `${f.agent}: ${f.error}`).join('\n'),
+    });
+    return;
+  }
+  notify(
+    'Hooks installed',
+    `${agents.map((a) => (a === 'claude' ? 'Claude Code' : 'Codex')).join(' and ')} will report here — restart any running sessions.`,
+    { silent: false }
+  );
+}
+
+/**
+ * A fresh install (the DMG path) has no hooks yet, so the app would just sit
+ * silent. Offer the one-click install instead of pointing at a terminal.
+ */
+async function offerHookInstall() {
+  const { response } = await dialog.showMessageBox({
+    type: 'info',
+    message: 'Install the agent hooks?',
+    detail:
+      'Clippy sees your sessions through small hooks that POST lifecycle events to ' +
+      `127.0.0.1:${PORT} — nothing leaves your machine, and nothing is ever ` +
+      'auto-approved. This adds tagged entries to ~/.claude/settings.json ' +
+      '(and Codex’s hooks.json, if you use Codex) — only Clippy’s own tagged ' +
+      'entries are ever touched, and uninstalling removes exactly those.',
+    buttons: ['Install hooks', 'Not now'],
+    defaultId: 0,
+    cancelId: 1,
+  });
+  if (response === 0) installHooksNow();
 }
 
 /** Forget sessions whose terminal vanished, and release anything held for them. */
@@ -1868,6 +1945,9 @@ app.whenReady().then(async () => {
   loadSettings();
   warnOnHookDrift();
   createTray();
+  // The DMG path: first launch has no hooks and no terminal in sight. Ask once
+  // per run; the tray menu keeps the same action for later.
+  if (hooksAbsent) offerHookInstall();
   setInterval(sweepStaleSessions, SWEEP_INTERVAL_MS).unref?.();
 
   ipcMain.handle('clippy-context', async (e) => {
@@ -1895,7 +1975,7 @@ app.whenReady().then(async () => {
     return {
       name: buddy.name,
       agent: buddy.agent,
-      model: session?.model || '',
+      model: session?.model || tracker.modelFor(buddy.sessionId) || '',
     };
   });
   ipcMain.on('clippy-mode', (e, payload) => {

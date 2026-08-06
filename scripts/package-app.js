@@ -47,6 +47,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const zlib = require('node:zlib');
+const crypto = require('node:crypto');
 const { execFileSync } = require('node:child_process');
 
 const { drawClip, clipPalette, W, H } = require('./make-buddies');
@@ -191,7 +192,26 @@ function plistDelete(plist, key) {
 
 /* ---------------- The build itself ---------------- */
 
-function packageApp({ dmg = true } = {}) {
+function sha256File(file) {
+  const hash = crypto.createHash('sha256');
+  hash.update(fs.readFileSync(file));
+  return hash.digest('hex');
+}
+
+function packageApp({
+  dmg = true,
+  signIdentity = process.env.CLIPPY_SIGN_IDENTITY || null,
+  notaryProfile = process.env.CLIPPY_NOTARY_PROFILE || null,
+  requireReleaseSigning = false,
+} = {}) {
+  if (notaryProfile && !signIdentity) {
+    throw new Error('CLIPPY_NOTARY_PROFILE requires CLIPPY_SIGN_IDENTITY');
+  }
+  if (requireReleaseSigning && (!signIdentity || !notaryProfile)) {
+    throw new Error(
+      'release packaging requires CLIPPY_SIGN_IDENTITY and CLIPPY_NOTARY_PROFILE'
+    );
+  }
   const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
   const electronApp = path.join(ROOT, 'node_modules', 'electron', 'dist', 'Electron.app');
   if (!fs.existsSync(electronApp)) {
@@ -240,6 +260,17 @@ function packageApp({ dmg = true } = {}) {
       2
     )
   );
+  let commit = null;
+  try {
+    commit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: ROOT, encoding: 'utf8' }).trim();
+  } catch {
+    // Source archives may have no .git directory. The release verifier treats
+    // a missing commit as a local build, never as a tagged public artifact.
+  }
+  fs.writeFileSync(
+    path.join(appDir, 'build.json'),
+    JSON.stringify({ version: pkg.version, commit }, null, 2)
+  );
   // Electron only falls back to its default app when Resources/app is missing;
   // ours isn't, so the demo asar is 6MB of dead weight.
   fs.rmSync(path.join(appBundle, 'Contents', 'Resources', 'default_app.asar'), { force: true });
@@ -271,10 +302,18 @@ function packageApp({ dmg = true } = {}) {
   fs.rmSync(path.join(resources, 'electron.icns'), { force: true });
   plistSet(plist, 'CFBundleIconFile', 'string', 'clippy.icns');
 
-  // 5. Re-seal. Ad-hoc (`--sign -`) needs no certificate; without *some* valid
-  // signature an Apple Silicon Mac refuses to launch the binary at all.
-  console.log('ad-hoc signing…');
-  execFileSync('codesign', ['--force', '--deep', '--sign', '-', appBundle], { stdio: 'ignore' });
+  // 5. Re-seal. Developer ID signing is used for releases when the caller has
+  // configured a keychain identity. Local builds retain the ad-hoc fallback,
+  // but `npm run package:release` refuses to produce a public artifact without
+  // both signing and notarization credentials.
+  console.log(signIdentity ? 'Developer ID signing…' : 'ad-hoc signing (local build only)…');
+  const appSignArgs = signIdentity
+    ? ['--force', '--deep', '--options', 'runtime', '--timestamp', '--sign', signIdentity, appBundle]
+    : ['--force', '--deep', '--sign', '-', appBundle];
+  execFileSync('codesign', appSignArgs, { stdio: 'ignore' });
+  execFileSync('codesign', ['--verify', '--deep', '--strict', '--verbose=2', appBundle], {
+    stdio: 'ignore',
+  });
 
   // 6. The disk image: the app plus an /Applications shortcut to drag it onto.
   let dmgFile = null;
@@ -291,14 +330,39 @@ function packageApp({ dmg = true } = {}) {
       { stdio: 'ignore' }
     );
     fs.rmSync(stage, { recursive: true, force: true });
+
+    if (signIdentity) {
+      execFileSync(
+        'codesign',
+        ['--force', '--timestamp', '--sign', signIdentity, dmgFile],
+        { stdio: 'ignore' }
+      );
+    }
+    if (notaryProfile) {
+      console.log('submitting for Apple notarization…');
+      execFileSync(
+        'xcrun',
+        ['notarytool', 'submit', dmgFile, '--keychain-profile', notaryProfile, '--wait'],
+        { stdio: 'inherit' }
+      );
+      execFileSync('xcrun', ['stapler', 'staple', dmgFile], { stdio: 'inherit' });
+      execFileSync('xcrun', ['stapler', 'validate', dmgFile], { stdio: 'inherit' });
+    }
+  }
+
+  let checksumFile = null;
+  if (dmgFile) {
+    checksumFile = `${dmgFile}.sha256`;
+    fs.writeFileSync(checksumFile, `${sha256File(dmgFile)}  ${path.basename(dmgFile)}\n`);
   }
 
   console.log(`\npackaged: ${appBundle}`);
   if (dmgFile) {
     const mb = (fs.statSync(dmgFile).size / (1024 * 1024)).toFixed(1);
     console.log(`disk image: ${dmgFile} (${mb} MB)`);
+    console.log(`checksum: ${checksumFile}`);
   }
-  return { appBundle, dmgFile };
+  return { appBundle, dmgFile, checksumFile, signed: Boolean(signIdentity), notarized: Boolean(notaryProfile) };
 }
 
 if (require.main === module) {
@@ -306,7 +370,10 @@ if (require.main === module) {
     console.error('package-app: this builds a macOS bundle and needs a Mac to do it.');
     process.exit(1);
   }
-  packageApp({ dmg: !process.argv.includes('--no-dmg') });
+  packageApp({
+    dmg: !process.argv.includes('--no-dmg'),
+    requireReleaseSigning: process.argv.includes('--require-release-signing'),
+  });
 }
 
-module.exports = { encodePng, renderIconPixels, packageApp };
+module.exports = { encodePng, renderIconPixels, sha256File, packageApp };

@@ -56,6 +56,7 @@
     openWindow: (opts) => post('open-window', opts || {}),
     pointAtPrompt: () => post('point'),
     openSettings: () => post('open-settings'),
+    openExternal: (url) => post('open-external', { url }),
     fix: (what) => post('fix', { what }),
     setMode: (mode, height) => post('mode', { mode, height }),
     identity: async () => ({
