@@ -897,7 +897,10 @@ function showNextRequest() {
 
   cardOptions.classList.add('hidden');
   cardOptions.innerHTML = '';
-  cardInput.classList.remove('hidden');
+  // The review card leads with its two actions; the feedback box only appears
+  // once "Send feedback" is clicked. Approvals keep the always-there box — the
+  // note rides along with whichever button you press.
+  cardInput.classList.toggle('hidden', !isApproval);
   btnSubmit.classList.add('hidden');
   btnDismiss.classList.add('hidden');
 
@@ -918,7 +921,9 @@ function showNextRequest() {
   btnPass.classList.toggle('hidden', !isApproval || next.noPass); // Drive has no terminal
   btnGood.classList.toggle('hidden', isApproval);
   btnFeedback.classList.toggle('hidden', isApproval);
-  btnFeedback.disabled = true;
+  // On a review card the first click on "Send feedback" opens the box, so the
+  // button starts enabled; once the box is open it disables until there's text.
+  btnFeedback.disabled = false;
 
   cardEl.classList.remove('hidden');
   syncMode();
@@ -1268,7 +1273,17 @@ btnPass.addEventListener('click', () => {
   if (canOpen) window.clippyAPI.openWindow({ point: true });
 });
 btnGood.addEventListener('click', () => decide('ok'));
+// Two-step on the review card: the first click opens the feedback box (it is
+// hidden until then), the second — once there's text — sends the note back to
+// Claude through the same decide('feedback', …) wiring as before.
 btnFeedback.addEventListener('click', () => {
+  if (cardInput.classList.contains('hidden')) {
+    cardInput.classList.remove('hidden');
+    btnFeedback.disabled = true; // nothing typed yet
+    syncMode(); // the card just got taller — the window follows
+    cardInput.focus();
+    return;
+  }
   const msg = cardInput.value.trim();
   if (msg) decide('feedback', msg);
 });
