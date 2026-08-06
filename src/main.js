@@ -26,6 +26,7 @@ const { identityFor } = require('./identity');
 const { SIZES, sizeList, allCharacters, characterFor } = require('./characters');
 const { ACTIONS } = require('./actions');
 const { windowActionFor } = require('./visibility');
+const { EDGE_OPTIONS, EDGE_IDS, edgeLineup, edgeHome } = require('./arrange');
 const {
   terminalFromHeaders,
   resolveTarget,
@@ -87,12 +88,14 @@ const settings = {
   size: 'medium', // how big that buddy is drawn, and stays
   plan: 'unknown', // which plan's allowance the usage bars are measured against
   planLimits: {}, // your own token allowances, when the plan is "custom"
+  arrangeEdge: '', // screen edge new buddies line up on; '' = the classic corner
 };
 
 // Settings that aren't simple on/off switches, with the values they accept.
 const CHOICES = {
   size: () => Object.keys(SIZES),
   plan: () => PLANS.map((p) => p.id),
+  arrangeEdge: () => EDGE_IDS,
 };
 
 // The cast is read fresh each time so a sprite theme dropped into
@@ -316,6 +319,50 @@ function cornerBounds(slot, width, height) {
 }
 
 /**
+ * A buddy's default spot on screen: the classic bottom-right corner stack,
+ * unless "Organize buddies" has made an edge the house style — then new (and
+ * un-dragged) buddies file along that edge instead, until you pick another.
+ */
+function homeBounds(slot, width, height) {
+  const edge = settings.arrangeEdge;
+  if (!edge) return cornerBounds(slot, width, height);
+  const { workArea } = screen.getPrimaryDisplay();
+  // Slots step by the full panel width along horizontal edges (so an open card
+  // never lands on the neighbour) and by the compact height along vertical
+  // ones — the same pitches cornerBounds uses for its columns and rows.
+  const [, compactH] = compactSize();
+  const step = edge === 'top' || edge === 'bottom' ? WIN_W + WIN_GAP : compactH + WIN_GAP;
+  return edgeHome(workArea, edge, slot, { width, height }, WIN_GAP, step);
+}
+
+/**
+ * "Organize buddies" from the tray: line the buddies up along one edge of the
+ * screen, evenly spaced, and remember the edge as the default spot for new
+ * ones. Perched (docked) buddies are left alone — a perch tracks the terminal
+ * window its session lives in, and yanking it to a screen edge would undo the
+ * follow-the-window behaviour the user (or autoPerch) asked for. Only the
+ * free-floating buddies fall in.
+ */
+function organizeBuddies(edge) {
+  settings.arrangeEdge = edge;
+  saveSettings();
+  const free = [...buddies.values()].filter((b) => !b.dock && !b.win.isDestroyed());
+  const [width, height] = compactSize();
+  const { workArea } = screen.getPrimaryDisplay();
+  const spots = edgeLineup(workArea, edge, free.length, { width, height }, WIN_GAP);
+  free.forEach((buddy, i) => {
+    stopWalking(buddy); // the lineup owns the window now, not the stroll
+    // From here the lineup spot outranks the corner, exactly like a hand move:
+    // cards and menus grow around it instead of snapping back.
+    buddy.dragged = true;
+    // Park the compact footprint on the spot, then let placeBuddy re-grow any
+    // open card around it — same as a card opening over a hand-placed buddy.
+    setBuddyBounds(buddy, { ...spots[i], width, height });
+    placeBuddy(buddy, buddy.mode || 'compact');
+  });
+}
+
+/**
  * The one door in and out of moving a buddy's window. `lastPlaced` is what
  * tells the `moved` listener a bounds change was ours, not your hand on the
  * paperclip — so every programmatic move, including mid-walk, has to go
@@ -372,7 +419,7 @@ function buddyFor(key, name = '') {
 
   const slot = nextFreeSlot();
   const [compactW, compactH] = compactSize();
-  const { x, y } = cornerBounds(slot, compactW, compactH);
+  const { x, y } = homeBounds(slot, compactW, compactH);
   const identity = identityFor(key, name);
   const win = new BrowserWindow({
     width: compactW,
@@ -563,7 +610,7 @@ function placeBuddy(buddy, mode, wantHeight) {
         height,
         screen.getDisplayMatching(buddy.dock.bounds).workArea
       )
-    : cornerBounds(buddy.slot, width, height);
+    : homeBounds(buddy.slot, width, height);
 
   setBuddyBounds(buddy, { ...spot, width, height });
   buddy.win.webContents.send('clippy-event', {
@@ -1123,6 +1170,17 @@ function trayMenu() {
       click: () => {
         for (const b of buddies.values()) hideBuddy(b.sessionId, { unpin: true });
       },
+    },
+    {
+      // Lines the free-floating buddies up along an edge, and makes that edge
+      // the default spot for new ones. Perched buddies stay on their windows.
+      label: 'Organize buddies',
+      submenu: EDGE_OPTIONS.map(({ id, label }) => ({
+        label,
+        type: 'radio',
+        checked: settings.arrangeEdge === id,
+        click: () => organizeBuddies(id),
+      })),
     },
     ...(sessionItems.length ? [{ type: 'separator' }, ...sessionItems] : []),
     { type: 'separator' },
