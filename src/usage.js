@@ -39,9 +39,14 @@ const WEEK_WINDOW_MS = 7 * 24 * HOUR_MS;
 // every Opus id has said "opus" in it so far.
 const OPUS = /opus/i;
 
-/** Models with the long-context variant carry it in the id: `claude-opus-5[1m]`. */
+/**
+ * Models with the long-context variant carry it in the id: `claude-opus-5[1m]`.
+ * The Fable family is 1M natively — transcripts record the plain id
+ * (`claude-fable-5`) with no marker, so match the family name itself.
+ */
 function contextLimitFor(model = '') {
-  return /\[1m\]|-1m\b/i.test(String(model)) ? LONG_CONTEXT : DEFAULT_CONTEXT;
+  const id = String(model);
+  return /\[1m\]|-1m\b/i.test(id) || /fable/i.test(id) ? LONG_CONTEXT : DEFAULT_CONTEXT;
 }
 
 const emptyTotals = () => ({ input: 0, output: 0, cacheRead: 0, cacheCreate: 0 });
