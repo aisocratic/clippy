@@ -1,0 +1,25 @@
+name: Feature request
+description: Suggest an improvement grounded in a real coding-agent workflow.
+title: "[Feature]: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Workflow problem
+      description: What happens today, with how many sessions and which agent/terminal?
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+      description: Describe the result rather than prescribing an implementation.
+    validations:
+      required: true
+  - type: textarea
+    id: alternative
+    attributes:
+      label: Current workaround
+    validations:
+      required: true

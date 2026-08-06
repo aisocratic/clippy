@@ -2,6 +2,13 @@
 
 By [AI Socratic](https://aisocratic.org).
 
+**[Download the latest Apple-silicon DMG](https://github.com/AISocratic/clippy/releases/latest/download/Clippy-for-Claude-Code.dmg)** · [Compatibility](docs/COMPATIBILITY.md) · [Troubleshooting](docs/TROUBLESHOOTING.md) · [Privacy](docs/PRIVACY.md)
+
+Current packaged release: **Apple silicon, macOS 11+**. Intel users can build
+from source. The public `v0.1.0` DMG is ad-hoc signed, so it requires
+right-click → **Open** on first launch; signed/notarized release packaging is
+now enforced by `npm run package:release` once Apple credentials are configured.
+
 **One little Clippy per Claude Code or Codex session**, living on your MacBook, each one
 knowing what its session is doing right now — and letting you **answer it right
 there**: approve or deny permission requests, approve or revise a plan, pick an
@@ -163,6 +170,11 @@ distribution:
 ```bash
 npm run package   # dist/Clippy for Claude Code.app + dist/Clippy-for-Claude-Code.dmg
 ```
+
+That command intentionally makes an ad-hoc local build. Maintainers producing
+a public artifact must follow [the release checklist](docs/RELEASING.md) and
+use `npm run package:release`, which fails unless Developer ID signing and
+Apple notarization are configured.
 
 That copies the prebuilt Electron.app out of `node_modules`, puts this app's
 source into `Contents/Resources/app/` with the buddy art pre-drawn, rewrites
