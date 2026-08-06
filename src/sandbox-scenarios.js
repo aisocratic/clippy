@@ -16,7 +16,7 @@
  */
 
 const { describeToolCall, activityLabel } = require('./decisions');
-const { PLANS, SESSION_WINDOW_MS, WEEK_WINDOW_MS } = require('./usage');
+const { SESSION_WINDOW_MS, WEEK_WINDOW_MS } = require('./usage');
 
 // The session key the dev buddy is created under. `dev:` is also what tells
 // the usage panel to answer from canned numbers instead of a transcript.
@@ -342,7 +342,6 @@ function sandboxUsage(name = NAME) {
     return { ...week, byModel, totals: sumTotals(Object.values(byModel)) };
   })();
 
-  const plan = PLANS.find((p) => p.id === 'max20') || PLANS[0];
   return {
     name,
     now,
@@ -362,8 +361,6 @@ function sandboxUsage(name = NAME) {
       week,
       weekOpus,
     },
-    limits: plan.limits || null,
-    plan: { id: plan.id, label: plan.label, estimated: Boolean(plan.estimated) },
   };
 }
 

@@ -37,8 +37,7 @@ const {
   promptPosition,
   typeAndSubmit,
 } = require('./terminal');
-const { sessionUsage, lastAssistantText, usageWindows, readOfficialUsage, planLimitsFor, cleanLimits, PLANS } =
-  require('./usage');
+const { sessionUsage, lastAssistantText, usageWindows, readOfficialUsage } = require('./usage');
 const { checkForUpdates, localBuild } = require('./updates');
 const { DEV_SESSION, eventsFor, storyList, sandboxUsage } = require('./sandbox-scenarios');
 const { startCompletionPoll, coalesceAsync } = require('./async-control');
@@ -89,15 +88,12 @@ const settings = {
   autoPerch: true, // appear on the session's own window, not the screen corner
   characterByProject: {}, // project name -> character id, when you've picked one
   size: 'medium', // how big that buddy is drawn, and stays
-  plan: 'unknown', // which plan's allowance the usage bars are measured against
-  planLimits: {}, // your own token allowances, when the plan is "custom"
   arrangeEdge: '', // screen edge new buddies line up on; '' = the classic corner
 };
 
 // Settings that aren't simple on/off switches, with the values they accept.
 const CHOICES = {
   size: () => Object.keys(SIZES),
-  plan: () => PLANS.map((p) => p.id),
   arrangeEdge: () => EDGE_IDS,
 };
 
@@ -143,10 +139,7 @@ function saveSettings() {
 
 function setSetting(key, value) {
   if (!(key in settings) || key === 'characterByProject') return;
-  if (key === 'planLimits') {
-    // Numbers you typed yourself, so they get sanity-checked rather than cast.
-    settings.planLimits = cleanLimits(value);
-  } else if (CHOICES[key]) {
+  if (CHOICES[key]) {
     if (!CHOICES[key]().includes(value)) return;
     settings[key] = value;
   } else {
@@ -175,7 +168,6 @@ function settingsPayload(buddy) {
     ...(buddy ? { character: buddy.character } : null),
     characters: allCharacters(),
     sizes: sizeList(),
-    plans: PLANS,
   };
 }
 
@@ -1118,26 +1110,6 @@ function tellBuddy(key, message, { sticky = false, fix = null } = {}) {
   buddy.win.showInactive();
 }
 
-// Once a day at most, and only while the plan is still unset — Claude Code
-// never writes down what you're allowed, so the moment you're most likely to
-// actually go run `/usage` and come back with a number is right when a fresh
-// conversation starts.
-const PLAN_NUDGE_COOLDOWN_MS = 24 * 60 * 60 * 1000;
-let lastPlanNudgeAt = 0;
-
-function maybeNudgePlanCalibration(payload) {
-  if (!['startup', 'clear'].includes(payload.source)) return;
-  if (settings.plan !== 'unknown') return;
-  if (Date.now() - lastPlanNudgeAt < PLAN_NUDGE_COOLDOWN_MS) return;
-  lastPlanNudgeAt = Date.now();
-  tellBuddy(
-    payload.session_id || 'unknown',
-    "New conversation — want your token bars to mean something? Run /usage, then tell me the " +
-      'number under Settings → Usage & limits.',
-    { fix: 'plan' }
-  );
-}
-
 /* ---------------- Token usage (right-click) ---------------- */
 
 const CLAUDE_PROJECTS_DIR = path.join(os.homedir(), '.claude', 'projects');
@@ -1183,7 +1155,6 @@ async function collectUsage(key) {
     cached = { at: now, windows: await refreshUsageWindowsFor(agent)(now) };
     usageCache.set(agent, cached);
   }
-  const plan = PLANS.find((p) => p.id === settings.plan) || PLANS[0];
   return {
     name: buddies.get(key)?.name || '',
     agent,
@@ -1196,10 +1167,6 @@ async function collectUsage(key) {
     recap: await lastAssistantText(tracker.transcriptFor(key), { maxChars: 200 }),
     windows: cached.windows,
     now,
-    limits: agent === 'claude' ? planLimitsFor(settings) : null,
-    plan: agent === 'claude'
-      ? { id: plan.id, label: plan.label, estimated: Boolean(plan.estimated) }
-      : { id: 'unknown', label: agentDisplayName(agent), estimated: false },
   };
 }
 
@@ -1874,7 +1841,6 @@ function handleHookEvent(eventName, kind, payload, ctx) {
 
   const reaction = tracker.handle(eventName, kind, payload);
   if (reaction) emitPassive(reaction);
-  if (eventName === 'SessionStart' && payload.agent === 'claude') maybeNudgePlanCalibration(payload);
   if (eventName === 'SessionStart' && reaction) {
     const buddy = buddies.get(reaction.sessionId);
     const character = buddy?.character || 'clip';
@@ -2067,7 +2033,6 @@ app.whenReady().then(async () => {
     // The "fix it" button on a sticky message.
     const buddy = buddyForSender(e.sender);
     if (what === 'accessibility') askForWindowAccess(buddy?.sessionId || null, { force: true });
-    if (what === 'plan') openSettingsWindow('limits');
   });
   ipcMain.on('clippy-open-external', (_e, url) => {
     // Only ever hand the OS an https link — this window must not become a

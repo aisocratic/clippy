@@ -269,13 +269,11 @@ port first wins.
     automatically), then three bars for what every session on this machine has
     spent in the windows `/usage` reports on — the rolling 5-hour block, the
     week across all models, and Opus's own week — plus the models you leaned on
-    most. Tell Clippy your plan (Pro, Max 5×, Max 20×, or your own Custom
-    numbers) under **Usage & limits** in Settings (📎 in the menu bar) and those
-    become real allowance bars, spend over limit; until then they're hatched
-    bars showing each window's share of the week, spend with nothing to compare
-    it to. Claude Code keeps the real 5-hour/weekly allowances server-side, so
-    `/usage` is still the source of truth — Clippy's numbers are for
-    calibrating the estimate, not replacing it.
+    most. When Claude Code has cached its own `/usage` percentages, Clippy reads
+    them and shows the real allowance bars automatically — nothing to configure.
+    Until then the bars are hatched shares of the week: spend, with nothing to
+    compare it to. Claude Code keeps the real 5-hour/weekly allowances
+    server-side, so `/usage` is the source of truth either way.
   - **a box to keep chatting** — type what you want and hit Enter: Clippy
     raises that session's terminal and types it onto the prompt line for you
     (simulated keystrokes via the same Accessibility access perching uses,
@@ -484,17 +482,6 @@ and read, and it has five sections:
   currently on screen, or set that preference per project under **Sessions**.
   There's a link to [openpets.dev/gallery](https://openpets.dev/gallery) for
   downloading more.
-- **Usage & limits** — turns the token panel's spend bars into real allowance
-  bars. Pick your plan (**Pro**, **Max 5×**, **Max 20×**) for a rough estimate
-  scaled off Anthropic's own 5×/20× steps, or **Custom** to type in your own
-  numbers for the 5-hour block, the week, and Opus's week. To get real numbers:
-  run `/usage` in Claude Code, right-click a buddy, and back out the allowance
-  from the percentage each side reports (40% in `/usage` against 2.0M in Clippy
-  means a ~5M allowance) — type that in under Custom and every bar after that
-  is honest instead of a guess. Clippy can't read your plan tier itself —
-  Claude Code never persists it anywhere and `/usage` is a live API call that
-  leaves no trace on disk — so until you've set one, a new session or `/clear`
-  nudges you (once a day) to go run `/usage` and come back with the number.
 - **Updates** — which copy you're running (checkout vs packaged app, version,
   commit), and a button that compares it with the tip of `main` on GitHub. The
   one deliberate non-localhost request in the app, made only when you press it.

@@ -31,7 +31,7 @@ const { describeToolCall, activityLabel, toHookResponse } = require('../src/deci
 const { PALETTE } = require('../src/identity');
 const { allCharacters, sizeList } = require('../src/characters');
 const { ACTIONS } = require('../src/actions');
-const { PLANS, SESSION_WINDOW_MS, WEEK_WINDOW_MS } = require('../src/usage');
+const { SESSION_WINDOW_MS, WEEK_WINDOW_MS } = require('../src/usage');
 
 const args = process.argv.slice(2);
 const argv = (flag, fallback) => {
@@ -631,7 +631,6 @@ const totals = (input, output, cacheRead, cacheCreate) => ({
 });
 
 const HOUR = 60 * 60 * 1000;
-const limitsOf = (id) => (PLANS.find((p) => p.id === id) || {}).limits || null;
 const sumTotals = (list) =>
   list.reduce(
     (into, t) => ({
@@ -677,18 +676,13 @@ function usagePayloads() {
     return { ...week, byModel, totals: sumTotals(Object.values(byModel)) };
   };
 
-  /** A payload is a session, the three windows, and whatever plan you've told it. */
-  const payload = (session, block, week, plan) => ({
+  /** A payload is a session and the three windows — allowances only ever come
+      from Claude Code's own /usage cache (the `official` block), never settings. */
+  const payload = (session, block, week) => ({
     name: NAME,
     now,
     session,
     windows: { session: block, week, weekOpus: opusOnly(week) },
-    limits: plan.id === 'custom' ? plan.limits : limitsOf(plan.id),
-    plan: {
-      id: plan.id,
-      label: plan.label || (PLANS.find((p) => p.id === plan.id) || {}).label || 'Not set',
-      estimated: Boolean((PLANS.find((p) => p.id === plan.id) || {}).estimated),
-    },
   });
 
   const busyWeek = win(
@@ -717,8 +711,7 @@ function usagePayloads() {
     empty: payload(
       { model: '', turns: 0, context: 0, contextLimit: 200_000, totals: totals(0, 0, 0, 0) },
       win(SESSION_WINDOW_MS, 0, {}, { sessions: 0 }),
-      win(WEEK_WINDOW_MS, 0, {}, { sessions: 0 }),
-      { id: 'unknown' }
+      win(WEEK_WINDOW_MS, 0, {}, { sessions: 0 })
     ),
 
     // Ten minutes into a new session, on a quiet week.
@@ -738,8 +731,7 @@ function usagePayloads() {
         2 * 24 * HOUR,
         { 'claude-sonnet-5': totals(120_000, 60_000, 3_400_000, 210_000) },
         { sessions: 3 }
-      ),
-      { id: 'unknown' }
+      )
     ),
 
     // A long session with the context nearly full — the bar that matters most.
@@ -754,8 +746,7 @@ function usagePayloads() {
       win(SESSION_WINDOW_MS, 4.1 * HOUR, {
         'claude-opus-5': totals(310_000, 205_000, 24_000_000, 1_400_000),
       }),
-      busyWeek,
-      { id: 'max20' }
+      busyWeek
     ),
 
     // Plenty of spend, nobody has said what the allowance is: shares of the week.
@@ -770,11 +761,10 @@ function usagePayloads() {
       win(SESSION_WINDOW_MS, 2.6 * HOUR, {
         'claude-opus-5': totals(48_000, 31_000, 2_400_000, 180_000),
       }),
-      busyWeek,
-      { id: 'unknown' }
+      busyWeek
     ),
 
-    // Allowances set by hand, and very nearly gone — every bar in the hot tone.
+    // A heavy week on the big context window — the shares run hot.
     spent: payload(
       {
         model: 'claude-opus-5[1m]',
@@ -786,12 +776,7 @@ function usagePayloads() {
       win(SESSION_WINDOW_MS, 3.4 * HOUR, {
         'claude-opus-5[1m]': totals(1_100_000, 700_000, 88_000_000, 4_000_000),
       }),
-      heavyWeek,
-      {
-        id: 'custom',
-        label: 'Custom',
-        limits: { session: 100_000_000, week: 250_000_000, weekOpus: 210_000_000 },
-      }
+      heavyWeek
     ),
   };
 }
@@ -906,11 +891,8 @@ const server = http.createServer(async (req, res) => {
       autoPerch: true,
       characterByProject: {},
       size: 'medium',
-      plan: 'unknown', // the default the panel has to degrade honestly to
-      planLimits: {},
       characters: allCharacters(),
       sizes: sizeList(),
-      plans: PLANS,
       actions: ACTIONS,
       port: 43117,
       windowAccess: false, // so the banner is visible while working on it
