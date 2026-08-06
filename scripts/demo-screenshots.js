@@ -33,6 +33,10 @@ app.whenReady().then(async () => {
       preload: path.join(__dirname, '..', 'src', 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      // The story runs unattended; without this an unfocused/occluded window
+      // gets its rAF throttled and every "wait for the paint" stalls for
+      // minutes.
+      backgroundThrottling: false,
     },
   });
   // A renderer error would otherwise show up only as a missing card in a PNG.
@@ -140,8 +144,28 @@ app.whenReady().then(async () => {
   await sleep(700);
   await shot('9-activity-line.png');
 
-  // Plan-approval card (ExitPlanMode held through PermissionRequest).
-  const plan = '# Plan: API rate limiting\n\n1. Token-bucket middleware\n2. Wire into the router\n3. Per-route limits\n4. Tests for 200 / 429';
+  // Plan-approval card (ExitPlanMode held through PermissionRequest). A
+  // realistic multi-step plan, the size Claude Code actually produces — the
+  // plan card grows for it (body.plan → wider card, taller detail), and in the
+  // real app the renderer asks main for a bigger window; this staged window
+  // has no main process to ask, so it is resized by hand to stand in for that.
+  const plan = [
+    '# Plan: API rate limiting',
+    '',
+    '1. Add a token-bucket middleware in `middleware/rateLimit.js` — one bucket',
+    '   per API key, refill rate and burst size read from config',
+    '2. Wire it into the router ahead of the auth stack so unauthenticated',
+    '   traffic is throttled too',
+    '3. Add per-route overrides: `/login` 10/min, `/search` 60/min, everything',
+    '   else the global 120/min default',
+    '4. Return 429 with a `Retry-After` header and a JSON error body that names',
+    '   the limit that was hit',
+    '5. Expose bucket levels on `/metrics` so the ops dashboard can graph',
+    '   throttling per route',
+    '6. Tests: 200 under the limit, 429 over it, the window sliding back open,',
+    '   and the per-route overrides beating the default',
+  ].join('\n');
+  win.setContentSize(470, 780);
   const planReq = tracker.handle('PermissionRequest', null, { ...myApp, tool_name: 'ExitPlanMode', tool_input: { plan } });
   const planCard = require('../src/decisions').describeToolCall('ExitPlanMode', { plan });
   win.webContents.send('clippy-event', {
@@ -156,6 +180,7 @@ app.whenReady().then(async () => {
   });
   await sleep(700);
   await shot('10-plan-card.png');
+  win.setContentSize(320, 560); // back to the normal window for the rest
 
   // Question surfacing (AskUserQuestion — read-only; answered in the terminal).
   win.webContents.send('clippy-event', {
@@ -229,6 +254,7 @@ app.whenReady().then(async () => {
       preload: path.join(__dirname, '..', 'src', 'preload-settings.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      backgroundThrottling: false, // same deal as the buddy window above
     },
   });
   const { allCharacters, sizeList } = require('../src/characters');

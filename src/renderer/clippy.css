@@ -22,6 +22,7 @@
   --no: #d76b64;
   --warn: #e0b23f;
   --panel-w: 258px;
+  --plan-w: 430px; /* the plan card only: a multi-step plan needs a page, not a blurb */
   --sans: 'Avenir Next', Avenir, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
 
@@ -438,6 +439,18 @@ body.facing-left #buddy {
   white-space: pre-wrap;
   word-break: break-word;
   user-select: text;
+}
+
+/* Plan approvals: a realistic plan is a page of numbered steps, so while the
+   active card is a plan the card grows — wider, and with much more room to
+   scroll — and clippy.js asks main for a window to match. Every other card
+   keeps the normal panel size. */
+body.plan #card {
+  width: min(var(--plan-w), calc(100vw - 12px));
+}
+
+body.plan #card-detail {
+  max-height: 400px;
 }
 
 #card-input {
