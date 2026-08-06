@@ -223,6 +223,32 @@ function checkCodexDrift(settings, port = DEFAULT_PORT) {
   return checkDriftFor(settings, port, CODEX_SPECS);
 }
 
+/** The user-level hook file each agent reads. */
+function settingsPathFor(agent) {
+  return path.join(os.homedir(), `.${agent}`, agent === 'claude' ? 'settings.json' : 'hooks.json');
+}
+
+/**
+ * The same read-modify-write as `clippy-hooks.js install`, callable in-process —
+ * this is the app's one-click path, so a fresh DMG install never needs a
+ * terminal. Returns one row per agent; a failure (say, hand-edited JSON that no
+ * longer parses) is reported rather than thrown, so one broken config doesn't
+ * stop the other agent's install — and the broken file is left untouched.
+ */
+function installToFiles({ port = DEFAULT_PORT, agents = ['claude', 'codex'], pathFor = settingsPathFor } = {}) {
+  return agents.map((agent) => {
+    const settingsPath = pathFor(agent);
+    try {
+      const settings = readSettings(settingsPath);
+      (agent === 'codex' ? installCodexHooks : installHooks)(settings, port);
+      writeSettings(settingsPath, settings);
+      return { agent, settingsPath, ok: true };
+    } catch (err) {
+      return { agent, settingsPath, ok: false, error: err.message };
+    }
+  });
+}
+
 /* ---------------- CLI ---------------- */
 
 function parseArgs(argv) {
@@ -267,7 +293,7 @@ function main() {
     : ['claude', 'codex'];
   const targets = selected.map((agent) => ({
     agent,
-    settingsPath: args.settings || path.join(os.homedir(), `.${agent}`, agent === 'claude' ? 'settings.json' : 'hooks.json'),
+    settingsPath: args.settings || settingsPathFor(agent),
     install: agent === 'codex' ? installCodexHooks : installHooks,
     drift: agent === 'codex' ? checkCodexDrift : checkDrift,
   }));
@@ -327,6 +353,8 @@ if (require.main === module) main();
 module.exports = {
   installHooks,
   installCodexHooks,
+  installToFiles,
+  settingsPathFor,
   uninstallHooks,
   listInstalled,
   checkDrift,
