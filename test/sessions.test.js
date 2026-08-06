@@ -205,6 +205,25 @@ test('Codex sessions keep their identity and detect non-zero PostToolUse exits',
   assert.equal(t.agentFor('cx'), 'codex');
 });
 
+test('OpenClaw sessions keep their identity, unknown agents fall back to Claude', () => {
+  const t = new SessionTracker();
+  const openclaw = { ...payload('openclaw:tg-42'), agent: 'openclaw' };
+  const start = t.handle('SessionStart', null, openclaw);
+  assert.equal(start.agent, 'openclaw');
+  assert.equal(start.agentName, 'OpenClaw');
+
+  const stop = t.handle('Stop', null, openclaw);
+  assert.match(stop.message, /OpenClaw finished/);
+  assert.equal(t.agentFor('openclaw:tg-42'), 'openclaw');
+  // A later payload without an agent doesn't reset the session to Claude.
+  t.handle('UserPromptSubmit', null, payload('openclaw:tg-42'));
+  assert.equal(t.agentFor('openclaw:tg-42'), 'openclaw');
+
+  const unknown = t.handle('SessionStart', null, { ...payload('u1'), agent: 'mystery' });
+  assert.equal(unknown.agent, 'claude');
+  assert.equal(unknown.agentName, 'Claude');
+});
+
 test('handles missing cwd and unknown events gracefully', () => {
   const t = new SessionTracker();
   const r = t.handle('Notification', null, { session_id: 'deadbeefcafe' });
