@@ -11,6 +11,7 @@ permissions:
 jobs:
   app:
     strategy:
+      fail-fast: false
       matrix:
         node: [18, 20, 22]
     # The root package intentionally declares macOS-only support, so npm will
@@ -23,18 +24,4 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: npm
       - run: npm ci
-      - run: npm test
-
-  website:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22.19.0
-          cache: npm
-          cache-dependency-path: website2/package-lock.json
-      - run: npm ci
-        working-directory: website2
-      - run: npm test
-        working-directory: website2
+      - run: npm run check

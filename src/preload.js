@@ -32,6 +32,7 @@ contextBridge.exposeInMainWorld('clippyAPI', {
   // bare paperclip.
   setMode: (mode, height, width) => ipcRenderer.send('clippy-mode', { mode, height, width }),
   identity: () => ipcRenderer.invoke('clippy-session-identity'),
+  context: () => ipcRenderer.invoke('clippy-context'),
   usage: () => ipcRenderer.invoke('clippy-usage'),
   hide: () => ipcRenderer.send('clippy-hide'),
   quit: () => ipcRenderer.send('clippy-quit'),

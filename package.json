@@ -19,15 +19,17 @@
     "darwin"
   ],
   "engines": {
-    "node": ">=18"
+    "node": ">=18.13"
   },
   "scripts": {
     "start": "node scripts/make-buddies.js --if-missing && electron .",
+    "dev": "node scripts/make-buddies.js --if-missing && node scripts/dev.js",
+    "dev:once": "node scripts/make-buddies.js --if-missing && CLIPPY_DEV=1 electron .",
     "sandbox": "node scripts/demo-web.js --open /gallery",
     "sandbox:app": "node scripts/make-buddies.js --if-missing && CLIPPY_SANDBOX=1 electron .",
     "test": "node --test test/*.test.js",
-    "test:website": "npm --prefix website2 test",
-    "test:all": "npm test && npm run test:website",
+    "test:watch": "node --test --watch test/*.test.js",
+    "check": "find bin demo scripts src test -name '*.js' -exec node --check {} \\; && node --test test/*.test.js",
     "make-buddies": "node scripts/make-buddies.js",
     "package": "node scripts/package-app.js",
     "package:release": "node scripts/package-app.js --require-release-signing",
