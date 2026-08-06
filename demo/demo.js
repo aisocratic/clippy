@@ -360,9 +360,9 @@ window.addEventListener('message', async (e) => {
       send('event', { kind: 'drive-status', status: 'ended' });
       break;
 
-    case 'undock':
-      log('in', 'undock', 'let go of the terminal window');
-      setDocked(false);
+    case 'send-prompt':
+      log('in', 'sendPrompt', `would type into the terminal: ${p.text}`);
+      setDocked(true);
       break;
 
     case 'open-window':
@@ -385,6 +385,10 @@ window.addEventListener('message', async (e) => {
     case 'open-settings':
       log('in', 'openSettings', 'would open the settings window (/settings/ here)');
       window.open('/settings/', '_blank', 'noopener');
+      break;
+
+    case 'move-by':
+      log('in', 'moveBy', `would nudge the window by ${p.dx},${p.dy} (it stays put here)`);
       break;
 
     case 'hide':

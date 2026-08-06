@@ -52,8 +52,8 @@
     setSetting: (key, value) => post('set-setting', { key, value }),
     drivePrompt: (text) => post('drive-prompt', { text }),
     driveStop: () => post('drive-stop'),
+    sendPrompt: (text) => post('send-prompt', { text }),
     openWindow: (opts) => post('open-window', opts || {}),
-    undock: () => post('undock'),
     pointAtPrompt: () => post('point'),
     openSettings: () => post('open-settings'),
     fix: (what) => post('fix', { what }),
@@ -63,9 +63,11 @@
       agent: new URLSearchParams(location.search).get('agent') === 'codex' ? 'codex' : 'claude',
       model: usageData?.session?.model || new URLSearchParams(location.search).get('model') || '',
     }),
+    context: async () => ({ session: usageData?.session }),
     // main answers this over IPC invoke; here the panel pushes the data ahead
     // of time and we just hand back whatever it last set.
     usage: async () => usageData,
+    moveBy: (dx, dy) => post('move-by', { dx, dy }),
     hide: () => post('hide'),
     quit: () => post('quit'),
   };
