@@ -116,7 +116,8 @@ test('only lines inside the window count when one is given', () => {
 
 test('the long-context models get the bigger budget', () => {
   assert.equal(contextLimitFor('claude-opus-5[1m]'), 1_000_000);
-  assert.equal(contextLimitFor('claude-sonnet-5'), 200_000);
+  assert.equal(contextLimitFor('claude-fable-5'), 1_000_000);
+  assert.equal(contextLimitFor('claude-sonnet-4-5'), 200_000);
   assert.equal(contextLimitFor(''), 200_000);
 });
 
