@@ -23,3 +23,7 @@ sprites/
 
 # Marketing site — kept out of the repo's history for now
 website/
+
+# Agent-session state (workflow worktrees, per-agent memory) — machine-local
+.claude/worktrees/
+.claude/agent-memory/
