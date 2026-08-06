@@ -219,15 +219,18 @@ function describeToolCall(toolName, toolInput = {}) {
         detail: `${toolInput.file_path || '?'}\n\n${clip(toolInput.content, 400)}`,
       };
     case 'Edit':
+      // The name is the decision ("is Claude touching the right file?"); the
+      // old/new dump was noise at card size — the diff belongs in the editor.
       return {
-        title: 'Edit a file',
-        detail:
-          `${toolInput.file_path || '?'}\n\n` +
-          `- ${clip(toolInput.old_string, 250)}\n+ ${clip(toolInput.new_string, 250)}`,
+        title: `Edit ${path.basename(String(toolInput.file_path || '?'))}`,
+        detail: toolInput.file_path || '?',
       };
     case 'MultiEdit': {
       const n = Array.isArray(toolInput.edits) ? toolInput.edits.length : '?';
-      return { title: 'Edit a file', detail: `${toolInput.file_path || '?'} (${n} edits)` };
+      return {
+        title: `Edit ${path.basename(String(toolInput.file_path || '?'))}`,
+        detail: `${toolInput.file_path || '?'} (${n} edits)`,
+      };
     }
     case 'NotebookEdit':
       return { title: 'Edit a notebook', detail: `${toolInput.notebook_path || '?'}` };

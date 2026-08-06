@@ -165,9 +165,11 @@ test('describeToolCall summarizes common tools', () => {
     old_string: 'foo',
     new_string: 'bar',
   });
+  // The card leads with the file's name and never dumps the contents — the
+  // full path is there for "which repo?", the diff belongs in the editor.
+  assert.equal(edit.title, 'Edit b.js');
   assert.match(edit.detail, /\/a\/b\.js/);
-  assert.match(edit.detail, /- foo/);
-  assert.match(edit.detail, /\+ bar/);
+  assert.doesNotMatch(edit.detail, /foo|bar/);
 
   const long = describeToolCall('Bash', { command: 'x'.repeat(2000) });
   assert.ok(long.detail.length < 800);

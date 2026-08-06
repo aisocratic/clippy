@@ -49,6 +49,7 @@ const buddyEl = document.getElementById('buddy');
 
 const btnOpen = document.getElementById('btn-open');
 const usageEl = document.getElementById('usage');
+const usageName = document.getElementById('usage-name');
 const usageModel = document.getElementById('usage-model');
 const usageStatus = document.getElementById('usage-status');
 const usageBarFill = document.getElementById('usage-bar-fill');
@@ -114,7 +115,7 @@ let settings = {
   size: 'medium',
   // Enough of a roster to paint the default buddy correctly on the very first
   // frame; main replaces all of it a moment later.
-  characters: [{ id: 'clip', label: '📎 Clippy', perColour: true }],
+  characters: [{ id: 'clip', label: 'Clippy', perColour: true }],
   sizes: [{ id: 'medium', buddy: 96 }],
 };
 const SIZE_LABEL = { small: 'S', medium: 'M', large: 'L' };
@@ -340,12 +341,17 @@ function syncMenuItems() {
 }
 
 function openMenu() {
+  // One thing above the buddy's head at a time: the menu replaces whatever
+  // panel was up, instead of stacking under it and shoving it around.
+  usageEl.classList.add('hidden');
+  bubbleEl.classList.add('hidden');
   syncMenuItems();
   menuEl.classList.remove('hidden');
   syncMode();
 }
 
 function closeMenu() {
+  parkedPanel = null; // an explicit close is not a parking — nothing comes back
   if (!menuOpen()) return;
   menuEl.classList.add('hidden');
   syncMode();
@@ -637,6 +643,7 @@ async function showUsage() {
   qcardEl.classList.add('hidden');
   menuEl.classList.add('hidden');
 
+  usageName.textContent = data.name || me.name;
   usageModel.textContent = shortModel(session?.model);
   usageStatus.textContent = statusSummary();
 
@@ -665,18 +672,49 @@ async function showUsage() {
   const weekTotal = week ? allTokens(week.totals) : 0;
   usageBars.replaceChildren();
 
-  for (const row of WINDOWS) {
-    const win = windows && windows[row.key];
-    if (!win) continue;
-    const limit = (limits && limits[row.key]) || 0;
-    usageBars.append(windowBar(row, win, limit, weekTotal, now, plan && plan.estimated));
+  const hasOfficial = Boolean(data.official && data.official.limits && data.official.limits.length);
+  if (hasOfficial) {
+    // The real thing, kept simple: what's LEFT of each limit, straight from
+    // Claude Code's own cached /usage numbers. The 5-hour block is the
+    // near-term row, the week rows carry the total and whichever model the
+    // plan counts on its own. Nothing else — this is a glance, not a report.
+    const age = now - (data.official.fetchedAtMs || 0);
+    const fetched = data.official.fetchedAtMs
+      ? clockOf(data.official.fetchedAtMs, now)
+      : 'some time ago';
+    for (const limit of data.official.limits) {
+      const left = Math.max(0, 100 - limit.percent);
+      const resets = limit.resetsAt ? `resets ${clockOf(limit.resetsAt, now)}` : '';
+      usageBars.append(
+        bar(limit.label, `${left}% left`, Math.min(1, limit.percent / 100), {
+          sub: resets,
+          tone: limit.percent >= 85 || limit.severity !== 'normal' ? 'hot' : limit.percent >= 60 ? 'warn' : '',
+          hint:
+            `${limit.percent}% of this limit used — Claude Code's own number, cached when ` +
+            `/usage last loaded (${fetched}).`,
+        })
+      );
+    }
+    usageNote.textContent =
+      `From /usage, cached ${fetched}` +
+      `${age > 6 * 60 * 60 * 1000 ? ' — getting stale: open /usage in any session to refresh' : ''}.`;
+  } else {
+    for (const row of WINDOWS) {
+      const win = windows && windows[row.key];
+      if (!win) continue;
+      const limit = (limits && limits[row.key]) || 0;
+      usageBars.append(windowBar(row, win, limit, weekTotal, now, plan && plan.estimated));
+    }
   }
 
-  // Where it went: the models you actually leaned on this week.
-  const models = Object.entries((week && week.byModel) || {})
-    .map(([model, totals]) => [model, allTokens(totals)])
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 3);
+  // Where it went, by model — detail for the fallback view only; with the real
+  // limits on screen the panel stays a glance.
+  const models = hasOfficial
+    ? []
+    : Object.entries((week && week.byModel) || {})
+        .map(([model, totals]) => [model, allTokens(totals)])
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 3);
   if (models.length) {
     const head = document.createElement('div');
     head.className = 'ubar-group';
@@ -693,17 +731,21 @@ async function showUsage() {
   }
 
   // The one thing this panel must never fudge: whose number the bars are.
-  const named = plan && plan.id && plan.id !== 'unknown';
-  usageNote.textContent = !named
-    ? 'No allowance set — bars are shares of the last 7 days. Set your plan under Usage & limits ' +
-      'in Settings (📎 in the menu bar) to measure them against something, and run /usage in ' +
-      'Claude Code for the real numbers.'
-    : plan.estimated
-    ? `Measured against a rough ${plan.label} estimate — run /usage in Claude Code and correct it ` +
-      'under Custom in Settings (📎 in the menu bar). Clippy counts what you spent; only /usage ' +
-      'knows what is left.'
-    : `Measured against the limits you set. Clippy counts what you spent; only /usage knows what ` +
-      'is left.';
+  // With the official cache on screen its own note (set above) stands; the
+  // wording below belongs to the measured-spend fallback only.
+  if (!(data.official && data.official.limits && data.official.limits.length)) {
+    const named = plan && plan.id && plan.id !== 'unknown';
+    usageNote.textContent = !named
+      ? 'No allowance set — bars are shares of the last 7 days. Set your plan under Usage & limits ' +
+        'in Settings (📎 in the menu bar) to measure them against something, and run /usage in ' +
+        'Claude Code for the real numbers.'
+      : plan.estimated
+      ? `Measured against a rough ${plan.label} estimate — run /usage in Claude Code and correct it ` +
+        'under Custom in Settings (📎 in the menu bar). Clippy counts what you spent; only /usage ' +
+        'knows what is left.'
+      : `Measured against the limits you set. Clippy counts what you spent; only /usage knows what ` +
+        'is left.';
+  }
 
   usageEl.classList.remove('hidden');
   syncMode();
@@ -712,6 +754,7 @@ async function showUsage() {
 }
 
 function hideUsage() {
+  parkedPanel = null; // an explicit close is not a parking — nothing comes back
   usageEl.classList.add('hidden');
   syncMode();
 }
@@ -1290,11 +1333,43 @@ function primaryAction() {
   showUsage();
 }
 
+/* ---------- Dragging the buddy, by hand ----------
+   #clippy is deliberately NOT an app-region drag handle: Electron never
+   delivers left-clicks to drag regions, which made clicking the buddy dead.
+   So the drag is ours: past a small threshold the window follows the mouse
+   via IPC deltas, and a mouseup that ends a real drag swallows the click that
+   the browser fires right after it. */
+const DRAG_THRESHOLD_PX = 4;
+let dragFrom = null; // {x, y} in screen coords while the button is down
+let suppressClickUntil = 0;
+
+clippyEl.addEventListener('mousedown', (e) => {
+  if (e.button !== 0) return;
+  dragFrom = { x: e.screenX, y: e.screenY, moved: false };
+});
+
+window.addEventListener('mousemove', (e) => {
+  if (!dragFrom) return;
+  const dx = e.screenX - dragFrom.x;
+  const dy = e.screenY - dragFrom.y;
+  if (!dragFrom.moved && Math.abs(dx) + Math.abs(dy) < DRAG_THRESHOLD_PX) return;
+  dragFrom.moved = true;
+  dragFrom.x = e.screenX;
+  dragFrom.y = e.screenY;
+  window.clippyAPI.moveBy(dx, dy);
+});
+
+window.addEventListener('mouseup', () => {
+  if (dragFrom?.moved) suppressClickUntil = Date.now() + 250;
+  dragFrom = null;
+});
+
 // Click Clippy: straight to the useful thing, not a menu you have to read
 // first. `e.detail` is the browser's own click count for this burst of clicks
 // on the same element — skipping anything past the first lets a double-click
 // go straight to dblclick below instead of also firing the primary action.
 clippyEl.addEventListener('click', (e) => {
+  if (Date.now() < suppressClickUntil) return; // that was a drag, not a click
   if (activeRequestId) return; // the card is already the main attraction
   if (e.detail > 1) return;
   primaryAction();
@@ -1327,7 +1402,48 @@ document.addEventListener('click', (e) => {
 // Clicking a different window entirely (the terminal, another app) never
 // reaches the listener above — it's a separate native window and no DOM click
 // happens here at all. Losing focus is the one signal that covers that case.
-window.addEventListener('blur', closeMenu);
+/* ---------- Parking: the panel steps aside when you do ----------
+   Move the mouse away (or click into another window) and whatever's open over
+   the buddy's head — the info panel or the menu — hides; come back and it
+   returns as it was. Held cards are exempt: they're waiting on a decision and
+   have countdowns, so they stay put no matter where the mouse goes. */
+let parkedPanel = null; // 'usage' | 'menu' — what to bring back on re-enter
+let parkTimer = null;
+
+function parkPanels() {
+  if (activeRequestId) return;
+  if (usageInput.value.trim()) return; // mid-thought in the chat box — stay
+  if (!usageEl.classList.contains('hidden')) {
+    usageEl.classList.add('hidden');
+    parkedPanel = 'usage';
+    syncMode();
+  } else if (menuOpen()) {
+    menuEl.classList.add('hidden');
+    parkedPanel = 'menu';
+    syncMode();
+  }
+}
+
+function unparkPanels() {
+  clearTimeout(parkTimer);
+  parkTimer = null;
+  if (!parkedPanel) return;
+  const which = parkedPanel;
+  parkedPanel = null;
+  // Something louder took the stage while we were away — let it keep it.
+  if (activeRequestId) return;
+  if (!bubbleEl.classList.contains('hidden') || !qcardEl.classList.contains('hidden')) return;
+  if (which === 'usage') showUsage();
+  else openMenu();
+}
+
+// A short fuse on leave, so skimming the window's edge doesn't flicker.
+document.documentElement.addEventListener('mouseleave', () => {
+  clearTimeout(parkTimer);
+  parkTimer = setTimeout(parkPanels, 250);
+});
+document.documentElement.addEventListener('mouseenter', unparkPanels);
+window.addEventListener('blur', parkPanels);
 
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {

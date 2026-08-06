@@ -10,9 +10,10 @@
  * windows `/usage` reports against — the rolling five-hour block, the week, and
  * Opus counted again on its own.
  *
- * What we *can't* get: how much of your plan's allowance is left. Claude Code
- * never writes that to disk — `/usage` asks the API for it — so Clippy measures
- * spend exactly and knows an allowance only when you tell it one (see PLANS).
+ * And the real allowance: newer Claude Code caches the `/usage` percentages
+ * in ~/.claude.json (see readOfficialUsage), which the panel shows first. The
+ * transcript sweep and the PLANS estimates below are the fallback for older
+ * installs, or a machine where /usage has never been opened.
  */
 
 const fs = require('node:fs/promises');
@@ -418,6 +419,61 @@ async function usageWindows(projectsDir, now = Date.now()) {
   };
 }
 
+/* ---------------- The real allowance, cached by Claude Code itself ---------------- */
+
+/**
+ * Claude Code keeps the last `/usage` answer in ~/.claude.json under
+ * `cachedUsageUtilization` — the actual percentages of the actual limits,
+ * with reset times, refreshed whenever `/usage` loads them. That is the
+ * ground truth this module's transcript-sweeping can only approximate, so
+ * when it's there, the panel shows it first.
+ *
+ * It is a cache, not a feed: `fetchedAtMs` says how old it is, and the panel
+ * says so too. Absent (older Claude Code, `/usage` never opened), everything
+ * falls back to measured spend exactly as before.
+ *
+ * @param {string} [file]  override for tests
+ * @returns {{fetchedAtMs: number, limits: Array<{kind, group, percent, severity,
+ *            resetsAt, label}>}|null}
+ */
+async function readOfficialUsage(file = path.join(require('node:os').homedir(), '.claude.json')) {
+  let raw;
+  try {
+    raw = JSON.parse(await fs.readFile(file, 'utf8'));
+  } catch {
+    return null; // no config, or mid-write — try again next open
+  }
+  const cached = raw && raw.cachedUsageUtilization;
+  const limits = cached && cached.utilization && cached.utilization.limits;
+  if (!Array.isArray(limits) || limits.length === 0) return null;
+
+  const rows = [];
+  for (const limit of limits) {
+    if (!limit || typeof limit.percent !== 'number') continue;
+    // The scoped weekly row names its model ("Fable" today) — carry the name
+    // rather than hard-coding one, so Clippy follows whatever the plan counts.
+    const scopedTo = limit.scope && limit.scope.model && limit.scope.model.display_name;
+    const label =
+      limit.kind === 'session'
+        ? 'session · 5 hours'
+        : limit.kind === 'weekly_all'
+        ? 'week · all models'
+        : scopedTo
+        ? `week · ${scopedTo}`
+        : `${limit.group || limit.kind}`;
+    rows.push({
+      kind: limit.kind,
+      group: limit.group || '',
+      percent: Math.max(0, limit.percent),
+      severity: limit.severity || 'normal',
+      resetsAt: limit.resets_at ? Date.parse(limit.resets_at) || 0 : 0,
+      label,
+    });
+  }
+  if (rows.length === 0) return null;
+  return { fetchedAtMs: Number(cached.fetchedAtMs) || 0, limits: rows };
+}
+
 /* ---------------- Allowances, which only you can tell us ---------------- */
 
 // A plan's allowance in each window, counted in total tokens — input, output
@@ -499,6 +555,7 @@ module.exports = {
   modelSlice,
   agesOutAt,
   usageWindows,
+  readOfficialUsage,
   cleanLimits,
   planLimitsFor,
   PLANS,

@@ -16,6 +16,8 @@ contextBridge.exposeInMainWorld('clippySettings', {
   assign: (name, character) => ipcRenderer.send('clippy-settings-assign', { name, character }),
   // 'accessibility' opens the macOS pane; 'copy-path' copies this app's path.
   fix: (what) => ipcRenderer.send('clippy-settings-fix', what),
+  // Compare this build with the tip of main on GitHub.
+  checkUpdates: () => ipcRenderer.invoke('clippy-settings-check-updates'),
   // Links open in the user's browser, never inside this window.
   openExternal: (url) => ipcRenderer.send('clippy-open-external', url),
 });

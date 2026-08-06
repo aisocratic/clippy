@@ -3,18 +3,6 @@
    own colour), one spacing rhythm — so a card, the menu and the token panel
    read as the same object rather than three different apps. */
 
-/* Google's Pixelify Sans (OFL), bundled locally — the CSP is `default-src
-   'self'`, so a CDN @import would just be a blocked request. Used only for
-   the name plate: body text in a pixel face is charming for a minute and
-   unreadable for a day, but one loud label is exactly what it's good at. */
-@font-face {
-  font-family: 'Pixelify Sans';
-  src: url('fonts/PixelifySans-variable.woff2') format('woff2-variations');
-  font-weight: 400 700;
-  font-style: normal;
-  font-display: swap;
-}
-
 :root {
   /* Session identity, set from the query string by clippy.js. */
   --clip: #9aa3ad;
@@ -34,6 +22,7 @@
   --no: #d76b64;
   --warn: #e0b23f;
   --panel-w: 258px;
+  --sans: 'Avenir Next', Avenir, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
 
 * {
@@ -47,7 +36,7 @@ html,
 body {
   background: transparent;
   overflow: hidden;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-family: var(--sans);
   color: var(--text);
 }
 
@@ -205,10 +194,10 @@ button.dim {
   background: rgba(20, 22, 27, 0.9);
   border: 2px solid var(--clip);
   color: #f0f2f4;
-  font-family: 'Pixelify Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-family: var(--sans);
   font-size: 14px;
-  font-weight: 600;
-  letter-spacing: 0.2px;
+  font-weight: 700;
+  letter-spacing: -0.1px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -243,10 +232,24 @@ body:not(.compact) #who {
 
 /* The GIF does its own breathing and hopping, so the wrapper stays still —
    it only moves for the walk (below). */
+/* NOT an app-region drag handle: Electron swallows left-clicks on drag
+   regions, which is exactly the "clicking the buddy does nothing" bug.
+   Dragging is done by hand instead — mousedown+move in clippy.js, moved via
+   IPC — so the sprite stays an ordinary clickable element. */
 #clippy {
   position: relative;
-  -webkit-app-region: drag; /* drag the window by grabbing Clippy */
+  -webkit-app-region: no-drag;
   cursor: grab;
+}
+
+#clippy:active {
+  cursor: grabbing;
+}
+
+/* The pixel art must never become an HTML5 drag ghost mid-drag. */
+#buddy,
+#buddy-sheet {
+  -webkit-user-drag: none;
 }
 
 /* One size, always — the size menu sets --buddy and main resizes the window to
@@ -873,11 +876,36 @@ body:not(.compact) #statusline {
 }
 
 #usage-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
   font-weight: 700;
   margin-bottom: 7px;
 }
 
+/* Whose agent this panel is about, wearing the session's own colour dot. */
+#usage-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #c3cbd5;
+}
+
+#usage-name::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 5px;
+  border-radius: 50%;
+  background: var(--clip);
+  vertical-align: middle;
+}
+
 #usage-model {
+  flex: none;
   font-weight: 400;
   font-size: 10px;
   color: var(--muted);
@@ -1060,8 +1088,10 @@ body.docked #stage {
 }
 
 /* Compact: the buddy and nothing else — the default until there's something to
-   read. He stays exactly the same size; only the panels around him go. */
-body.compact #who,
+   read. He stays exactly the same size; only the panels around him go. The
+   name plate is NOT in this list: it stays rendered (opacity 0, revealed on
+   hover) so a bare buddy can still tell you who it is — the compact window
+   heights in src/characters.js reserve the room for it. */
 body.compact #activity,
 body.compact #statusline,
 body.compact #bubble,

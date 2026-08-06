@@ -2,9 +2,9 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { DEV_SCENARIOS, eventsFor, stampEvent, storyList } = require('../src/dev-scenarios');
+const { DEV_SCENARIOS, eventsFor, stampEvent, storyList } = require('../src/sandbox-scenarios');
 
-// The storybook is only worth anything if every button does something, and a
+// The sandbox is only worth anything if every button does something, and a
 // story that quietly loses its events looks exactly like a state that works.
 test('every story is complete enough to fire', () => {
   const ids = new Set();
@@ -31,8 +31,8 @@ test('a held card is stamped with a deadline at fire time', () => {
 });
 
 test('an ambient event is sent as-is', () => {
-  const event = stampEvent({ kind: 'activity', sessionId: 'dev:story' }, 1);
-  assert.deepEqual(event, { kind: 'activity', sessionId: 'dev:story' });
+  const event = stampEvent({ kind: 'activity', sessionId: 'sandbox:story' }, 1);
+  assert.deepEqual(event, { kind: 'activity', sessionId: 'sandbox:story' });
 });
 
 test('an unknown story fires nothing', () => {
@@ -44,4 +44,21 @@ test('the button list carries what the window draws', () => {
   for (const story of storyList()) {
     assert.ok(story.id && story.label && story.group);
   }
+});
+
+test('the gallery retargets a story to its own buddy and stretches the hold', () => {
+  const now = 1_700_000_000_000;
+  const [card] = eventsFor('approval', now, {
+    sessionId: 'dev:approval',
+    name: 'Approval card',
+    holdSecs: 3600,
+  });
+  assert.equal(card.sessionId, 'dev:approval');
+  assert.equal(card.name, 'Approval card');
+  assert.equal(card.expiresAt, now + 3600_000, 'a posing card must not expire mid-gallery');
+
+  // An ambient event has no hold to stretch, and still lands on the right buddy.
+  const [ambient] = eventsFor('working', now, { sessionId: 'dev:working', name: 'Working' });
+  assert.equal(ambient.sessionId, 'dev:working');
+  assert.ok(!('expiresAt' in ambient));
 });

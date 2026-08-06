@@ -17,6 +17,9 @@ contextBridge.exposeInMainWorld('clippyAPI', {
   // walks Clippy down to that session's prompt when he gets there — for when
   // the answer has to be typed on that line.
   openWindow: (opts) => ipcRenderer.send('clippy-open-window', opts || {}),
+  // Hand-rolled window drag: the buddy is a normal clickable element (an
+  // app-region would eat left-clicks), so moving him is explicit deltas.
+  moveBy: (dx, dy) => ipcRenderer.send('clippy-move-by', { dx, dy }),
   // "Show me where": walk over to this session's prompt and point at it.
   pointAtPrompt: () => ipcRenderer.send('clippy-point'),
   // Everything that isn't about this one session lives in the settings window.

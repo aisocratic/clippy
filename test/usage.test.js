@@ -369,3 +369,59 @@ test('a context past the standard window means the 1M variant', () => {
   assert.equal(u.contextLimit, 1_000_000);
   assert.ok(u.context > 200_000);
 });
+
+test("Claude Code's own cached /usage percentages are read when present", async () => {
+  const { readOfficialUsage } = require('../src/usage');
+  const os = require('node:os');
+  const fsSync = require('node:fs');
+  const dir = fsSync.mkdtempSync(path.join(os.tmpdir(), 'clippy-official-'));
+  const file = path.join(dir, '.claude.json');
+
+  // The shape Claude Code writes today — session, weekly_all, and a weekly
+  // row scoped to a named model (Fable at the moment, whoever tomorrow).
+  fsSync.writeFileSync(
+    file,
+    JSON.stringify({
+      cachedUsageUtilization: {
+        fetchedAtMs: 1_785_873_983_262,
+        utilization: {
+          limits: [
+            { kind: 'session', group: 'session', percent: 0, severity: 'normal', resets_at: null },
+            {
+              kind: 'weekly_all',
+              group: 'weekly',
+              percent: 4,
+              severity: 'normal',
+              resets_at: '2026-08-11T07:00:00.256595+00:00',
+            },
+            {
+              kind: 'weekly_scoped',
+              group: 'weekly',
+              percent: 8,
+              severity: 'normal',
+              resets_at: '2026-08-11T07:00:00.256884+00:00',
+              scope: { model: { id: null, display_name: 'Fable' } },
+            },
+          ],
+        },
+      },
+    })
+  );
+
+  const official = await readOfficialUsage(file);
+  assert.equal(official.fetchedAtMs, 1_785_873_983_262);
+  assert.equal(official.limits.length, 3);
+  assert.deepEqual(
+    official.limits.map((l) => l.label),
+    ['session · 5 hours', 'week · all models', 'week · Fable'],
+    'the scoped row is named by the cache, never hard-coded'
+  );
+  assert.equal(official.limits[1].percent, 4);
+  assert.ok(official.limits[1].resetsAt > 0, 'reset times come through as epoch ms');
+
+  // No cache, or a config from an older Claude Code: null, and the panel
+  // falls back to measured spend.
+  fsSync.writeFileSync(file, JSON.stringify({ someOtherKey: true }));
+  assert.equal(await readOfficialUsage(file), null);
+  assert.equal(await readOfficialUsage(path.join(dir, 'missing.json')), null);
+});

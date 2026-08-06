@@ -1,5 +1,7 @@
 # 📎 Clippy for Claude Code
 
+By [AI Socratic](https://aisocratic.org).
+
 **One little Clippy per Claude Code session**, living on your MacBook, each one
 knowing what its session is doing right now — and letting you **answer it right
 there**: approve or deny permission requests, approve or revise a plan, pick an
@@ -52,7 +54,7 @@ Opus's own week once you tell Clippy your plan), and a box to type the next
 prompt into — he raises that session's terminal and types it in for you.
 **Right-click** for everything else — the same stats, Settings, and hide.
 **Double-click** just says hi back, for about a second. The buddies are **pixel
-art**: Clippy himself in your session's colour and a pixel cat, both drawn in
+art**: Clippy himself in your session's colour, a pixel cat, and Clod, all drawn in
 code with no image assets in the repo — and any sprite pack you drop in,
 swappable from the menu.
 
@@ -129,6 +131,47 @@ npm start              # Clippy appears bottom-right; 📎 appears in the menu b
 Restart any already-running Claude Code sessions so they pick up the hooks,
 then ask Claude to do something that needs permission — Clippy will let you
 know.
+
+## Installing the app
+
+`npm start` is fine for development, but you can also build a real, installable
+app — still with zero dependencies, the way Electron's docs describe manual
+distribution:
+
+```bash
+npm run package   # dist/Clippy for Claude Code.app + dist/Clippy-for-Claude-Code.dmg
+```
+
+That copies the prebuilt Electron.app out of `node_modules`, puts this app's
+source into `Contents/Resources/app/` with the buddy art pre-drawn, rewrites
+the bundle's name/identifier/icon, ad-hoc signs it, and wraps it in a .dmg
+with an Applications shortcut. Open the .dmg, drag the app across, done.
+
+Two things worth knowing:
+
+- **The app is unsigned** (ad-hoc only — no Apple developer certificate), so
+  the first time a *downloaded* copy is opened Gatekeeper will object.
+  Right-click the app → **Open** → Open to get the "open anyway" button, or
+  clear the quarantine flag yourself:
+
+  ```bash
+  xattr -dr com.apple.quarantine "/Applications/Clippy for Claude Code.app"
+  ```
+
+  A copy you built on your own machine was never quarantined and opens
+  normally.
+
+- **The permission rows finally make sense.** Run from source, macOS
+  attributes everything to Electron's own bundle — which is why the
+  Accessibility and Automation lists say "Electron" and nobody can find
+  Clippy in them. The packaged app is its own bundle
+  (`dev.aisocratic.clippy`), so those rows say **Clippy for Claude Code**,
+  and its grants don't disappear when Electron updates under `node_modules`.
+
+The hooks are still registered from the checkout (`npm run hooks:install`) —
+they just POST to a local port, and the packaged app listens on the same one,
+so the two are interchangeable. Run one at a time, though: whoever binds the
+port first wins.
 
 ## Using it
 
@@ -231,8 +274,10 @@ know.
   to show and asks for exactly that much height (clamped to your display), so a
   long plan or a queue of approvals isn't cut off and a bare buddy isn't sitting
   in a tall pane of empty glass.
-- **Two buddies in the box, more a download away**: 📎 Clippy himself and a
-  🐱 pixel cat, both **drawn in code** — every frame is primitives in
+- **Three buddies in the box, more a download away**: 📎 Clippy himself, a
+  🐱 pixel cat, and ✳️ **Clod** — a squat terracotta box in the spirit of a
+  certain mascot, transcribed into the cast (he was already pixel art) — all **drawn in code**
+  — every frame is primitives in
   `scripts/make-buddies.js`, encoded by this repo's own GIF encoder, which is
   what lets Clippy ship with no image assets and no third-party art. Clippy is
   built once per session colour, since a GIF can't be recoloured by CSS. His
@@ -241,7 +286,7 @@ know.
   open — rather than a blockier stand-in, so there's no separate "classic"
   variant to pick between anymore; `clip` just *is* that shape now.
 
-  Both speak the full **nine-pose vocabulary** — and the buddy picks its own
+  All three speak the full **nine-pose vocabulary** — and the buddy picks its own
   pose from what the session is doing:
 
   | pose | when |
@@ -368,7 +413,7 @@ would at least make the row say "Clippy" instead of "Electron".
 
 Click **📎 in the menu bar** and Clippy's settings window opens (right-click for
 the quick menu — sessions, Drive mode, quit). It's the one part of Clippy you sit
-and read, and it has four sections:
+and read, and it has five sections:
 
 - **Sessions** — everything reporting in right now, each with the buddy it's
   wearing and a picker to **give that project a buddy of its own**. That choice
@@ -393,6 +438,9 @@ and read, and it has four sections:
   Claude Code never persists it anywhere and `/usage` is a live API call that
   leaves no trace on disk — so until you've set one, a new session or `/clear`
   nudges you (once a day) to go run `/usage` and come back with the number.
+- **Updates** — which copy you're running (checkout vs packaged app, version,
+  commit), and a button that compares it with the tip of `main` on GitHub. The
+  one deliberate non-localhost request in the app, made only when you press it.
 - **What Clippy can do** — the full catalogue: what triggers each behaviour,
   which hook it rides on, what you see, and — for anything that answers on your
   behalf — **the exact JSON Claude Code receives** for each button. Those strings
@@ -545,35 +593,48 @@ Electron, so end-to-end still means `npm start` plus a real Claude Code session
 - `demo/stub-api.js` — browser stand-in for `src/preload.js`
 - `demo/index.html`, `demo/demo.js`, `demo/demo.css` — the control panel
 
-### Development mode (Electron storybook)
-
-The same idea inside the real app, for the half of Clippy a browser can't show:
+### The sandbox — every state on one scrolling page
 
 ```bash
-npm run dev             # storybook + automatic restart when source changes
-npm run dev:once        # storybook without the file watcher
+npm run sandbox         # opens http://127.0.0.1:43119/gallery — no Electron, no app
 ```
 
-You get one pinned buddy with no Claude Code behind it, and a small window
-listing every state it can be in — session started, working, a failed tool,
-both nudges, the approval and plan cards, an answerable question, a read-only
-one, a review with a recap, a sticky message with its fix button, and back to
-quiet. Clicking one sends the same `clippy-event` payloads the real hook
-handlers send. The token panel works too (canned numbers, since there is no
-transcript to read), and answering a card is a no-op — the decision carries a
-made-up request id that the broker declines.
+The fastest design loop: a web page with **every state side by side**, each in
+its own iframe of the **real renderer** — scroll, compare, edit
+`src/renderer/`, reload. No Electron running, no Claude Code attached, nothing
+to click through one state at a time. Held cards are stamped with an hour so
+nothing expires mid-look, each cell sizes itself the way main sizes the real
+window, and the buttons in a cell work (their decisions land nowhere, exactly
+like the bench). States whose whole point is the window physically moving
+(perching, walking to the prompt) are labelled instead of faked.
 
-Prefer **`npm run dev`** when the thing you're changing is the *window*: where a
-buddy is placed, how it grows to fit a card, perching, the preload bridge, the
-tray. Prefer **`npm run demo:web`** when it's the *page*: markup, CSS,
-animations, card layouts — it reloads instantly, has a show run, and prints the
-hook JSON each button would have produced. The hook server still runs under
-`npm run dev`, so a real session can report in alongside the storybook.
+### The app sandbox (Electron)
 
-- `src/dev-scenarios.js` — the stories, as pure data (with a test that keeps
-  every one of them firing something)
-- `src/renderer/dev.html`, `dev.js`, `dev.css` — the control window
-- `src/preload-dev.js` — its bridge: one method, `devAPI.fire(id)`
+The other half — for when the thing you're changing is the *window* itself:
+
+```bash
+npm run sandbox:app     # a buddy on screen + a "Clippy sandbox" control window
+```
+
+One pinned buddy with no Claude Code behind it, and a small window listing
+every state; clicking one sends the same `clippy-event` payloads the real hook
+handlers send, through the real preload bridge, with real placement and
+sizing. **▦ Show all at once** tiles one buddy per state across your desktop
+(drag them to rearrange); **✕ Clear** puts the gallery away. The token panel
+runs on canned numbers, card decisions carry made-up request ids the broker
+declines, and the hook server still runs, so a real session can report in
+alongside.
+
+Rule of thumb: **`npm run sandbox`** for the *page* (markup, CSS, cards,
+animations), **`npm run sandbox:app`** for the *window* (placement, growth,
+perching, tray), `npm start` + `npm run mock-session` for end-to-end.
+
+- `src/sandbox-scenarios.js` — the states, as pure data (with a test that
+  keeps every one of them firing something)
+- `demo/gallery.html`, `gallery.js`, `gallery.css` — the scrolling wall
+- `src/renderer/sandbox.html`, `sandbox.js`, `sandbox.css` — the app control
+  window; `src/preload-sandbox.js` is its bridge: one method,
+  `sandboxAPI.fire(id)`
 
 ## Development
 
@@ -586,8 +647,10 @@ npm test        # node:test: server, sessions, decisions, hooks, art, usage…
 npm run test:watch  # rerun the focused tests as files change
 npm run check   # syntax-check every JS file, then run the full suite
 npm start       # builds any missing buddies, then launches the app
-npm run dev     # watched app + storybook window, no Claude Code needed
-npm run demo:web    # the UI in a browser, no Electron and no Claude Code
+npm run dev     # the app under a file watcher — restarts when source changes
+npm run sandbox     # every state on one scrolling web page — no Electron
+npm run sandbox:app  # the app + a sandbox control window, no Claude Code
+npm run demo:web    # the single-state bench in a browser, with the show run
 npm run mock-session  # drive a running app through a realistic session
 ```
 
@@ -600,7 +663,7 @@ Two things worth knowing before changing the UI:
 
 - Anything user-visible should show up in the **show run** (`SHOW_RUN()` in
   `scripts/demo-web.js`) so it can be demoed and eyeballed in one place, and in
-  the **storybook** (`src/dev-scenarios.js`) if it needs a real window.
+  the **sandbox** (`src/sandbox-scenarios.js`) if it needs a real window.
 - The renderer only talks to main through `window.clippyAPI` (`src/preload.js`).
   Keeping that surface small is what lets the whole UI run in a browser.
 
@@ -618,8 +681,9 @@ Two things worth knowing before changing the UI:
   process, the renderer's menu and the web test bench
 - `src/actions.js` — what Clippy does with a session, as data, with the real
   hook JSON for every button; the settings window is rendered from it
-- `src/dev-scenarios.js` — the storybook's states, as data, in the event shapes
-  the real handlers send; `npm run dev` plays them at a buddy
+- `src/sandbox-scenarios.js` — the sandbox's states, as data, in the event
+  shapes the real handlers send; the gallery page and `npm run sandbox:app`
+  both play them
 - `src/visibility.js` — when a buddy is allowed on screen (done/asking) and
   when it hides again
 - `src/terminal.js` — finds a session's terminal window (hook-reported tty for

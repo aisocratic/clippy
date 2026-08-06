@@ -62,6 +62,7 @@
     // main answers this over IPC invoke; here the panel pushes the data ahead
     // of time and we just hand back whatever it last set.
     usage: async () => usageData,
+    moveBy: (dx, dy) => post('moveBy', { dx, dy }),
     hide: () => post('hide'),
     quit: () => post('quit'),
   };

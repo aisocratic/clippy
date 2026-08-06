@@ -197,7 +197,7 @@ function SHOW_RUN() {
     note: 'Review card — Looks good, or send Claude back with feedback',
     ref: 'stop',
     holdSecs: 20,
-    event: evt({ kind: 'review', status: 'waiting', message: `Claude finished in “${NAME}”. Looks good, or should it keep going?` }),
+    event: evt({ kind: 'review', status: 'waiting', message: 'Claude finished: “Added retry with backoff to the billing webhook — 42 tests pass.”' }),
   });
   at(6500, { ref: 'stop', event: evt({ kind: 'request-closed', outcome: 'timeout', timedOut: true }) });
 
@@ -447,7 +447,7 @@ const SCENARIOS = [
         event: evt({
           kind: 'review',
           status: 'waiting',
-          message: `Claude finished in “${NAME}”. Looks good, or should it keep going?`,
+          message: 'Claude finished: “Added retry with backoff to the billing webhook — 42 tests pass.”',
         }),
       },
     ],
@@ -952,13 +952,22 @@ const server = http.createServer(async (req, res) => {
     return file ? sendFile(res, file) : sendJson(res, { error: 'bad path' }, 400);
   }
 
-  const rel = pathname === '/' ? 'index.html' : pathname.slice(1);
+  const rel = pathname === '/' ? 'index.html' : pathname === '/gallery' ? 'gallery.html' : pathname.slice(1);
   const file = safeJoin(DEMO_DIR, rel);
   return file ? sendFile(res, file) : sendJson(res, { error: 'bad path' }, 400);
 });
 
 server.listen(PORT, '127.0.0.1', () => {
   console.log(`📎 Clippy web test bench → http://127.0.0.1:${PORT}`);
+  console.log(`   Sandbox gallery (every state at once) → http://127.0.0.1:${PORT}/gallery`);
   console.log('   Serving the real src/renderer with a stubbed clippyAPI.');
   console.log('   (End-to-end still means: npm start + npm run mock-session.)');
+  // `npm run sandbox` passes --open <path>: pop the page straight into the
+  // browser so "iterate on the design" is one command with nothing to run first.
+  const openAt = args.indexOf('--open');
+  if (openAt !== -1 && process.platform === 'darwin') {
+    require('node:child_process').execFile('open', [
+      `http://127.0.0.1:${PORT}${args[openAt + 1] || '/'}`,
+    ]);
+  }
 });

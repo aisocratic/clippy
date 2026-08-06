@@ -1066,6 +1066,193 @@ const CAT_POSES = {
   ],
 };
 
+/* ---------------- Clod ---------------- */
+
+const CLOD_PALETTE = [
+  [0, 0, 0], // 0 transparent
+  [42, 37, 50], // 1 outline
+  [217, 119, 87], // 2 body — the terracotta everyone knows him by
+  [178, 86, 58], // 3 body, shaded
+  [24, 18, 16], // 4 eyes
+  [253, 246, 234], // 5 sweat, zzz, thought dots
+];
+const [CWT, CWINK, CBODY, CBODY_DARK, CEYE, CW_CREAM] = [0, 1, 2, 3, 4, 5];
+
+// His floating marks sit clear of a wide, squat body: up and to the right.
+const CLOD_ZZZ = [
+  [23, 10, 3],
+  [27, 5, 3],
+  [22, 0, 3],
+];
+const CLOD_DOTS = [
+  [27, 13, 1],
+  [28, 9, 1],
+  [26, 4, 2],
+];
+
+/**
+ * Clod: a squat terracotta box on four stubby legs, two square eyes, one nub
+ * of an arm on each side, in the spirit of a certain mascot. Drawn from that
+ * mascot's own idiom — he already *is* pixel art, so this is less an
+ * interpretation than a transcription; the name keeps a polite distance.
+ *
+ * @param {object} opts
+ * @param {number} opts.lift     pixels to hop up by
+ * @param {number} opts.settle   1 = the body settles a pixel (breathing)
+ * @param {boolean} opts.blink   eyes shut for a frame
+ * @param {boolean} opts.happy   eyes curved shut — delighted
+ * @param {boolean} opts.worried brows pinched in over the eyes
+ * @param {number} opts.look     -1/0/1: slide the eyes sideways
+ * @param {number} opts.armL     0 rest, 1 raised, 2 high overhead
+ * @param {number} opts.armR     same, right side
+ * @param {number} opts.step     0-3 walk frame: legs alternate, body rocks
+ * @param {boolean} opts.pointDown right arm angled at the ground (the prompt)
+ * @param {number} opts.sweat    a bead beside him, lower each step
+ * @param {number} opts.sleeping how many sleep marks are floating
+ * @param {number} opts.thinking how many thought dots are rising
+ * @param {number} opts.tilt     lean the whole body sideways
+ */
+function drawClod({
+  lift = 0,
+  settle = 0,
+  blink = false,
+  happy = false,
+  worried = false,
+  look = 0,
+  armL = 0,
+  armR = 0,
+  step = -1,
+  pointDown = false,
+  sweat = 0,
+  sleeping = 0,
+  thinking = 0,
+  tilt = 0,
+} = {}) {
+  let g = grid();
+  const dy = BASE_Y - lift + settle;
+
+  // Four legs. Mid-walk the outer and inner pairs trade a pixel of height,
+  // which at this size is a whole gait.
+  const legs = [8, 13, 17, 22];
+  legs.forEach((x, i) => {
+    const raised = step >= 0 && (i % 2 === step % 2);
+    rect(g, x, 27 + dy, x + 1, 31 + dy - (raised ? 1 : 0), CBODY);
+    put(g, x + 1, 28 + dy, CBODY_DARK);
+  });
+
+  // The body: one honest rectangle, wider than tall, shaded down its right.
+  rect(g, 6, 14 + dy, 25, 26 + dy, CBODY);
+  rect(g, 25, 14 + dy, 25, 26 + dy, CBODY_DARK);
+  rect(g, 6, 26 + dy, 25, 26 + dy, CBODY_DARK);
+
+  // Arm nubs. Rest is a small block at his side; raised climbs the body;
+  // high is overhead — and pointing aims the right one at the ground. The
+  // shade pixel rides the arm's own bottom edge, wherever that is.
+  const arm = (side, mode) => {
+    const x0 = side < 0 ? 3 : 26;
+    const [y0, y1] = mode === 0 ? [18, 21] : mode === 1 ? [12, 16] : [8, 13];
+    rect(g, x0, y0 + dy, x0 + 2, y1 + dy, CBODY);
+    put(g, x0 + (side < 0 ? 0 : 2), y1 + dy, CBODY_DARK);
+  };
+  arm(-1, armL);
+  if (pointDown) rect(g, 26, 22 + dy, 29, 25 + dy, CBODY);
+  else arm(1, armR);
+
+  // Eyes: two square holes punched near the top, exactly like the original.
+  // Pointing drops the gaze a row — he's looking at the line he means.
+  const ey = 16 + dy + (pointDown ? 1 : 0);
+  for (const ex of [10 + look, 20 + look]) {
+    if (happy) {
+      put(g, ex - 1, ey + 1, CEYE);
+      put(g, ex, ey, CEYE);
+      put(g, ex + 1, ey, CEYE);
+      put(g, ex + 2, ey + 1, CEYE);
+    } else if (blink || sleeping) {
+      rect(g, ex, ey + 1, ex + 1, ey + 1, CEYE);
+    } else {
+      rect(g, ex, ey, ex + 1, ey + 1, CEYE);
+    }
+    if (worried) {
+      // Pinched in over each eye, inner end lower — staying inside the body.
+      const inward = ex < 16 ? 1 : 0;
+      put(g, ex + inward, ey - 1, CEYE);
+      put(g, ex + 1 - inward, ey - 2, CEYE);
+    }
+  }
+
+  g = lean(g, tilt);
+  outline(g);
+
+  if (sweat) drop(g, 27, 5 + dy + sweat, CW_CREAM, CWINK);
+  if (sleeping) floating(g, (layer) => zzz(layer, sleeping, CW_CREAM, CLOD_ZZZ));
+  if (thinking) {
+    floating(g, (layer) => {
+      for (let i = 0; i < Math.min(thinking, CLOD_DOTS.length); i++) {
+        const [x, y, size] = CLOD_DOTS[i];
+        rect(layer, x, y, x + size - 1, y + size - 1, CW_CREAM);
+      }
+    });
+  }
+  return g;
+}
+
+const CLOD_POSES = {
+  idle: [
+    { indices: drawClod({ settle: 0 }), delayMs: 520 },
+    { indices: drawClod({ settle: 1 }), delayMs: 520 },
+    { indices: drawClod({ settle: 1, blink: true }), delayMs: 130 },
+    { indices: drawClod({ settle: 0 }), delayMs: 420 },
+    { indices: drawClod({ settle: 0, look: 1 }), delayMs: 420 },
+    { indices: drawClod({ settle: 1, look: 1 }), delayMs: 300 },
+  ],
+  think: [
+    { indices: drawClod({ settle: 0, look: -1, thinking: 1 }), delayMs: 420 },
+    { indices: drawClod({ settle: 1, look: -1, thinking: 2 }), delayMs: 420 },
+    { indices: drawClod({ settle: 1, look: 1, thinking: 3 }), delayMs: 420 },
+    { indices: drawClod({ settle: 0, look: 1, thinking: 3, blink: true }), delayMs: 140 },
+  ],
+  excited: [
+    { indices: drawClod({ lift: 0, armL: 1, armR: 1 }), delayMs: 110 },
+    { indices: drawClod({ lift: 3, armL: 2, armR: 2 }), delayMs: 110 },
+    { indices: drawClod({ lift: 5, armL: 2, armR: 2 }), delayMs: 140 },
+    { indices: drawClod({ lift: 2, armL: 1, armR: 1 }), delayMs: 110 },
+  ],
+  stress: [
+    { indices: drawClod({ worried: true, tilt: -1, sweat: 1 }), delayMs: 90 },
+    { indices: drawClod({ worried: true, tilt: 1, sweat: 1 }), delayMs: 90 },
+    { indices: drawClod({ worried: true, tilt: -1, sweat: 2 }), delayMs: 90 },
+    { indices: drawClod({ worried: true, tilt: 1, sweat: 2 }), delayMs: 90 },
+    { indices: drawClod({ worried: true, tilt: 0, sweat: 3 }), delayMs: 120 },
+  ],
+  walk: [
+    { indices: drawClod({ step: 0, settle: 0, tilt: -1 }), delayMs: 150 },
+    { indices: drawClod({ step: 1, settle: 1, tilt: 0 }), delayMs: 150 },
+    { indices: drawClod({ step: 0, settle: 0, tilt: 1 }), delayMs: 150 },
+    { indices: drawClod({ step: 1, settle: 1, tilt: 0, blink: true }), delayMs: 150 },
+  ],
+  point: [
+    { indices: drawClod({ pointDown: true, settle: 0 }), delayMs: 420 },
+    { indices: drawClod({ pointDown: true, settle: 1 }), delayMs: 420 },
+  ],
+  sleep: [
+    { indices: drawClod({ settle: 1, sleeping: 1 }), delayMs: 620 },
+    { indices: drawClod({ settle: 1, sleeping: 2 }), delayMs: 620 },
+    { indices: drawClod({ settle: 0, sleeping: 3 }), delayMs: 620 },
+    { indices: drawClod({ settle: 1, sleeping: 3 }), delayMs: 620 },
+  ],
+  cheer: [
+    { indices: drawClod({ lift: 0, armL: 2, armR: 2, happy: true }), delayMs: 130 },
+    { indices: drawClod({ lift: 4, armL: 2, armR: 2, happy: true, tilt: -1 }), delayMs: 130 },
+    { indices: drawClod({ lift: 3, armL: 2, armR: 2, happy: true, tilt: 1 }), delayMs: 130 },
+  ],
+  wave: [
+    { indices: drawClod({ armR: 1, happy: true, tilt: -1 }), delayMs: 200 },
+    { indices: drawClod({ armR: 2, happy: true, tilt: 0 }), delayMs: 200 },
+    { indices: drawClod({ armR: 1, happy: true, tilt: 1 }), delayMs: 200 },
+    { indices: drawClod({ armR: 2, happy: true, tilt: 0 }), delayMs: 200 },
+  ],
+};
+
 function toAscii(g) {
   const rows = [];
   for (let y = 0; y < H; y++) {
@@ -1084,12 +1271,14 @@ const gif = (palette, frames) =>
 const THEMES = [
   { id: 'cat', palette: PALETTE, poses: CAT_POSES },
   { id: 'clip', poses: CLIP_POSES, perColour: true },
+  { id: 'clod', palette: CLOD_PALETTE, poses: CLOD_POSES },
 ];
 
 // `clip` used to be a blocky two-loop paperclip with `classic` beside it doing
 // the original SVG silhouette; now `clip` *is* that silhouette, so `classic` is
-// a duplicate and has been retired. Its old folder gets swept up in main().
-const RETIRED = ['classic'];
+// a duplicate and has been retired. `clawd` is the terracotta buddy under his
+// old name, before he became `clod`. Their old folders get swept up in main().
+const RETIRED = ['classic', 'clawd'];
 
 function build() {
   const assets = {};
@@ -1176,6 +1365,7 @@ module.exports = {
   drawCat,
   drawCatWalk,
   drawClip,
+  drawClod,
   toAscii,
   build,
   builtInAssetsAreCurrent,
