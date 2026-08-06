@@ -1,0 +1,410 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Clippy — a desk buddy for your coding agents</title>
+  <meta name="description" content="One pixel buddy per Claude Code session. It perches on the terminal, nudges you when your agent needs a decision, and lets you answer right there.">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📎</text></svg>">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap top-row">
+    <div class="brand-lockup">
+      <a class="brand" href="#top" aria-label="Clippy home"><img class="brand-buddy" src="img/buddies/clip-idle.gif" alt=""> Clippy</a>
+      <a class="brand-for" href="https://aisocratic.org">by AI Socratic ↗</a>
+    </div>
+    <nav class="top-nav" aria-label="Main navigation">
+      <a href="#cast">The cast</a>
+      <a href="#features">Features</a>
+      <a href="#how">How it works</a>
+      <a href="#faq">FAQ</a>
+      <a class="gh" href="https://github.com/AISocratic/clippy">GitHub ↗</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+
+  <!-- ================= Hero ================= -->
+  <section class="hero" id="top">
+    <div class="wrap">
+      <div class="hero-grid">
+        <div class="hero-copy">
+          <p class="eyebrow"><span class="live-dot"></span> from AI Socratic · a tiny macOS companion for your agents</p>
+          <h1>Your coding agents,<br><span>with little faces.</span></h1>
+          <p class="tagline">One pixel buddy per session. It perches on the right terminal,
+          taps you when your agent needs a decision, and lets you <strong>answer right there.</strong>
+          No tab hunting. No forgotten prompts.</p>
+          <div class="hero-actions">
+            <a class="btn-primary" href="https://github.com/AISocratic/clippy/archive/refs/heads/main.zip" download>Download source <span>.zip ↓</span></a>
+            <a class="btn-secondary" href="#install">Install on macOS →</a>
+          </div>
+          <p class="badge-row">
+            <span class="badge">macOS</span>
+            <span class="badge">MIT</span>
+            <span class="badge">localhost only</span>
+            <span class="badge">works with your login</span>
+          </p>
+        </div>
+
+        <div class="hero-stage panel" aria-label="Clippy showing a permission request beside a coding session">
+          <div class="stage-bar">
+            <span class="stage-lights" aria-hidden="true"><i></i><i></i><i></i></span>
+            <span>my-app — working tree</span>
+            <span class="stage-status"><i></i> agent waiting</span>
+          </div>
+          <div class="stage-body">
+            <p class="stage-code"><span>›</span> npm test <em>✓ 109 passed</em></p>
+            <div class="hero-bubble">
+              <p class="bubble-kicker">PERMISSION REQUEST</p>
+              <p>Claude wants to run <code>npm&nbsp;run&nbsp;dev</code>.</p>
+              <div class="hero-bubble-actions">
+                <span class="fakebtn good">Allow</span>
+                <span class="fakebtn bad">Deny</span>
+                <span class="fakebtn dim">Terminal ↗</span>
+              </div>
+            </div>
+          </div>
+          <div class="stage-party" aria-hidden="true">
+            <img class="buddy stage-friend" src="img/buddies/clod-think.gif" alt="">
+            <img class="buddy stage-star" src="img/buddies/clip-excited.gif" alt="">
+            <img class="buddy stage-friend" src="img/buddies/cat-wave.gif" alt="">
+            <div class="stage-guests" id="hero-guests"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="install panel" id="install">
+        <div class="download-strip">
+          <div>
+            <span class="download-kicker">DOWNLOAD &amp; INSTALL</span>
+            <strong>Build the native macOS app locally.</strong>
+            <small>The package command creates an app and a drag-to-install DMG.</small>
+          </div>
+          <a class="download-button" href="https://github.com/AISocratic/clippy/archive/refs/heads/main.zip" download>Download .zip <span>↓</span></a>
+        </div>
+        <div class="install-head">Or clone with Git <span class="install-note"># macOS · Node 18+ · Claude Code installed</span>
+          <button class="copy" data-copy="git clone https://github.com/AISocratic/clippy && cd clippy && npm install && npm run hooks:install && npm start">copy</button>
+        </div>
+        <pre><code><span class="p">$</span> git clone https://github.com/AISocratic/clippy <span class="p">&amp;&amp;</span> cd clippy
+<span class="p">$</span> npm install            <span class="c"># pulls Electron — the only dependency</span>
+<span class="p">$</span> npm run hooks:install  <span class="c"># registers hooks in ~/.claude/settings.json</span>
+<span class="p">$</span> npm start              <span class="c"># 📎 appears in the menu bar</span></code></pre>
+        <div class="install-alt"><strong>Install the app:</strong> run <code>npm run package</code>,
+        open <em>dist/Clippy-for-Claude-Code.dmg</em>, and drag Clippy into Applications.
+        It is unsigned, so right-click&nbsp;→&nbsp;Open the first time.</div>
+      </div>
+
+      <div class="shots" aria-label="Real captures of Clippy's cards">
+        <figure class="shot crop-plan">
+          <div class="shot-frame"><img src="img/10-plan-card.png" alt="Plan card: review the plan, Approve plan or Revise"></div>
+          <figcaption>Approve or revise a plan</figcaption>
+        </figure>
+        <figure class="shot crop-question">
+          <div class="shot-frame"><img src="img/11-question-card.png" alt="Question card: Claude asks which rate-limit store to use"></div>
+          <figcaption>Answer the agent's questions</figcaption>
+        </figure>
+        <figure class="shot crop-review">
+          <div class="shot-frame"><img src="img/8-review-card.png" alt="Review card: Claude finished — looks good, or send feedback"></div>
+          <figcaption>Review the turn when it's done</figcaption>
+        </figure>
+      </div>
+      <p class="shots-note">Real captures of the app driven by simulated hook events. The dark backdrop stands in for your desktop — the real window is transparent.</p>
+    </div>
+  </section>
+
+  <!-- ================= Trust strip ================= -->
+  <section class="trust">
+    <div class="wrap trust-row">
+      <div class="stat"><b>1 / session</b><span>a distinct buddy for every agent</span></div>
+      <div class="stat"><b>9 poses</b><span>from thinking to cheering</span></div>
+      <div class="stat"><b>8 buddies</b><span>in the roster on this page</span></div>
+      <div class="stat"><b>127.0.0.1</b><span>the only address it binds</span></div>
+    </div>
+  </section>
+
+  <!-- ================= Why ================= -->
+  <section class="why" id="why">
+    <div class="wrap why-grid">
+      <div class="why-text">
+        <h2>You know this one.</h2>
+        <p>You kick off a long agent task, switch to Slack, and twenty minutes
+        later discover it's been sitting at a permission prompt the whole time.</p>
+        <p>Clippy fixes that: floating, draggable pixel buddies — always on top, on every
+        Space — that know the live state of every session. A buddy pops up only when its
+        session actually wants you, <strong>where the session lives</strong> (perched on
+        that terminal or editor window), and it doesn't give up: it re-nudges every 90
+        seconds until you respond, snooze, or dismiss.</p>
+        <p>While the agent works, Clippy stays hidden. Answer the card — or type a new
+        prompt in the terminal — and it slips away again.</p>
+      </div>
+      <figure class="shot why-shot crop-nudge">
+        <div class="shot-frame"><img src="img/4-needs-permission.png" alt="Clippy nudging: Hey! Claude needs your permission in my-app"></div>
+        <figcaption>The nudge you'd otherwise miss</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <!-- ================= The cast ================= -->
+  <section class="cast" id="cast">
+    <div class="wrap">
+      <p class="section-kicker">CHOOSE YOUR PARTY</p>
+      <h2>Meet the cast</h2>
+      <p class="cast-lead">Three characters ship in the box, every frame drawn in code and
+      encoded by the repo's own GIF encoder. Five installed sprite packs join them here.
+      Every buddy speaks the same nine-pose vocabulary.</p>
+
+      <div class="pose-toolbar" role="group" aria-label="Preview a pose on every buddy">
+        <span>Preview mood</span>
+        <button class="pose-option active" type="button" data-pose="idle" aria-pressed="true">idle</button>
+        <button class="pose-option" type="button" data-pose="think" aria-pressed="false">thinking</button>
+        <button class="pose-option" type="button" data-pose="excited" aria-pressed="false">needs you</button>
+        <button class="pose-option" type="button" data-pose="cheer" aria-pressed="false">cheering</button>
+        <button class="pose-option" type="button" data-pose="sleep" aria-pressed="false">sleeping</button>
+      </div>
+
+      <div class="cast-group-head"><h3>Built in</h3><span>original art · generated locally</span></div>
+      <div class="cast-grid built-in-cast">
+        <button class="cast-card panel" type="button" data-buddy="clip" aria-label="Preview Clippy's next pose">
+          <img src="img/buddies/clip-idle.gif" alt="Clippy the paperclip, animated pixel art">
+          <span class="cast-caption"><b>Clippy</b><span class="pose-label">idle</span></span>
+          <small>the original office assistant, back on duty</small>
+        </button>
+        <button class="cast-card panel" type="button" data-buddy="clod" aria-label="Preview Clod's next pose">
+          <img src="img/buddies/clod-idle.gif" alt="Clod, a squat terracotta box with square eyes">
+          <span class="cast-caption"><b>Clod</b><span class="pose-label">idle</span></span>
+          <small>sturdy, square, and emotionally available</small>
+        </button>
+        <button class="cast-card panel" type="button" data-buddy="cat" aria-label="Preview Pixel cat's next pose">
+          <img src="img/buddies/cat-idle.gif" alt="A pixel cat, animated">
+          <span class="cast-caption"><b>Pixel cat</b><span class="pose-label">idle</span></span>
+          <small>quiet supervision with excellent tail posture</small>
+        </button>
+      </div>
+
+      <div class="colour-band panel">
+        <div>
+          <b>Same Clippy, different project.</b>
+          <p>His colour is hashed from the project name, so parallel agents stay easy to tell apart.</p>
+        </div>
+        <div class="cast-colours" aria-hidden="true">
+          <img src="img/buddies/clip-idle.gif" alt="">
+          <img src="img/buddies/clip-e0803a-idle.gif" alt="">
+          <img src="img/buddies/clip-6cbf6c-idle.gif" alt="">
+          <img src="img/buddies/clip-c264c9-idle.gif" alt="">
+          <img src="img/buddies/clip-d4b03c-idle.gif" alt="">
+        </div>
+      </div>
+
+      <div class="cast-group-head packs-lead"><h3>More buddies</h3><span>installed sprite packs · the full local roster</span></div>
+      <div class="cast-grid packs-row" id="packs-row"><!-- filled from cast-data.js --></div>
+      <p class="cast-note">Downloaded packs stay on your machine — the repo ships only art it
+      draws itself, and each pack keeps its own licence. Drop another sheet into the themes
+      folder and it joins the app automatically.</p>
+    </div>
+  </section>
+
+  <!-- ================= Features ================= -->
+  <section class="features" id="features">
+    <div class="wrap">
+      <h2>What the little guys can do</h2>
+      <div class="grid">
+
+        <div class="panel card">
+          <h3><span class="glyph">🛂</span> Answer it right there</h3>
+          <p>Permission requests become a card with the exact command or edit:
+          <em>Allow</em>, <em>Deny</em> with a reason Claude sees, or hand it back to the
+          terminal. Plans get <em>Approve</em> / <em>Revise</em> — your note sends Claude
+          back to planning. Multiple-choice questions become buttons; your pick is fed
+          straight back, so the terminal picker never appears.</p>
+        </div>
+
+        <div class="panel card">
+          <h3><span class="glyph">✅</span> Review the turn</h3>
+          <p>When Claude finishes, a review card leads with what it actually said it did.
+          <em>Looks good</em> lets it stop; type what's missing and
+          <em>Send feedback</em> — Claude keeps working with your note, no terminal
+          round-trip.</p>
+        </div>
+
+        <div class="panel card">
+          <h3><span class="glyph">🪟</span> Perches on the session's window</h3>
+          <p>A buddy appears on the top-right corner of the window its session runs in —
+          Terminal, iTerm2, VS Code, Cursor, Ghostty and friends — and follows it as you
+          move it. Every card has a <em>go to terminal ↗</em> button that raises the
+          right window.</p>
+        </div>
+
+        <div class="panel card">
+          <h3><span class="glyph">⚙</span> Live activity line</h3>
+          <p>A small line under each buddy shows what that session is doing right now:
+          <code>⚙ Running: npm test</code>, <code>✏ Editing server.js</code>,
+          <code>✓ done — your turn</code>, <code>⚠ Bash failed</code>. Ambient — it never
+          pops the window.</p>
+        </div>
+
+        <div class="panel card">
+          <h3><span class="glyph">📊</span> Token usage, honest bars</h3>
+          <p>Click a buddy for the session panel: context left in this conversation over
+          a progress bar, plus bars for the rolling 5-hour block, the week, and Opus's
+          own week. Tell Clippy your plan (Pro, Max 5×, Max 20×, or Custom) and they
+          become real allowance bars.</p>
+        </div>
+
+        <div class="panel card">
+          <h3><span class="glyph">⌨</span> Chat straight to the agent</h3>
+          <p>Type the next prompt into the panel and hit Enter — Clippy raises that
+          session's terminal and types it in for you. Or go further with
+          <strong>Drive mode</strong>: Clippy launches a headless session via the Claude
+          Agent SDK, with a streamed transcript, prompts and cards all in the GUI.</p>
+        </div>
+
+        <div class="panel card">
+          <h3><span class="glyph">🎭</span> One buddy per project</h3>
+          <p>Every session gets its own buddy with a name plate and a colour derived from
+          the project name — the same repo always gets the same face, and parallel
+          agents rarely match. Hand-pick a character per project when you care.</p>
+        </div>
+
+        <div class="panel card">
+          <h3><span class="glyph">🧪</span> A sandbox for every state</h3>
+          <p>Dev tooling included: <code>npm run sandbox</code> renders every UI state on
+          one scrolling page (no Electron), a browser test bench replays a full scripted
+          show run, and <code>npm run mock-session</code> drives the real app through a
+          realistic session — no Claude Code needed.</p>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= How it works ================= -->
+  <section class="how" id="how">
+    <div class="wrap">
+      <h2>How it works</h2>
+      <p class="how-lead">Claude Code's <a href="https://code.claude.com/docs/en/hooks">hooks</a>
+      fire shell commands on lifecycle events — and a hook's stdout can <em>answer</em> the
+      event. The installer registers nine tiny <code>curl</code> hooks that POST each
+      event to the app on localhost. Two of them are interactive: their HTTP response
+      <strong>is</strong> the hook's decision.</p>
+
+      <div class="panel diagram-panel">
+<pre class="diagram">Claude Code session(s)
+   │  hooks: PermissionRequest / Stop / Pre+PostToolUse / Notification / Session*
+   ▼  curl POST → http://127.0.0.1:43117/hook/&lt;event&gt;   (response = hook decision)
+Clippy app (Electron)
+   ├─ session tracker: who's working, waiting, blocked — and what they're doing now
+   ├─ decision broker: holds interactive hooks open until you click (or timeout)
+   ├─ one floating Clippy per session (hidden until it needs you): name plate,
+   │    activity line, approval/plan/question/review cards, snooze
+   ├─ native macOS notifications (clickable)
+   └─ menu bar item 📎 with a count of sessions waiting on you</pre>
+      </div>
+
+      <p class="how-foot">The activity hooks match only meaningful tools — <code>Read</code>,
+      <code>Grep</code> and friends never even fire a hook, so there's no latency and no
+      spam on the noisy read-only stuff.</p>
+    </div>
+  </section>
+
+  <!-- ================= Safety ================= -->
+  <section class="safety" id="safety">
+    <div class="wrap">
+      <h2>Built to be un-scary</h2>
+      <ul class="safety-list">
+        <li><strong>Nothing is ever auto-approved.</strong> If you don't answer in time
+        (60s for approvals, 30s for reviews), Clippy answers “no decision” and the normal
+        terminal prompt takes over.</li>
+        <li><strong>Only real prompts.</strong> <code>PermissionRequest</code> fires only
+        when Claude Code would actually show a permission prompt — allowlisted commands
+        run at full speed, untouched.</li>
+        <li><strong>Localhost only.</strong> The hook server binds to
+        <code>127.0.0.1</code> and accepts nothing but hook event JSON. Nothing is
+        exposed to the network; no session content leaves your machine.</li>
+        <li><strong>App off = normal Claude Code.</strong> When Clippy isn't running the
+        hooks fail instantly (<code>--connect-timeout 1 … || true</code>) and Claude Code
+        behaves exactly as if Clippy didn't exist.</li>
+        <li><strong>Your call, per behaviour.</strong> Permission requests, questions and
+        finish-reviews each have an on/off switch in Quick settings, and the toggles
+        persist. <code>npm run hooks:uninstall</code> removes only Clippy's own entries.</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- ================= FAQ ================= -->
+  <section class="faq" id="faq">
+    <div class="wrap">
+      <h2>Questions people ask</h2>
+
+      <details class="panel">
+        <summary>Does it work with Codex, OpenCode, or other agents?</summary>
+        <p>Today Clippy speaks Claude Code's hooks — that's the only Claude-specific piece.
+        The session tracker, cards, and buddies don't care who's on the other end: any agent
+        that can POST lifecycle events to localhost could drive them. If your agent has a
+        hook system, an adapter is a small script, and issues/PRs are welcome.</p>
+      </details>
+
+      <details class="panel">
+        <summary>Will it approve things on its own?</summary>
+        <p>Never. Clippy only relays <em>your</em> clicks. Unanswered cards time out to
+        “no decision” and the normal terminal prompt takes over, exactly as if Clippy
+        weren't there.</p>
+      </details>
+
+      <details class="panel">
+        <summary>Does it cost anything to run?</summary>
+        <p>Watch mode is free — it's your normal terminal sessions, observed via hooks.
+        Only the optional Drive mode (Clippy-owned headless sessions via the Agent SDK)
+        consumes credit, and it's a separate opt-in install.</p>
+      </details>
+
+      <details class="panel">
+        <summary>Why does macOS ask for Accessibility permission?</summary>
+        <p>Perching on a terminal window, raising it, and typing a prompt into it are all
+        macOS Accessibility features. Decline and Clippy still works — buddies just sit in
+        the screen corner instead of riding your windows.</p>
+      </details>
+
+      <details class="panel">
+        <summary>How do I get rid of it?</summary>
+        <p><code>npm run hooks:uninstall</code> removes exactly the hook entries Clippy
+        added (they're tagged), quit from the menu bar, delete the folder. Done — no
+        daemons, no leftovers.</p>
+      </details>
+    </div>
+  </section>
+
+  <!-- ================= Closing CTA ================= -->
+  <section class="cta">
+    <div class="wrap">
+      <div class="cta-buddies" aria-hidden="true">
+        <img class="buddy b-md" src="img/buddies/cat-cheer.gif" alt="">
+        <img class="buddy b-md" src="img/buddies/clip-cheer.gif" alt="">
+        <img class="buddy b-md" src="img/buddies/clod-cheer.gif" alt="">
+        <span id="cta-guests" class="cta-guests"></span>
+      </div>
+      <h2>Give your agents a face.</h2>
+      <p class="cta-sub">macOS · works with your existing Claude Code login · watch mode costs nothing extra</p>
+      <p class="cta-actions"><a class="btn-big" href="https://github.com/AISocratic/clippy/archive/refs/heads/main.zip" download>Download source .zip ↓</a><a class="cta-link" href="#install">Installation guide →</a></p>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <div class="wrap foot-row">
+    <span>📎 Clippy by <a href="https://aisocratic.org">AI Socratic</a></span>
+    <span>MIT licensed · built-in sprites generated in code · installed packs keep their licences</span>
+    <a href="https://github.com/AISocratic/clippy">github.com/AISocratic/clippy</a>
+  </div>
+  <!-- A buddy strolls the footer, because this is a desktop-pet's website. -->
+  <div class="stroll" aria-hidden="true"><img src="img/buddies/clod-walk.gif" alt=""></div>
+</footer>
+
+<script src="cast-data.js"></script>
+<script src="script.js"></script>
+</body>
+</html>
