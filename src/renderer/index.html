@@ -53,20 +53,26 @@
       </div>
     </div>
 
-    <!-- One left click opens this: what the agent is doing, what the session
-         has spent, and a box to keep talking to it. Everything you'd otherwise
-         have to hunt for in three different places. -->
-    <div id="usage" class="hidden">
+    <!-- One left click opens this, collapsed: a glance at the session — its
+         state, what the agent is doing right now, the model, and how full the
+         context is. Expand grows the same window into the fuller panel (the
+         allowance bars, the plan note, and a box to keep talking to it). -->
+    <div id="usage" class="hidden collapsed">
       <div id="usage-head"><span id="usage-name"></span><span id="usage-model"></span></div>
       <div id="usage-status"></div>
+      <div id="usage-recap" class="hidden"></div>
       <div id="usage-bar"><div id="usage-bar-fill"></div></div>
       <div id="usage-context"></div>
-      <div id="usage-bars"></div>
-      <div id="usage-note"></div>
-      <textarea id="usage-input" rows="2" spellcheck="false"
-                placeholder="continue chatting — Enter sends it to the terminal"></textarea>
+      <div id="usage-detail">
+        <div id="usage-bars"></div>
+        <div id="usage-note"></div>
+        <textarea id="usage-input" rows="2" spellcheck="false"
+                  placeholder="continue chatting — Enter sends it to the terminal"></textarea>
+      </div>
       <div id="usage-actions">
         <button id="btn-usage-close" class="dim">Close</button>
+        <button id="btn-usage-expand" class="good"
+                title="The full panel: allowance bars, and a box to talk to this agent">Expand ▾</button>
         <button id="btn-usage-send" class="good">Send ↵</button>
       </div>
     </div>
@@ -108,7 +114,7 @@
       </span>
     </div>
 
-    <div id="clippy" title="Drag me around. Click for usage, status and a box to talk to this agent; right-click for more; double-click to say hi.">
+    <div id="clippy" title="Drag me around. Click for this session's status — expand it for usage and a box to talk to this agent; right-click for more; double-click to say hi.">
       <!-- Generated characters animate inside GIFs built by `npm run make-buddies`;
            the paperclip has one set per session colour. -->
       <img id="buddy" width="96" height="120" alt="" />
@@ -140,6 +146,7 @@
   </div>
   <script src="vector-buddies.js"></script>
   <script src="markdown.js"></script>
+  <script src="summary.js"></script>
   <script src="clippy.js"></script>
 </body>
 </html>

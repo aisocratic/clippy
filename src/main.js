@@ -1191,6 +1191,9 @@ async function collectUsage(key) {
     // allowance, shown first whenever it exists.
     official: agent === 'claude' ? await readOfficialUsage() : null,
     session,
+    // What Claude said as its last turn ended — the status summary's "doing
+    // right now" line falls back to it when no tool activity is fresher.
+    recap: await lastAssistantText(tracker.transcriptFor(key), { maxChars: 200 }),
     windows: cached.windows,
     now,
     limits: agent === 'claude' ? planLimitsFor(settings) : null,
