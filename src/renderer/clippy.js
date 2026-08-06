@@ -666,13 +666,14 @@ function covers(win, now) {
 /**
  * One window as a bar.
  *
- * With an allowance it's the real thing: spend over limit, warming up as it
- * fills. Without one there is nothing to be a percentage *of*, so the bar falls
- * back to this window's share of the week and the row says that is what it is —
- * except for the week itself, which is that share's denominator and so gets no
- * bar rather than one pinned full of itself.
+ * Clippy measures spend, and only `/usage` (read from Claude Code's own cache,
+ * shown above these bars whenever it exists) knows the allowance — so there is
+ * nothing local to be a percentage *of*. Each bar is this window's share of
+ * the week and the row says that is what it is — except for the week itself,
+ * which is that share's denominator and so gets no bar rather than one pinned
+ * full of itself.
  */
-function windowBar(row, win, limit, weekTotal, now, estimated, agent = 'claude') {
+function windowBar(row, win, weekTotal, now, agent = 'claude') {
   const spent = allTokens(win.totals);
   const sub = covers(win, now);
   // The star is the old panel's: this total is a floor, and the row says why.
@@ -685,25 +686,6 @@ function windowBar(row, win, limit, weekTotal, now, estimated, agent = 'claude')
     : ' The grey line is where the spend Clippy can see begins, not a reset: run /usage in Claude ' +
       'Code for the block the server keeps.';
 
-  if (limit > 0) {
-    const pct = Math.round((spent / limit) * 100);
-    // Past the allowance the percentage has stopped measuring anything, so it
-    // stops being quoted — "1570%" is a fact about the number you typed in.
-    const over =
-      pct > 100
-        ? ` Past it, in fact, which usually says the allowance is wrong rather than that you spent ` +
-          `${Math.round(pct / 100)}× your plan — run /usage and correct it under Custom.`
-        : '';
-    return bar(label, `${fmtTokens(spent)} / ${fmtTokens(limit)}`, spent / limit, {
-      sub,
-      tone: pct >= 85 ? 'hot' : pct >= 60 ? 'warn' : '',
-      hint:
-        `${pct > 100 ? 'All' : `${pct}%`} of ` +
-        `${estimated ? 'an estimated allowance' : 'the allowance you set'} — ${row.what}.` +
-        `${over}${clock}${capped}`,
-    });
-  }
-
   // Every other row is drawn as a share of the week, which leaves the week with
   // nothing to be a share of but itself.
   const yardstick = row.key === 'week';
@@ -711,12 +693,11 @@ function windowBar(row, win, limit, weekTotal, now, estimated, agent = 'claude')
     sub: yardstick ? 'the week the other two are shares of' : sub,
     tone: 'share',
     hint: yardstick
-      ? `${row.what}. No allowance is set, so this total is all the other bars have to be a share ` +
-        `of — and nothing is left to draw it against, which is why it has no bar. Tell Clippy your ` +
-        `plan in Settings to measure it against something.${clock}${capped}`
-      : `${row.what}. No allowance is set, so the bar is this window's share of the last 7 days — ` +
-        `spend, not what's left. Tell Clippy your plan in Settings to measure it against ` +
-        `something.${clock}${capped}`,
+      ? `${row.what}. Clippy measures spend, so this total is all the other bars have to be a ` +
+        `share of — and nothing is left to draw it against, which is why it has no bar.` +
+        `${clock}${capped}`
+      : `${row.what}. The bar is this window's share of the last 7 days — spend, not what's ` +
+        `left.${clock}${capped}`,
   });
 }
 
@@ -741,7 +722,7 @@ function applyUsageExpansion() {
 async function showUsage({ restore = false } = {}) {
   const data = await window.clippyAPI.usage();
   if (!data) return;
-  const { session, windows, limits, plan } = data;
+  const { session, windows } = data;
   const now = data.now || Date.now();
 
   // The panel and a speech bubble both want the space above Clippy's head.
@@ -817,8 +798,7 @@ async function showUsage({ restore = false } = {}) {
     for (const row of rows) {
       const win = windows && windows[row.key];
       if (!win) continue;
-      const limit = (limits && limits[row.key]) || 0;
-      usageBars.append(windowBar(row, win, limit, weekTotal, now, plan && plan.estimated, data.agent));
+      usageBars.append(windowBar(row, win, weekTotal, now, data.agent));
     }
   }
 
@@ -849,19 +829,10 @@ async function showUsage({ restore = false } = {}) {
   // With the official cache on screen its own note (set above) stands; the
   // wording below belongs to the measured-spend fallback only.
   if (!(data.official && data.official.limits && data.official.limits.length)) {
-    const named = plan && plan.id && plan.id !== 'unknown';
     usageNote.textContent = data.agent === 'codex'
       ? 'Measured from local Codex rollout transcripts. These are token totals, not your remaining account allowance.'
-      : !named
-      ? 'No allowance set — bars are shares of the last 7 days. Set your plan under Usage & limits ' +
-        'in Settings (📎 in the menu bar) to measure them against something, and run /usage in ' +
-        'Claude Code for the real numbers.'
-      : plan.estimated
-      ? `Measured against a rough ${plan.label} estimate — run /usage in Claude Code and correct it ` +
-        'under Custom in Settings (📎 in the menu bar). Clippy counts what you spent; only /usage ' +
-        'knows what is left.'
-      : `Measured against the limits you set. Clippy counts what you spent; only /usage knows what ` +
-        'is left.';
+      : 'Bars are shares of the last 7 days — measured spend, not an allowance. Run /usage in ' +
+        'Claude Code once and Clippy picks up the real percentages it caches, no setup needed.';
   }
 
   usageEl.classList.remove('hidden');
