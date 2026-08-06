@@ -18,10 +18,10 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { createHookServer } = require('./server');
-const { SessionTracker, WORKING, WAITING } = require('./sessions');
+const { SessionTracker, AGENTS, agentDisplayName, WORKING, WAITING } = require('./sessions');
 const { DecisionBroker, toHookResponse, describeToolCall } = require('./decisions');
 const { DriveSession } = require('./sdk-session');
-const { checkDrift, checkCodexDrift, installToFiles } = require('../bin/clippy-hooks');
+const { checkDrift, checkCodexDrift, checkOpenclawDrift, installToFiles } = require('../bin/clippy-hooks');
 const { identityFor } = require('./identity');
 const { SIZES, sizeList, allCharacters, characterFor } = require('./characters');
 const { ACTIONS } = require('./actions');
@@ -1142,7 +1142,7 @@ async function collectUsage(key) {
     limits: agent === 'claude' ? planLimitsFor(settings) : null,
     plan: agent === 'claude'
       ? { id: plan.id, label: plan.label, estimated: Boolean(plan.estimated) }
-      : { id: 'unknown', label: 'Codex', estimated: false },
+      : { id: 'unknown', label: agentDisplayName(agent), estimated: false },
   };
 }
 
@@ -1585,7 +1585,9 @@ async function handleStop(payload, ctx) {
   const reaction = tracker.handle('Stop', null, payload);
   const agentName = reaction.agentName;
 
-  if (!settings.reviewOnStop) {
+  // OpenClaw is watch-mode only: its handler fires and forgets, so a held
+  // review card could never send feedback anywhere. Plain nudge instead.
+  if (!settings.reviewOnStop || payload.agent === 'openclaw') {
     emitPassive(reaction);
     return {};
   }
@@ -1770,8 +1772,8 @@ function noteTerminal(payload, ctx) {
 function handleHookEvent(eventName, kind, payload, ctx) {
   // The hook command tags its source in the local URL. Keep the upstream hook
   // payload untouched on the wire, then carry the source through our session
-  // model so one app can label Claude and Codex buddies correctly.
-  payload = { ...(payload || {}), agent: ctx?.source === 'codex' ? 'codex' : 'claude' };
+  // model so one app can label Claude, Codex, and OpenClaw buddies correctly.
+  payload = { ...(payload || {}), agent: AGENTS[ctx?.source] ? ctx.source : 'claude' };
   noteTerminal(payload, ctx);
 
   if (eventName === 'PermissionRequest') return handlePermissionRequest(payload, ctx);
@@ -1820,6 +1822,7 @@ function warnOnHookDrift() {
   const configs = [
     { agent: 'Claude', file: path.join(os.homedir(), '.claude', 'settings.json'), check: checkDrift },
     { agent: 'Codex', file: path.join(os.homedir(), '.codex', 'hooks.json'), check: checkCodexDrift },
+    { agent: 'OpenClaw', file: path.join(os.homedir(), '.openclaw', 'openclaw.json'), check: checkOpenclawDrift },
   ];
   const installed = [];
   const stale = [];

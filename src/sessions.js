@@ -3,6 +3,11 @@
 const path = require('node:path');
 const { activityLabel } = require('./decisions');
 
+// Agents that can report in, and how their buddies are labeled. Unknown ids
+// fall back to Claude, matching the hook server's ?source= whitelist.
+const AGENTS = { claude: 'Claude', codex: 'Codex', openclaw: 'OpenClaw' };
+const agentDisplayName = (agent) => AGENTS[agent] || AGENTS.claude;
+
 // Session statuses
 const WORKING = 'working';
 const NEEDS_PERMISSION = 'needs_permission';
@@ -19,7 +24,7 @@ const STALE_PARKED_MS = 6 * 60 * 60 * 1000;
 const firstLine = (s) => String(s ?? '').split('\n')[0].slice(0, 200);
 
 /**
- * Tracks the state of every Claude Code or Codex session that reports in via hooks,
+ * Tracks the state of every agent session (Claude Code, Codex, OpenClaw) that reports in via hooks,
  * and turns raw hook events into "reactions" for the UI:
  *
  *   { kind: 'attention'|'info'|'clear'|'remove',
@@ -39,7 +44,7 @@ class SessionTracker {
     if (!s) {
       s = {
         sessionId: id,
-        agent: payload.agent === 'codex' ? 'codex' : 'claude',
+        agent: AGENTS[payload.agent] ? payload.agent : 'claude',
         cwd: payload.cwd || '',
         status: IDLE,
         activity: null,
@@ -47,7 +52,7 @@ class SessionTracker {
       };
       this.sessions.set(id, s);
     }
-    if (payload.agent === 'codex' || payload.agent === 'claude') s.agent = payload.agent;
+    if (AGENTS[payload.agent]) s.agent = payload.agent;
     if (payload.cwd) s.cwd = payload.cwd;
     s.name = s.cwd ? path.basename(s.cwd) : id.slice(0, 8);
     s.updatedAt = Date.now();
@@ -64,7 +69,7 @@ class SessionTracker {
       status: s.status,
       activity: s.activity,
       agent: s.agent,
-      agentName: s.agent === 'codex' ? 'Codex' : 'Claude',
+      agentName: agentDisplayName(s.agent),
       message,
     };
   }
@@ -156,7 +161,7 @@ class SessionTracker {
           'approval',
           'urgent',
           s,
-          `${s.agent === 'codex' ? 'Codex' : 'Claude'} wants to do something in “${s.name}” — approve it?`
+          `${agentDisplayName(s.agent)} wants to do something in “${s.name}” — approve it?`
         );
 
       case 'Stop':
@@ -165,7 +170,7 @@ class SessionTracker {
           'attention',
           'normal',
           s,
-          `${s.agent === 'codex' ? 'Codex' : 'Claude'} finished in “${s.name}” — it's your turn!`
+          `${agentDisplayName(s.agent)} finished in “${s.name}” — it's your turn!`
         );
 
       case 'Notification':
@@ -292,6 +297,8 @@ class SessionTracker {
 
 module.exports = {
   SessionTracker,
+  AGENTS,
+  agentDisplayName,
   WORKING,
   NEEDS_PERMISSION,
   WAITING,

@@ -8,15 +8,20 @@ const path = require('node:path');
 const {
   installHooks,
   installCodexHooks,
+  installOpenclawHooks,
   installToFiles,
   settingsPathFor,
   uninstallHooks,
+  uninstallOpenclawHooks,
   listInstalled,
+  listOpenclawInstalled,
   checkDrift,
   checkCodexDrift,
+  checkOpenclawDrift,
   hookCommand,
   SPECS,
   CODEX_SPECS,
+  OPENCLAW_EVENTS,
   MARKER,
   MEANINGFUL_TOOLS,
   CODEX_MEANINGFUL_TOOLS,
@@ -150,6 +155,58 @@ test('AskUserQuestion gets an interactive hook, not the fire-and-forget one', ()
     settings.hooks.PreToolUse.filter((g) => (g.matcher || '').includes(QUESTION_TOOL)).length,
     1
   );
+});
+
+test('OpenClaw install registers our handler for each family and is idempotent', () => {
+  const handlerPath = '/home/me/.openclaw/hooks/clippy-hook.mjs';
+  const config = installOpenclawHooks({}, { port: 43117, handlerPath });
+
+  assert.equal(config.hooks.internal.enabled, true);
+  assert.deepEqual(
+    config.hooks.internal.handlers,
+    OPENCLAW_EVENTS.map((event) => ({ event, module: handlerPath }))
+  );
+  assert.deepEqual(OPENCLAW_EVENTS, ['message', 'command']);
+
+  // Re-install must not duplicate, even from a different handler location.
+  installOpenclawHooks(config, { handlerPath });
+  installOpenclawHooks(config, { handlerPath: '/elsewhere/clippy-hook.mjs' });
+  assert.equal(config.hooks.internal.handlers.length, OPENCLAW_EVENTS.length);
+  assert.equal(listOpenclawInstalled(config).length, OPENCLAW_EVENTS.length);
+
+  assert.deepEqual(checkOpenclawDrift(config), {
+    installed: true,
+    missing: [],
+    wrongPort: false,
+    noTerminalInfo: false,
+  });
+  assert.equal(checkOpenclawDrift({}).installed, false);
+});
+
+test('OpenClaw uninstall removes only our handler entries', () => {
+  const config = {
+    hooks: {
+      internal: {
+        enabled: true,
+        handlers: [{ event: 'gateway', module: '/opt/handlers/audit-log.mjs' }],
+      },
+    },
+    gateway: { port: 8443 },
+  };
+  installOpenclawHooks(config, { handlerPath: '/home/me/.openclaw/hooks/clippy-hook.mjs' });
+  assert.equal(config.hooks.internal.handlers.length, 3);
+
+  uninstallOpenclawHooks(config);
+  assert.equal(listOpenclawInstalled(config).length, 0);
+  // The user's own handler, the enabled flag, and the rest of the config stay.
+  assert.deepEqual(config.hooks.internal.handlers, [
+    { event: 'gateway', module: '/opt/handlers/audit-log.mjs' },
+  ]);
+  assert.equal(config.hooks.internal.enabled, true);
+  assert.deepEqual(config.gateway, { port: 8443 });
+
+  // Uninstalling from a config that never had hooks is a no-op, not a crash.
+  assert.deepEqual(uninstallOpenclawHooks({}), {});
 });
 
 test('checkDrift spots hooks older than this build, and a port mismatch', () => {

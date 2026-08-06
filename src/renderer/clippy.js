@@ -8,11 +8,15 @@ const GHOST_GRACE_MS = 5 * 1000; // how long past its deadline a card may linger
 
 /* ---------- Identity: this window watches exactly one session ---------- */
 
+// Which harness this buddy watches (mirrors AGENTS in src/sessions.js —
+// renderers run without node integration, so the map is repeated here).
+const HARNESS_NAMES = { claude: 'Claude Code', codex: 'Codex', openclaw: 'OpenClaw' };
+
 const params = new URLSearchParams(location.search);
 const me = {
   name: params.get('name') || 'session',
   color: params.get('color') || '#9aa3ad',
-  agent: params.get('agent') === 'codex' ? 'codex' : 'claude',
+  agent: HARNESS_NAMES[params.get('agent')] ? params.get('agent') : 'claude',
   model: '',
 };
 
@@ -182,7 +186,7 @@ function syncMode() {
 function applyIdentity() {
   const character = settings.characters.find((candidate) => candidate.id === settings.character);
   const buddyName = character?.label || 'Buddy';
-  const harness = me.agent === 'codex' ? 'Codex' : 'Claude Code';
+  const harness = HARNESS_NAMES[me.agent] || HARNESS_NAMES.claude;
   const model = shortModel(me.model);
   whoName.textContent = buddyName;
   whoProject.textContent = me.name;

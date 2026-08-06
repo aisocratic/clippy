@@ -139,6 +139,22 @@ There are three deliberate differences in the current Codex integration:
 - Drive mode and Claude plan/allowance calibration remain Claude-specific. Codex context and token
   totals are shown from its rollout files without pretending they are account-limit percentages.
 
+### OpenClaw support
+
+[OpenClaw](https://openclaw.ai) sessions get a buddy too, in **watch mode only**: the buddy shows
+an activity line while the gateway works and nudges you when a reply lands, but there are no
+interactive cards (no permission/review/question buttons) in this integration yet.
+
+```bash
+npm run hooks:install -- --agent openclaw
+```
+
+This copies a dependency-free handler to `~/.openclaw/hooks/clippy-hook.mjs` and registers it in
+`~/.openclaw/openclaw.json` (`hooks.internal.handlers`, for the `message` and `command` event
+families). Restart the OpenClaw gateway to load it. The plain `npm run hooks:install` also picks
+OpenClaw up automatically when `~/.openclaw` exists. The handler fires and forgets with a 1s
+timeout, so a stopped Clippy never slows the gateway down.
+
 ## Quick start
 
 ```bash

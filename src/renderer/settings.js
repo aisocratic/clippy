@@ -475,7 +475,8 @@ function renderSessions() {
 
     const status = document.createElement('span');
     status.className = 'session-status';
-    status.textContent = `${session.agent === 'codex' ? 'Codex' : 'Claude'} · ${STATUS_TEXT[session.status] || session.status || ''}`;
+    const agentName = { claude: 'Claude', codex: 'Codex', openclaw: 'OpenClaw' }[session.agent] || 'Claude';
+    status.textContent = `${agentName} · ${STATUS_TEXT[session.status] || session.status || ''}`;
 
     // A buddy of its own, kept against the project name so the same repo looks
     // the same tomorrow.
