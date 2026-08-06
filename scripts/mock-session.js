@@ -254,13 +254,15 @@ async function main() {
   );
   await sleep(900);
 
-  // Held review on Stop — type feedback to send Claude back to work.
+  // Held review on Stop — open the feedback box, type, send Claude back to
+  // work. The box is hidden until "Send feedback" is clicked, so the first
+  // click opens it and the second submits.
   await held(
     'Stop',
     { ...base(), stop_hook_active: false },
     'Claude finished — review it',
     {
-      expr: `(() => { const i = document.getElementById('card-input'); i.value = 'Also add a 429 integration test'; i.dispatchEvent(new Event('input')); document.getElementById('btn-feedback').click(); return 'sent'; })()`,
+      expr: `(() => { const b = document.getElementById('btn-feedback'); b.click(); const i = document.getElementById('card-input'); if (i.classList.contains('hidden')) return 'feedback box did not open'; i.value = 'Also add a 429 integration test'; i.dispatchEvent(new Event('input')); b.click(); return 'sent'; })()`,
       assert: (d) =>
         d?.decision === 'block' && /429/.test(d?.reason || '')
           ? ok('review → feedback blocks the stop')
