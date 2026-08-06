@@ -1336,9 +1336,16 @@ function createTray() {
 
 function updateTray() {
   if (!tray) return;
-  const { waiting } = tracker.counts();
-  // The count rides beside the icon; quiet means just the clip.
-  tray.setTitle(waiting > 0 ? ` ${waiting}` : '');
+  const { total, waiting } = tracker.counts();
+  // The count beside the clip is how many buddies are open — three sessions
+  // read "3", not the number that happen to be waiting. Who is waiting on you
+  // is the tooltip's job (the buddies themselves already bounce for it).
+  tray.setTitle(total > 0 ? ` ${total}` : '');
+  tray.setToolTip(
+    waiting > 0
+      ? `Clippy — ${total} open session${total === 1 ? '' : 's'}, ${waiting} waiting on you`
+      : 'Clippy for Claude Code + Codex — click for settings'
+  );
 }
 
 function notify(title, body, { silent = true, sessionId } = {}) {
