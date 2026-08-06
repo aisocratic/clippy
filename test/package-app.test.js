@@ -3,8 +3,11 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const zlib = require('node:zlib');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 
-const { encodePng, renderIconPixels } = require('../scripts/package-app');
+const { encodePng, renderIconPixels, sha256File } = require('../scripts/package-app');
 
 /** Pull a PNG apart: signature checked, chunks returned as { type, data }. */
 function parsePng(buf) {
@@ -62,4 +65,15 @@ test('renderIconPixels draws the clip centred with transparent margins', () => {
   let opaque = 0;
   for (let i = 3; i < rgba.length; i += 4) if (rgba[i] === 255) opaque++;
   assert.ok(opaque > size, `expected a drawing, got ${opaque} opaque pixels`);
+});
+
+test('sha256File produces the release checksum without shelling out', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clippy-checksum-'));
+  const file = path.join(dir, 'artifact.dmg');
+  fs.writeFileSync(file, 'clippy');
+  assert.strictEqual(
+    sha256File(file),
+    '328e9da6b2f987f38d7034ba76d746ebfbb24e45da004b93750355c02cc40b42'
+  );
+  fs.rmSync(dir, { recursive: true, force: true });
 });
