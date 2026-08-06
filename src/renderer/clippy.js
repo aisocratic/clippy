@@ -66,6 +66,7 @@ const menuStatus = document.getElementById('menu-status');
 const menuWaiting = document.getElementById('menu-waiting');
 
 const sheetEl = document.getElementById('buddy-sheet');
+const vectorEl = document.getElementById('buddy-vector');
 let sheetTimer = null;
 let pose = 'idle'; // what the buddy is doing right now, by name
 let pointing = false; // standing on a prompt
@@ -249,9 +250,21 @@ function currentSheet() {
   return who && who.sheet ? who.sheet : null;
 }
 
+/** The built-in SVG drawing name for the current character, if it has one. */
+function currentVector() {
+  const who = (settings.characters || []).find((c) => c.id === settings.character);
+  return who && who.vector ? who.vector : null;
+}
+
 /** Show a pose by name — `walk`, `point`, `excited`, `idle`… */
 function setPose(name) {
   pose = poseFor(name);
+  const vector = currentVector();
+  if (vector) {
+    const art = window.ClippyVectors.create(vector, pose, me.color);
+    if (art) vectorEl.replaceChildren(art);
+    return;
+  }
   const sheet = currentSheet();
   if (sheet) {
     playSheet(sheet, pose);
@@ -297,9 +310,12 @@ function refreshPose() {
 /** Same buddy, same behaviour, different shape — and one constant size. */
 function applyCharacter() {
   const sheet = currentSheet();
-  buddyEl.classList.toggle('hidden', Boolean(sheet));
+  const vector = currentVector();
+  buddyEl.classList.toggle('hidden', Boolean(sheet || vector));
   sheetEl.classList.toggle('hidden', !sheet);
+  vectorEl.classList.toggle('hidden', !vector);
   if (!sheet) stopSheet();
+  if (!vector) vectorEl.replaceChildren();
   applySize();
   setPose(pose);
 }
@@ -1035,7 +1051,9 @@ function handleEvent(evt) {
     me.agent = evt.agent;
     applyIdentity();
   }
-  if (evt.name && evt.name !== me.name) {
+  // The workbench's private pose event describes artwork, not a session. Older
+  // benches put that pose in `name`, so explicitly keep it away from identity.
+  if (evt.kind !== 'pose' && evt.name && evt.name !== me.name) {
     me.name = evt.name;
     applyIdentity();
   }
@@ -1118,8 +1136,8 @@ function handleEvent(evt) {
     case 'pose': {
       // A dev hook: the test bench uses it to look at one animation. Nothing in
       // the app sends this — the buddy picks its own pose from what it knows.
-      setPose(evt.name || 'idle');
-      break;
+      setPose(evt.pose || evt.name || 'idle');
+      return; // render() would immediately replace this forced pose from state
     }
     case 'walk': {
       // Main is stepping the window across the terminal; all we do is put him

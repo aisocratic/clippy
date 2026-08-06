@@ -109,9 +109,12 @@
     </div>
 
     <div id="clippy" title="Drag me around. Click for usage, status and a box to talk to this agent; right-click for more; double-click to say hi.">
-      <!-- Every character is an animated GIF built by `npm run make-buddies`:
-           one calm, one excited, and the paperclip in each session colour. -->
+      <!-- Generated characters animate inside GIFs built by `npm run make-buddies`;
+           the paperclip has one set per session colour. -->
       <img id="buddy" width="96" height="120" alt="" />
+      <!-- Built-in SVG buddies are drawn live, so their curves stay smooth at
+           every size and their accent can follow the session colour. -->
+      <div id="buddy-vector" class="hidden"></div>
       <!-- A dropped-in sprite-sheet theme is drawn here instead: one PNG per
            mood, stepped frame by frame (see applySheet in clippy.js). -->
       <div id="buddy-sheet" class="hidden"></div>
@@ -135,6 +138,7 @@
               class="wide">hide</span><span class="narrow">×</span></button>
     </div>
   </div>
+  <script src="vector-buddies.js"></script>
   <script src="clippy.js"></script>
 </body>
 </html>

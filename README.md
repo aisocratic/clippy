@@ -62,10 +62,10 @@ bar, plus real allowance bars for the rolling 5-hour block, the week, and
 Opus's own week once you tell Clippy your plan), and a box to type the next
 prompt into — he raises that session's terminal and types it in for you.
 **Right-click** for everything else — the same stats, Settings, and hide.
-**Double-click** just says hi back, for about a second. The buddies are **pixel
-art**: Clippy himself in your session's colour, a pixel cat, and Clod, all drawn in
-code with no image assets in the repo — and any sprite pack you drop in,
-swappable from the menu.
+**Double-click** just says hi back, for about a second. The built-in buddies are
+all drawn in code: Clippy, the cat, and Clod are generated pixel art; Orbit and
+Loopy are live SVG that stays smooth at every size. Any sprite pack you drop in
+is swappable from the menu too.
 
 ## How it works
 
@@ -308,19 +308,23 @@ port first wins.
   to show and asks for exactly that much height (clamped to your display), so a
   long plan or a queue of approvals isn't cut off and a bare buddy isn't sitting
   in a tall pane of empty glass.
-- **Three buddies in the box, more a download away**: 📎 Clippy himself, a
+- **Five buddies in the box, more a download away**: 📎 Clippy himself, a
   🐱 pixel cat, and ✳️ **Clod** — a squat terracotta box in the spirit of a
-  certain mascot, transcribed into the cast (he was already pixel art) — all **drawn in code**
-  — every frame is primitives in
+  certain mascot, transcribed into the cast (he was already pixel art) — plus
+  two live-SVG buddies: **Orbit**, a round floating robot with smooth curves and
+  a session-colour halo, and **Loopy**, the paperclip redrawn as pure vector —
+  the same wire, no pixels, blinking and waggling his eyebrows in the session
+  colour. They are all **drawn in code**: the pixel frames are primitives in
   `scripts/make-buddies.js`, encoded by this repo's own GIF encoder, which is
-  what lets Clippy ship with no image assets and no third-party art. Clippy is
+  what lets Clippy ship with no third-party art, while Orbit and Loopy live in
+  `src/renderer/vector-buddies.js` and never become pixels. Clippy is
   built once per session colour, since a GIF can't be recoloured by CSS. His
   silhouette is traced from the original 1997 paperclip's own path data — one
   continuous wire, round over the top, down both sides, the inner hook left
   open — rather than a blockier stand-in, so there's no separate "classic"
   variant to pick between anymore; `clip` just *is* that shape now.
 
-  All three speak the full **nine-pose vocabulary** — and the buddy picks its own
+  All five speak the full **nine-pose vocabulary** — and the buddy picks its own
   pose from what the session is doing:
 
   | pose | when |
@@ -676,7 +680,8 @@ perching, tray), `npm start` + `npm run mock-session` for end-to-end.
 ## Development
 
 No build step and no runtime dependencies: the app is plain CommonJS run by
-Electron, the tests are `node:test`, and the pixel art is generated.
+Electron, the tests are `node:test`, the pixel art is generated, and the vector
+buddies are live SVG.
 
 ```bash
 npm install     # Electron (dev) — that's the only dependency
@@ -689,7 +694,8 @@ npm run mock-session  # drive a running app through a realistic session
 ```
 
 `src/renderer/assets/` is **generated** and gitignored — `npm run make-buddies`
-redraws every character, and `npm start` does it for you when it's missing.
+redraws the pixel characters, and `npm start` does it for you when they're missing.
+The vector buddies' SVG source lives directly in `src/renderer/vector-buddies.js`.
 `node scripts/make-buddies.js --preview` prints the frames as ASCII, which is
 the quickest way to iterate on a sprite.
 
@@ -730,11 +736,11 @@ Two things worth knowing before changing the UI:
   the machine, and the Pro/Max/Custom plan estimates those windows are measured
   against
 - `src/gif.js` — a small animated-GIF encoder (GIF89a + LZW), used by
-  `scripts/make-buddies.js` to draw and build every character's animations
+  `scripts/make-buddies.js` to draw and build the pixel characters' animations
 - `src/sdk-session.js` — Drive mode: wraps the Agent SDK `query()` and routes
   `canUseTool` (incl. answerable AskUserQuestion) to Clippy's cards
 - `src/renderer/` — the buddy himself: one transparent always-on-top page with
-  the cards, the menu, and the sprite the window is built around
+  the cards, the menu, and the sprite or live SVG the window is built around
 - `bin/clippy-hooks.js` — hook installer/uninstaller for `~/.claude/settings.json`
 - `scripts/mock-session.js` — mock Claude Code session (above)
 - `scripts/demo-web.js` + `demo/` — the browser test bench (above); it also
