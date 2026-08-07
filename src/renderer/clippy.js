@@ -17,11 +17,15 @@ const GHOST_GRACE_MS = 5 * 1000; // how long past its deadline a card may linger
 
 /* ---------- Identity: this window watches exactly one session ---------- */
 
+// Which harness this buddy watches (mirrors AGENTS in src/sessions.js —
+// renderers run without node integration, so the map is repeated here).
+const HARNESS_NAMES = { claude: 'Claude Code', codex: 'Codex', openclaw: 'OpenClaw' };
+
 const params = new URLSearchParams(location.search);
 const me = {
   name: params.get('name') || 'session',
   color: params.get('color') || '#9aa3ad',
-  agent: params.get('agent') === 'codex' ? 'codex' : 'claude',
+  agent: HARNESS_NAMES[params.get('agent')] ? params.get('agent') : 'claude',
   model: '',
 };
 
@@ -63,11 +67,13 @@ const usageEl = document.getElementById('usage');
 const usageName = document.getElementById('usage-name');
 const usageModel = document.getElementById('usage-model');
 const usageStatus = document.getElementById('usage-status');
+const usageRecap = document.getElementById('usage-recap');
 const usageBarFill = document.getElementById('usage-bar-fill');
 const usageContext = document.getElementById('usage-context');
 const usageBars = document.getElementById('usage-bars');
 const usageNote = document.getElementById('usage-note');
 const usageInput = document.getElementById('usage-input');
+const btnUsageExpand = document.getElementById('btn-usage-expand');
 
 const menuEl = document.getElementById('menu');
 const menuName = document.getElementById('menu-name');
@@ -192,7 +198,7 @@ function syncMode() {
 function applyIdentity() {
   const character = settings.characters.find((candidate) => candidate.id === settings.character);
   const buddyName = character?.label || 'Buddy';
-  const harness = me.agent === 'codex' ? 'Codex' : 'Claude Code';
+  const harness = HARNESS_NAMES[me.agent] || HARNESS_NAMES.claude;
   const model = shortModel(me.model);
   whoName.textContent = buddyName;
   whoProject.textContent = me.name;
@@ -452,9 +458,9 @@ function render() {
   // while the menu is on screen.
   if (menuOpen()) syncMenuItems();
   // The combined panel is meant to be left open while the agent works, so its
-  // status line follows the session rather than freezing at whatever it said
+  // status lines follow the session rather than freezing at whatever they said
   // when the panel opened.
-  if (!usageEl.classList.contains('hidden')) usageStatus.textContent = statusSummary();
+  if (!usageEl.classList.contains('hidden')) syncUsageStatus();
 
   refreshPose();
   syncMode();
@@ -507,10 +513,25 @@ function clearActivity() {
   activityEl.classList.remove('failed');
 }
 
-/** What this agent is up to, in one line: its state, and the tool it's on. */
-function statusSummary() {
-  const state = STATUS_TEXT[myStatus] || myStatus;
-  return latestActivity ? `${state} · ${latestActivity}` : state;
+// What Claude said as its last turn ended, from the usage payload — the
+// summary card's "doing right now" line falls back to it between turns.
+let latestRecap = '';
+
+/**
+ * The summary card's two lines, kept live while the panel is open: the state
+ * in plain words (running / paused / waiting on you), then what the agent is
+ * doing right now. The words are ClippySummary's (summary.js), so the tests
+ * can hold them still.
+ */
+function syncUsageStatus() {
+  usageStatus.textContent = ClippySummary.summaryState(myStatus);
+  const recap = ClippySummary.summaryRecap({
+    status: myStatus,
+    activity: latestActivity,
+    recap: latestRecap,
+  });
+  usageRecap.textContent = recap;
+  usageRecap.classList.toggle('hidden', !recap);
 }
 
 /* ---------- Read-only question card (AskUserQuestion surfacing) ---------- */
@@ -644,13 +665,14 @@ function covers(win, now) {
 /**
  * One window as a bar.
  *
- * With an allowance it's the real thing: spend over limit, warming up as it
- * fills. Without one there is nothing to be a percentage *of*, so the bar falls
- * back to this window's share of the week and the row says that is what it is —
- * except for the week itself, which is that share's denominator and so gets no
- * bar rather than one pinned full of itself.
+ * Clippy measures spend, and only `/usage` (read from Claude Code's own cache,
+ * shown above these bars whenever it exists) knows the allowance — so there is
+ * nothing local to be a percentage *of*. Each bar is this window's share of
+ * the week and the row says that is what it is — except for the week itself,
+ * which is that share's denominator and so gets no bar rather than one pinned
+ * full of itself.
  */
-function windowBar(row, win, limit, weekTotal, now, estimated, agent = 'claude') {
+function windowBar(row, win, weekTotal, now, agent = 'claude') {
   const spent = allTokens(win.totals);
   const sub = covers(win, now);
   // The star is the old panel's: this total is a floor, and the row says why.
@@ -663,25 +685,6 @@ function windowBar(row, win, limit, weekTotal, now, estimated, agent = 'claude')
     : ' The grey line is where the spend Clippy can see begins, not a reset: run /usage in Claude ' +
       'Code for the block the server keeps.';
 
-  if (limit > 0) {
-    const pct = Math.round((spent / limit) * 100);
-    // Past the allowance the percentage has stopped measuring anything, so it
-    // stops being quoted — "1570%" is a fact about the number you typed in.
-    const over =
-      pct > 100
-        ? ` Past it, in fact, which usually says the allowance is wrong rather than that you spent ` +
-          `${Math.round(pct / 100)}× your plan — run /usage and correct it under Custom.`
-        : '';
-    return bar(label, `${fmtTokens(spent)} / ${fmtTokens(limit)}`, spent / limit, {
-      sub,
-      tone: pct >= 85 ? 'hot' : pct >= 60 ? 'warn' : '',
-      hint:
-        `${pct > 100 ? 'All' : `${pct}%`} of ` +
-        `${estimated ? 'an estimated allowance' : 'the allowance you set'} — ${row.what}.` +
-        `${over}${clock}${capped}`,
-    });
-  }
-
   // Every other row is drawn as a share of the week, which leaves the week with
   // nothing to be a share of but itself.
   const yardstick = row.key === 'week';
@@ -689,25 +692,36 @@ function windowBar(row, win, limit, weekTotal, now, estimated, agent = 'claude')
     sub: yardstick ? 'the week the other two are shares of' : sub,
     tone: 'share',
     hint: yardstick
-      ? `${row.what}. No allowance is set, so this total is all the other bars have to be a share ` +
-        `of — and nothing is left to draw it against, which is why it has no bar. Tell Clippy your ` +
-        `plan in Settings to measure it against something.${clock}${capped}`
-      : `${row.what}. No allowance is set, so the bar is this window's share of the last 7 days — ` +
-        `spend, not what's left. Tell Clippy your plan in Settings to measure it against ` +
-        `something.${clock}${capped}`,
+      ? `${row.what}. Clippy measures spend, so this total is all the other bars have to be a ` +
+        `share of — and nothing is left to draw it against, which is why it has no bar.` +
+        `${clock}${capped}`
+      : `${row.what}. The bar is this window's share of the last 7 days — spend, not what's ` +
+        `left.${clock}${capped}`,
   });
 }
 
+// Whether the panel is grown into the full view. A fresh open always starts
+// at the collapsed summary; Expand is a choice you make each visit — but a
+// parked panel comes back as you left it.
+let usageExpanded = false;
+
+function applyUsageExpansion() {
+  usageEl.classList.toggle('collapsed', !usageExpanded);
+}
+
 /**
- * The one panel a left click opens: what the agent is doing, what it has spent,
- * and a box to say the next thing. It used to take three separate visits — the
- * status line under the buddy, the token panel, the composer — for what is
- * really one question ("how is this session doing, and what now?").
+ * The one panel a left click opens — collapsed to a status summary first: the
+ * session's state, what the agent is doing right now, the model, and how full
+ * the context is. Expand grows the same window into the full view (the
+ * allowance bars and a box to say the next thing) for whoever wants more.
+ *
+ * `restore: true` is the parking path bringing the panel back as it was;
+ * everything else opens the collapsed summary.
  */
-async function showUsage() {
+async function showUsage({ restore = false } = {}) {
   const data = await window.clippyAPI.usage();
   if (!data) return;
-  const { session, windows, limits, plan } = data;
+  const { session, windows } = data;
   const now = data.now || Date.now();
 
   // The panel and a speech bubble both want the space above Clippy's head.
@@ -715,13 +729,17 @@ async function showUsage() {
   qcardEl.classList.add('hidden');
   menuEl.classList.add('hidden');
 
+  if (!restore) usageExpanded = false;
+  applyUsageExpansion();
+
   usageName.textContent = data.name || me.name;
   usageModel.textContent = shortModel(session?.model);
+  latestRecap = data.recap || '';
   if (session?.model && session.model !== me.model) {
     me.model = session.model;
     applyIdentity();
   }
-  usageStatus.textContent = statusSummary();
+  syncUsageStatus();
 
   if (session && session.turns > 0) {
     const pct = Math.min(100, Math.round((session.context / session.contextLimit) * 100));
@@ -779,8 +797,7 @@ async function showUsage() {
     for (const row of rows) {
       const win = windows && windows[row.key];
       if (!win) continue;
-      const limit = (limits && limits[row.key]) || 0;
-      usageBars.append(windowBar(row, win, limit, weekTotal, now, plan && plan.estimated, data.agent));
+      usageBars.append(windowBar(row, win, weekTotal, now, data.agent));
     }
   }
 
@@ -811,32 +828,34 @@ async function showUsage() {
   // With the official cache on screen its own note (set above) stands; the
   // wording below belongs to the measured-spend fallback only.
   if (!(data.official && data.official.limits && data.official.limits.length)) {
-    const named = plan && plan.id && plan.id !== 'unknown';
     usageNote.textContent = data.agent === 'codex'
       ? 'Measured from local Codex rollout transcripts. These are token totals, not your remaining account allowance.'
-      : !named
-      ? 'No allowance set — bars are shares of the last 7 days. Set your plan under Usage & limits ' +
-        'in Settings (📎 in the menu bar) to measure them against something, and run /usage in ' +
-        'Claude Code for the real numbers.'
-      : plan.estimated
-      ? `Measured against a rough ${plan.label} estimate — run /usage in Claude Code and correct it ` +
-        'under Custom in Settings (📎 in the menu bar). Clippy counts what you spent; only /usage ' +
-        'knows what is left.'
-      : `Measured against the limits you set. Clippy counts what you spent; only /usage knows what ` +
-        'is left.';
+      : 'Bars are shares of the last 7 days — measured spend, not an allowance. Run /usage in ' +
+        'Claude Code once and Clippy picks up the real percentages it caches, no setup needed.';
   }
 
   usageEl.classList.remove('hidden');
   syncMode();
-  // The panel is also where you type the next prompt, so the caret starts there.
-  usageInput.focus();
+  // The full view is also where you type the next prompt, so the caret starts
+  // there — but only once it's on screen; the collapsed summary has no box.
+  if (usageExpanded) usageInput.focus();
 }
 
 function hideUsage() {
   parkedPanel = null; // an explicit close is not a parking — nothing comes back
+  usageExpanded = false; // the next open starts at the summary again
   usageEl.classList.add('hidden');
   syncMode();
 }
+
+// Expand: same window, grown — the bars and the composer were rendered on
+// open, so this only has to reveal them and ask main for the taller window.
+btnUsageExpand.addEventListener('click', () => {
+  usageExpanded = true;
+  applyUsageExpansion();
+  syncMode();
+  usageInput.focus();
+});
 
 /* ---------- Drive mode panel (Clippy-driven Agent SDK session) ---------- */
 
@@ -1152,8 +1171,11 @@ function handleEvent(evt) {
       document.body.classList.toggle('compact', Boolean(evt.compact));
       // Clicking a compact buddy opens the panel before main has grown the
       // window, and a display:none textarea can't take the caret — so the
-      // composer claims it here, once the panel is actually on screen.
-      if (!evt.compact && !usageEl.classList.contains('hidden')) usageInput.focus();
+      // composer claims it here, once the panel is actually on screen (and
+      // only in the expanded view, where the composer exists).
+      if (!evt.compact && usageExpanded && !usageEl.classList.contains('hidden')) {
+        usageInput.focus();
+      }
       break;
     }
     case 'pose': {
@@ -1432,9 +1454,10 @@ document.getElementById('btn-usage-send').addEventListener('click', sendPrompt);
 
 /**
  * What a plain click should just do, no menu in the way: a message you haven't
- * seen yet wins (it's why the buddy is bouncing), otherwise the one panel that
- * answers "how is this session doing, and what now?" opens — status, spend and
- * a box to type the next prompt into. Everything else is a right-click away.
+ * seen yet wins (it's why the buddy is bouncing), otherwise the session's
+ * status summary opens — "how is this session doing?", with Expand for the
+ * spend and a box to type the next prompt into. Everything else is a
+ * right-click away.
  */
 const CLICK_ACK_MS = 900;
 function primaryAction() {
@@ -1467,6 +1490,8 @@ clippyEl.addEventListener('mousedown', (e) => {
   dragFrom = { x: e.screenX, y: e.screenY, moved: false };
 });
 
+let settleFacing = null; // puts him back to his usual stance after a carry
+
 window.addEventListener('mousemove', (e) => {
   if (!dragFrom) return;
   const dx = e.screenX - dragFrom.x;
@@ -1475,11 +1500,19 @@ window.addEventListener('mousemove', (e) => {
   dragFrom.moved = true;
   dragFrom.x = e.screenX;
   dragFrom.y = e.screenY;
+  // Face the way he's being pulled, like the walk does — a couple of pixels of
+  // sideways intent before flipping, so a shaky vertical carry doesn't flicker.
+  if (Math.abs(dx) >= 2) document.body.classList.toggle('facing-left', dx < 0);
   window.clippyAPI.moveBy(dx, dy);
 });
 
 window.addEventListener('mouseup', () => {
-  if (dragFrom?.moved) suppressClickUntil = Date.now() + 250;
+  if (dragFrom?.moved) {
+    suppressClickUntil = Date.now() + 250;
+    // He keeps looking the way he went for a beat, then settles back.
+    clearTimeout(settleFacing);
+    settleFacing = setTimeout(() => document.body.classList.remove('facing-left'), 500);
+  }
   dragFrom = null;
 });
 
@@ -1552,7 +1585,7 @@ function unparkPanels() {
   // Something louder took the stage while we were away — let it keep it.
   if (activeRequestId) return;
   if (!bubbleEl.classList.contains('hidden') || !qcardEl.classList.contains('hidden')) return;
-  if (which === 'usage') showUsage();
+  if (which === 'usage') showUsage({ restore: true }); // as you left it
   else openMenu();
 }
 

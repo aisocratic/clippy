@@ -14,8 +14,7 @@
     </div>
     <a class="rail-link on" href="#sessions">Sessions</a>
     <a class="rail-link" href="#buddies">Buddies</a>
-    <a class="rail-link" href="#limits">Usage &amp; limits</a>
-    <a class="rail-link" href="#actions">What Clippy can do</a>
+    <a class="rail-link" href="#actions">Clippy&#39;s Features</a>
     <a class="rail-link" href="#updates">Updates</a>
     <div id="rail-meta">
       <a id="maker-link" href="https://aisocratic.org">by AI Socratic ↗</a>
@@ -67,48 +66,18 @@
         </div>
         <p class="field-note" id="pet-status" hidden></p>
         <p>The same install from a terminal is
-          <code>npm run add-sprite-pack -- &lt;pet url&gt;</code> (a downloaded pack folder
-          works too). Any folder under <code>src/renderer/assets/themes/</code> with a
-          <code>theme.json</code> shows up here.</p>
+          <code>npm run add-sprite-pack -- &lt;pet url&gt;</code> (a pet id or a downloaded
+          pack folder work too). Any folder under <code>src/renderer/assets/themes/</code>
+          with a <code>theme.json</code> shows up here.</p>
         <p>Packs stay on this machine and keep their own licence — Clippy never
           redistributes them.</p>
       </div>
     </section>
 
-    <section id="limits" class="panel">
-      <header class="panel-head">
-        <h1>Usage &amp; limits</h1>
-        <p>Right-click a Claude buddy and it shows the three windows <code>/usage</code> reports on: the
-           rolling 5&nbsp;hours, the week, and Opus's own week. Clippy reads what those windows
-           <em>spent</em> from Claude Code's transcripts, exactly. What nobody can read is what
-           you're <em>allowed</em> — Claude Code never writes it down, <code>/usage</code> asks the
-           API. Tell Clippy your limits and those bars become real progress bars. Codex buddies
-           show context and measured token totals from local rollout transcripts, separately.</p>
-      </header>
-
-      <div class="field-row">
-        <div class="field">
-          <label>Your plan</label>
-          <div id="plans" class="segmented"></div>
-        </div>
-        <p class="field-note" id="plan-note"></p>
-      </div>
-
-      <div id="plan-limits" class="limits"></div>
-
-      <div class="drop-hint">
-        <p><b>How to get the real numbers.</b> Run <code>/usage</code> in Claude Code, then
-          right-click a buddy. If <code>/usage</code> says you're 40% through the week and Clippy
-          says 2.0M, your weekly allowance is about 5M — type that in under <b>Custom</b>. Do it
-          once and every bar after that is honest.</p>
-        <p>The named tiers are starting scales, not facts: only the 5×/20× steps between them are
-          certain. Until a number comes from you, Clippy shows spend and says so.</p>
-      </div>
-    </section>
 
     <section id="actions" class="panel">
       <header class="panel-head">
-        <h1>What Clippy can do</h1>
+        <h1>Clippy's Features</h1>
         <p>Everything a buddy does with a session, what triggers it, and — where it
            answers on your behalf — the exact hook JSON the agent receives.</p>
       </header>

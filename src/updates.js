@@ -3,11 +3,12 @@
 /**
  * Where this copy of Clippy came from, and whether GitHub has moved on.
  *
- * There is no update server and no auto-updater — deliberately. A checkout
- * updates with `git pull`, the packaged app by rebuilding, and this module's
- * whole job is to tell you *honestly* which of those you're holding and
- * whether there's anything newer to pull. Pure logic with the network call
- * injectable, so all of it is testable offline.
+ * There is no update server and no background auto-updater — deliberately. A
+ * checkout updates with `git pull`; the packaged app by downloading the newest
+ * release DMG, which this module can now point at: it compares the app's own
+ * version with the latest GitHub release and hands back the download link.
+ * Pure logic with the network call injectable, so all of it is testable
+ * offline.
  */
 
 const fs = require('node:fs');
@@ -15,6 +16,7 @@ const path = require('node:path');
 
 const REPO = 'AISocratic/clippy';
 const LATEST_URL = `https://api.github.com/repos/${REPO}/commits/main`;
+const RELEASE_URL = `https://api.github.com/repos/${REPO}/releases/latest`;
 
 /**
  * The commit this checkout is sitting on, read straight from .git — no `git`
@@ -71,23 +73,56 @@ async function fetchLatest(fetchImpl = fetch) {
   };
 }
 
+/** The newest published release: { version, tag, date, url, dmg }. */
+async function fetchLatestRelease(fetchImpl = fetch) {
+  const res = await fetchImpl(RELEASE_URL, {
+    headers: { 'User-Agent': 'clippy-for-claude', Accept: 'application/vnd.github+json' },
+  });
+  if (!res.ok) throw new Error(`GitHub answered ${res.status}`);
+  const body = await res.json();
+  const tag = body.tag_name || '';
+  const dmg = (body.assets || []).find((a) => (a.name || '').endsWith('.dmg'));
+  return {
+    tag,
+    version: tag.replace(/^v/, ''),
+    date: body.published_at || null,
+    url: body.html_url || `https://github.com/${REPO}/releases/latest`,
+    dmg: dmg ? dmg.browser_download_url : null,
+  };
+}
+
 /**
  * Put the two together into what the settings page shows. `upToDate` is only
- * ever true or false when we can actually compare — a packaged app has no sha
- * to compare with, and pretending would be the kind of lie this app avoids.
+ * ever true or false when we can actually compare, and each source is compared
+ * against the thing it actually updates from: a checkout against the tip of
+ * main (git pull), the packaged app against the newest release (a fresh DMG).
  */
 async function checkForUpdates(rootDir, fetchImpl = fetch) {
   const build = localBuild(rootDir);
+  if (!build.sha) {
+    // The packaged app: no git, but it knows its version — the latest release
+    // says whether a newer DMG exists and where to get it.
+    try {
+      const release = await fetchLatestRelease(fetchImpl);
+      return {
+        ...build,
+        release,
+        upToDate: build.version && release.version ? build.version === release.version : null,
+      };
+    } catch (err) {
+      return { ...build, release: null, upToDate: null, error: err.message };
+    }
+  }
   try {
     const latest = await fetchLatest(fetchImpl);
     return {
       ...build,
       latest,
-      upToDate: build.sha ? build.sha === latest.sha : null,
+      upToDate: build.sha === latest.sha,
     };
   } catch (err) {
     return { ...build, latest: null, upToDate: null, error: err.message };
   }
 }
 
-module.exports = { localBuild, fetchLatest, checkForUpdates, REPO, LATEST_URL };
+module.exports = { localBuild, fetchLatest, fetchLatestRelease, checkForUpdates, REPO, LATEST_URL, RELEASE_URL };

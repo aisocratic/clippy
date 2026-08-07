@@ -18,14 +18,15 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { createHookServer } = require('./server');
-const { SessionTracker, WORKING, WAITING } = require('./sessions');
+const { SessionTracker, AGENTS, agentDisplayName, WORKING, WAITING } = require('./sessions');
 const { DecisionBroker, toHookResponse, describeToolCall } = require('./decisions');
 const { DriveSession } = require('./sdk-session');
-const { checkDrift, checkCodexDrift, installToFiles } = require('../bin/clippy-hooks');
+const { checkDrift, checkCodexDrift, checkOpenclawDrift, installToFiles } = require('../bin/clippy-hooks');
 const { identityFor } = require('./identity');
 const { SIZES, sizeList, allCharacters, characterFor } = require('./characters');
 const { ACTIONS } = require('./actions');
 const { windowActionFor } = require('./visibility');
+const { EDGE_OPTIONS, EDGE_IDS, edgeLineup, edgeHome } = require('./arrange');
 const {
   terminalFromHeaders,
   resolveTarget,
@@ -35,8 +36,7 @@ const {
   promptPosition,
   typeAndSubmit,
 } = require('./terminal');
-const { sessionUsage, lastAssistantText, usageWindows, readOfficialUsage, planLimitsFor, cleanLimits, PLANS } =
-  require('./usage');
+const { sessionUsage, lastAssistantText, usageWindows, readOfficialUsage } = require('./usage');
 const { checkForUpdates, localBuild } = require('./updates');
 const { DEV_SESSION, eventsFor, storyList, sandboxUsage } = require('./sandbox-scenarios');
 const { startCompletionPoll, coalesceAsync } = require('./async-control');
@@ -86,14 +86,13 @@ const settings = {
   autoPerch: true, // appear on the session's own window, not the screen corner
   characterByProject: {}, // project name -> character id, when you've picked one
   size: 'medium', // how big that buddy is drawn, and stays
-  plan: 'unknown', // which plan's allowance the usage bars are measured against
-  planLimits: {}, // your own token allowances, when the plan is "custom"
+  arrangeEdge: '', // screen edge new buddies line up on; '' = the classic corner
 };
 
 // Settings that aren't simple on/off switches, with the values they accept.
 const CHOICES = {
   size: () => Object.keys(SIZES),
-  plan: () => PLANS.map((p) => p.id),
+  arrangeEdge: () => EDGE_IDS,
 };
 
 // The cast is read fresh each time so a sprite theme dropped into
@@ -138,10 +137,7 @@ function saveSettings() {
 
 function setSetting(key, value) {
   if (!(key in settings) || key === 'characterByProject') return;
-  if (key === 'planLimits') {
-    // Numbers you typed yourself, so they get sanity-checked rather than cast.
-    settings.planLimits = cleanLimits(value);
-  } else if (CHOICES[key]) {
+  if (CHOICES[key]) {
     if (!CHOICES[key]().includes(value)) return;
     settings[key] = value;
   } else {
@@ -170,7 +166,6 @@ function settingsPayload(buddy) {
     ...(buddy ? { character: buddy.character } : null),
     characters: allCharacters(),
     sizes: sizeList(),
-    plans: PLANS,
   };
 }
 
@@ -322,6 +317,50 @@ function cornerBounds(slot, width, height) {
 }
 
 /**
+ * A buddy's default spot on screen: the classic bottom-right corner stack,
+ * unless "Organize buddies" has made an edge the house style — then new (and
+ * un-dragged) buddies file along that edge instead, until you pick another.
+ */
+function homeBounds(slot, width, height) {
+  const edge = settings.arrangeEdge;
+  if (!edge) return cornerBounds(slot, width, height);
+  const { workArea } = screen.getPrimaryDisplay();
+  // Slots step by the full panel width along horizontal edges (so an open card
+  // never lands on the neighbour) and by the compact height along vertical
+  // ones — the same pitches cornerBounds uses for its columns and rows.
+  const [, compactH] = compactSize();
+  const step = edge === 'top' || edge === 'bottom' ? WIN_W + WIN_GAP : compactH + WIN_GAP;
+  return edgeHome(workArea, edge, slot, { width, height }, WIN_GAP, step);
+}
+
+/**
+ * "Organize buddies" from the tray: line the buddies up along one edge of the
+ * screen, evenly spaced, and remember the edge as the default spot for new
+ * ones. Perched (docked) buddies are left alone — a perch tracks the terminal
+ * window its session lives in, and yanking it to a screen edge would undo the
+ * follow-the-window behaviour the user (or autoPerch) asked for. Only the
+ * free-floating buddies fall in.
+ */
+function organizeBuddies(edge) {
+  settings.arrangeEdge = edge;
+  saveSettings();
+  const free = [...buddies.values()].filter((b) => !b.dock && !b.win.isDestroyed());
+  const [width, height] = compactSize();
+  const { workArea } = screen.getPrimaryDisplay();
+  const spots = edgeLineup(workArea, edge, free.length, { width, height }, WIN_GAP);
+  free.forEach((buddy, i) => {
+    stopWalking(buddy); // the lineup owns the window now, not the stroll
+    // From here the lineup spot outranks the corner, exactly like a hand move:
+    // cards and menus grow around it instead of snapping back.
+    buddy.dragged = true;
+    // Park the compact footprint on the spot, then let placeBuddy re-grow any
+    // open card around it — same as a card opening over a hand-placed buddy.
+    setBuddyBounds(buddy, { ...spots[i], width, height });
+    placeBuddy(buddy, buddy.mode || 'compact');
+  });
+}
+
+/**
  * The one door in and out of moving a buddy's window. `lastPlaced` is what
  * tells the `moved` listener a bounds change was ours, not your hand on the
  * paperclip — so every programmatic move, including mid-walk, has to go
@@ -379,7 +418,7 @@ function buddyFor(key, name = '', agent = '') {
 
   const slot = nextFreeSlot();
   const [compactW, compactH] = compactSize();
-  const { x, y } = cornerBounds(slot, compactW, compactH);
+  const { x, y } = homeBounds(slot, compactW, compactH);
   const identity = identityFor(key, name);
   const win = new BrowserWindow({
     width: compactW,
@@ -590,7 +629,7 @@ function placeBuddy(buddy, mode, wantHeight, wantWidth) {
         height,
         screen.getDisplayMatching(buddy.dock.bounds).workArea
       )
-    : cornerBounds(buddy.slot, width, height);
+    : homeBounds(buddy.slot, width, height);
 
   setBuddyBounds(buddy, { ...spot, width, height });
   buddy.win.webContents.send('clippy-event', {
@@ -1114,7 +1153,6 @@ async function collectUsage(key) {
     cached = { at: now, windows: await refreshUsageWindowsFor(agent)(now) };
     usageCache.set(agent, cached);
   }
-  const plan = PLANS.find((p) => p.id === settings.plan) || PLANS[0];
   return {
     name: buddies.get(key)?.name || '',
     agent,
@@ -1122,12 +1160,11 @@ async function collectUsage(key) {
     // allowance, shown first whenever it exists.
     official: agent === 'claude' ? await readOfficialUsage() : null,
     session,
+    // What Claude said as its last turn ended — the status summary's "doing
+    // right now" line falls back to it when no tool activity is fresher.
+    recap: await lastAssistantText(tracker.transcriptFor(key), { maxChars: 200 }),
     windows: cached.windows,
     now,
-    limits: agent === 'claude' ? planLimitsFor(settings) : null,
-    plan: agent === 'claude'
-      ? { id: plan.id, label: plan.label, estimated: Boolean(plan.estimated) }
-      : { id: 'unknown', label: 'Codex', estimated: false },
   };
 }
 
@@ -1165,6 +1202,17 @@ function trayMenu() {
       click: () => {
         for (const b of buddies.values()) hideBuddy(b.sessionId, { unpin: true });
       },
+    },
+    {
+      // Lines the free-floating buddies up along an edge, and makes that edge
+      // the default spot for new ones. Perched buddies stay on their windows.
+      label: 'Organize buddies',
+      submenu: EDGE_OPTIONS.map(({ id, label }) => ({
+        label,
+        type: 'radio',
+        checked: settings.arrangeEdge === id,
+        click: () => organizeBuddies(id),
+      })),
     },
     ...(sessionItems.length ? [{ type: 'separator' }, ...sessionItems] : []),
     { type: 'separator' },
@@ -1293,10 +1341,19 @@ function createTray() {
 
 function updateTray() {
   if (!tray) return;
-  const { waiting } = tracker.counts();
-  // The count rides beside the clip; quiet means just the clip.
+  const { total, waiting } = tracker.counts();
+  // The count beside the clip is how many buddies are open — three sessions
+  // read "3", not the number that happen to be waiting. Who is waiting on you
+  // is the tooltip's job (the buddies themselves already bounce for it).
+  // On macOS the clip itself is the 📎 emoji, set as the tray title; other
+  // platforms wear the drawn template icon, so their title is just the count.
   const clip = process.platform === 'darwin' ? '📎' : '';
-  tray.setTitle(waiting > 0 ? `${clip} ${waiting}` : clip);
+  tray.setTitle(total > 0 ? `${clip} ${total}` : clip);
+  tray.setToolTip(
+    waiting > 0
+      ? `Clippy — ${total} open session${total === 1 ? '' : 's'}, ${waiting} waiting on you`
+      : 'Clippy for Claude Code + Codex — click for settings'
+  );
 }
 
 function notify(title, body, { silent = true, sessionId } = {}) {
@@ -1582,7 +1639,9 @@ async function handleStop(payload) {
   const reaction = tracker.handle('Stop', null, payload);
   const agentName = reaction.agentName;
 
-  if (!settings.reviewOnStop) {
+  // OpenClaw is watch-mode only: its handler fires and forgets, so a held
+  // review card could never send feedback anywhere. Plain nudge instead.
+  if (!settings.reviewOnStop || payload.agent === 'openclaw') {
     emitPassive(reaction);
     return {};
   }
@@ -1771,8 +1830,8 @@ function noteTerminal(payload, ctx) {
 function handleHookEvent(eventName, kind, payload, ctx) {
   // The hook command tags its source in the local URL. Keep the upstream hook
   // payload untouched on the wire, then carry the source through our session
-  // model so one app can label Claude and Codex buddies correctly.
-  payload = { ...(payload || {}), agent: ctx?.source === 'codex' ? 'codex' : 'claude' };
+  // model so one app can label Claude, Codex, and OpenClaw buddies correctly.
+  payload = { ...(payload || {}), agent: AGENTS[ctx?.source] ? ctx.source : 'claude' };
   noteTerminal(payload, ctx);
 
   if (eventName === 'PermissionRequest') return handlePermissionRequest(payload, ctx);
@@ -1839,6 +1898,7 @@ function warnOnHookDrift() {
   const configs = [
     { agent: 'Claude', file: path.join(os.homedir(), '.claude', 'settings.json'), check: checkDrift },
     { agent: 'Codex', file: path.join(os.homedir(), '.codex', 'hooks.json'), check: checkCodexDrift },
+    { agent: 'OpenClaw', file: path.join(os.homedir(), '.openclaw', 'openclaw.json'), check: checkOpenclawDrift },
   ];
   const installed = [];
   const stale = [];
@@ -1855,7 +1915,6 @@ function warnOnHookDrift() {
     } catch (err) {
       console.warn(`clippy: could not check ${config.agent} hooks:`, err.message);
     }
-
   }
   // Re-run after every install, so a fixed state clears the tray warnings.
   hooksAbsent = installed.length === 0;
@@ -2016,7 +2075,6 @@ app.whenReady().then(async () => {
     // The "fix it" button on a sticky message.
     const buddy = buddyForSender(e.sender);
     if (what === 'accessibility') askForWindowAccess(buddy?.sessionId || null, { force: true });
-    if (what === 'plan') openSettingsWindow('limits');
   });
   ipcMain.on('clippy-open-external', (_e, url) => {
     // Only ever hand the OS an https link — this window must not become a

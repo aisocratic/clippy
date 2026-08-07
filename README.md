@@ -148,6 +148,22 @@ There are three deliberate differences in the current Codex integration:
 - Drive mode and Claude plan/allowance calibration remain Claude-specific. Codex context and token
   totals are shown from its rollout files without pretending they are account-limit percentages.
 
+### OpenClaw support
+
+[OpenClaw](https://openclaw.ai) sessions get a buddy too, in **watch mode only**: the buddy shows
+an activity line while the gateway works and nudges you when a reply lands, but there are no
+interactive cards (no permission/review/question buttons) in this integration yet.
+
+```bash
+npm run hooks:install -- --agent openclaw
+```
+
+This copies a dependency-free handler to `~/.openclaw/hooks/clippy-hook.mjs` and registers it in
+`~/.openclaw/openclaw.json` (`hooks.internal.handlers`, for the `message` and `command` event
+families). Restart the OpenClaw gateway to load it. The plain `npm run hooks:install` also picks
+OpenClaw up automatically when `~/.openclaw` exists. The handler fires and forgets with a 1s
+timeout, so a stopped Clippy never slows the gateway down.
+
 ## Quick start
 
 ```bash
@@ -256,13 +272,11 @@ port first wins.
     automatically), then three bars for what every session on this machine has
     spent in the windows `/usage` reports on — the rolling 5-hour block, the
     week across all models, and Opus's own week — plus the models you leaned on
-    most. Tell Clippy your plan (Pro, Max 5×, Max 20×, or your own Custom
-    numbers) under **Usage & limits** in Settings (📎 in the menu bar) and those
-    become real allowance bars, spend over limit; until then they're hatched
-    bars showing each window's share of the week, spend with nothing to compare
-    it to. Claude Code keeps the real 5-hour/weekly allowances server-side, so
-    `/usage` is still the source of truth — Clippy's numbers are for
-    calibrating the estimate, not replacing it.
+    most. When Claude Code has cached its own `/usage` percentages, Clippy reads
+    them and shows the real allowance bars automatically — nothing to configure.
+    Until then the bars are hatched shares of the week: spend, with nothing to
+    compare it to. Claude Code keeps the real 5-hour/weekly allowances
+    server-side, so `/usage` is the source of truth either way.
   - **a box to keep chatting** — type what you want and hit Enter: Clippy
     raises that session's terminal and types it onto the prompt line for you
     (simulated keystrokes via the same Accessibility access perching uses,
@@ -473,18 +487,7 @@ and read, and it has five sections:
   more — paste a pet's page link into the **Add a pet** box right there (or into
   `npm run add-sprite-pack -- <pet url>` in a terminal) and it downloads,
   installs, and joins the cast on the spot.
-- **Usage & limits** — turns the token panel's spend bars into real allowance
-  bars. Pick your plan (**Pro**, **Max 5×**, **Max 20×**) for a rough estimate
-  scaled off Anthropic's own 5×/20× steps, or **Custom** to type in your own
-  numbers for the 5-hour block, the week, and Opus's week. To get real numbers:
-  run `/usage` in Claude Code, right-click a buddy, and back out the allowance
-  from the percentage each side reports (40% in `/usage` against 2.0M in Clippy
-  means a ~5M allowance) — type that in under Custom and every bar after that
-  is honest instead of a guess. Clippy can't read your plan tier itself —
-  Claude Code never persists it anywhere and `/usage` is a live API call that
-  leaves no trace on disk — so until you've set one, the bars fall back to
-  plain spend counts.
-- **What Clippy can do** — the full catalogue: what triggers each behaviour,
+- **Clippy's Features** — the full catalogue: what triggers each behaviour,
   which hook it rides on, what you see, and — for anything that answers on your
   behalf — **the exact JSON Claude Code receives** for each button. Those strings
   come from the same `toHookResponse` the app answers with (`src/actions.js`), so
@@ -497,7 +500,7 @@ and read, and it has five sections:
 The on/off switches for what Clippy answers aren't in this window at all: they
 live in **📎 menu bar → Quick settings**, one right-click from anywhere. Turn one
 off and that moment goes back to the terminal exactly as if Clippy weren't
-running — *What Clippy can do* marks the affected entries **off**.
+running — *Clippy's Features* marks the affected entries **off**.
 
 ## Bring your own buddy (sprite-sheet themes)
 
@@ -547,14 +550,14 @@ sheet, as the ones on [openpets.dev/gallery](https://openpets.dev/gallery) do �
 so there's a script for it:
 
 ```bash
-npm run add-sprite-pack -- https://openpets.dev/pets/chotu-openpets   # a pet's page link
-npm run add-sprite-pack -- ~/Downloads/miso                           # or a folder from the zip
+npm run add-sprite-pack -- https://openpets.dev/pets/miso-openpets/   # straight from the gallery
+npm run add-sprite-pack -- miso                                        # a pet id works too
 npm run add-sprite-pack -- ~/Downloads/fox --walk 1:8 --sleep 5:8 --cheer 2:8
 ```
 
-Given a pet's page link (or a direct `.zip` link) it downloads the pack into a
-temp folder first; from there both paths are identical. It reads the sheet's
-size from the image header, works out the frame size from
+Given a pet's page link, a pet id, or a direct `.zip` link it downloads the
+pack into a temp folder first; from there all paths are identical. It reads
+the sheet's size from the image header, works out the frame size from
 `--grid` (default `8x9`), copies the sheet into place and writes the
 `theme.json`. Defaults: `--idle 0:6` and `--excited 3:4`; the other poses take
 `--walk ROW:FRAMES` and friends. Rows differ between packs — the settings window

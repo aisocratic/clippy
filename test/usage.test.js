@@ -17,8 +17,6 @@ const {
   agesOutAt,
   modelSlice,
   usageWindows,
-  cleanLimits,
-  planLimitsFor,
   OPUS,
   SESSION_WINDOW_MS,
   WEEK_WINDOW_MS,
@@ -386,32 +384,6 @@ test('an empty projects tree is zeroes, not a crash', async () => {
     assert.equal(win.agesOutAt, 0);
     assert.deepEqual(win.byModel, {});
   }
-});
-
-/* ---------- Allowances, which only the user can supply ---------- */
-
-test('no plan means no allowance — the panel has to fall back, not guess', () => {
-  assert.equal(planLimitsFor({}), null);
-  assert.equal(planLimitsFor({ plan: 'unknown' }), null);
-  assert.equal(planLimitsFor({ plan: 'custom', planLimits: {} }), null);
-  // A tier nobody ships is not an excuse to make one up.
-  assert.equal(planLimitsFor({ plan: 'max100' }), null);
-});
-
-test('a named tier hands over all three windows, and Max 5x is five Pros', () => {
-  const pro = planLimitsFor({ plan: 'pro' });
-  const max5 = planLimitsFor({ plan: 'max5' });
-  assert.deepEqual(Object.keys(pro), ['session', 'week', 'weekOpus']);
-  for (const key of Object.keys(pro)) assert.equal(max5[key], pro[key] * 5);
-});
-
-test('your own numbers survive; nonsense does not', () => {
-  assert.deepEqual(cleanLimits({ session: 5_000_000, week: 'lots', weekOpus: -3 }), {
-    session: 5_000_000,
-  });
-  assert.deepEqual(cleanLimits(null), {});
-  // Knowing one window and not the others is allowed: the rest fall back.
-  assert.deepEqual(planLimitsFor({ plan: 'custom', planLimits: { week: 42.6 } }), { week: 43 });
 });
 
 test('a context past the standard window means the 1M variant', () => {

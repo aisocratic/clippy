@@ -4,8 +4,13 @@ const http = require('node:http');
 
 const MAX_BODY = 1024 * 1024; // 1 MB
 
+// Agents allowed to tag themselves via ?source=. Anything else (including a
+// missing param, i.e. hooks from an older install) is treated as Claude.
+const KNOWN_SOURCES = new Set(['claude', 'codex', 'openclaw']);
+
 /**
- * Tiny dependency-free HTTP server that receives Claude Code and Codex hook events.
+ * Tiny dependency-free HTTP server that receives Claude Code, Codex, and
+ * OpenClaw hook events.
  *
  * Hooks POST their stdin JSON to:  POST /hook/<EventName>[?kind=<matcher>]
  * Statusline hook:                 POST /statusline?cols=N  (body: Claude
@@ -101,7 +106,8 @@ function createHookServer({ onEvent, getStatus, onStatusline, onFocus, port = 43
       const closeHandlers = [];
       // `headers` carries the terminal context the hook shipped (X-Clippy-*),
       // which is how the app finds the window a session is running in.
-      const source = url.searchParams.get('source') === 'codex' ? 'codex' : 'claude';
+      const requested = url.searchParams.get('source');
+      const source = KNOWN_SOURCES.has(requested) ? requested : 'claude';
       const ctx = { onClose: (fn) => closeHandlers.push(fn), headers: req.headers, source };
       res.on('close', () => {
         for (const fn of closeHandlers) {

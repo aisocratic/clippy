@@ -12,8 +12,8 @@
  *
  * And the real allowance: newer Claude Code caches the `/usage` percentages
  * in ~/.claude.json (see readOfficialUsage), which the panel shows first. The
- * transcript sweep and the PLANS estimates below are the fallback for older
- * installs, or a machine where /usage has never been opened.
+ * transcript sweep is the fallback for older installs, or a machine where
+ * /usage has never been opened.
  */
 
 const fs = require('node:fs/promises');
@@ -565,73 +565,6 @@ async function readOfficialUsage(file = path.join(require('node:os').homedir(), 
   return { fetchedAtMs: Number(cached.fetchedAtMs) || 0, limits: rows };
 }
 
-/* ---------------- Allowances, which only you can tell us ---------------- */
-
-// A plan's allowance in each window, counted in total tokens — input, output
-// and cache, because cache is what Clippy can actually measure.
-//
-// These are ESTIMATES and are labelled as such everywhere they are shown.
-// Anthropic doesn't publish the numbers and Claude Code never writes them to
-// disk, so the honest way to use one is as a starting scale: run `/usage` in
-// Claude Code, compare its percentage with Clippy's, and type the corrected
-// number in as "Custom". The one solid thing here is the 5×/20× steps, which
-// is what the plan names mean — so all three tiers are a single anchor
-// multiplied out rather than three separate guesses.
-const PRO_ESTIMATE = { session: 30_000_000, week: 360_000_000, weekOpus: 120_000_000 };
-
-const scaled = (factor) => ({
-  session: PRO_ESTIMATE.session * factor,
-  week: PRO_ESTIMATE.week * factor,
-  weekOpus: PRO_ESTIMATE.weekOpus * factor,
-});
-
-/** The windows an allowance can be set for — also the shape of a custom one. */
-const PLAN_WINDOWS = ['session', 'week', 'weekOpus'];
-
-const PLANS = [
-  {
-    id: 'unknown',
-    label: 'Not set',
-    note: 'Bars show each window as a share of the last 7 days — spend, with nothing to compare it to.',
-    limits: null,
-  },
-  { id: 'pro', label: 'Pro', note: 'Rough estimate — calibrate it.', limits: PRO_ESTIMATE, estimated: true },
-  { id: 'max5', label: 'Max 5×', note: 'Rough estimate — calibrate it.', limits: scaled(5), estimated: true },
-  { id: 'max20', label: 'Max 20×', note: 'Rough estimate — calibrate it.', limits: scaled(20), estimated: true },
-  {
-    id: 'custom',
-    label: 'Custom',
-    note: 'Your own numbers, worked out from what `/usage` says.',
-    limits: null,
-  },
-];
-
-/** Keep only allowances that are real, positive token counts. */
-function cleanLimits(value) {
-  const limits = {};
-  for (const key of PLAN_WINDOWS) {
-    const n = Math.round(Number((value || {})[key]));
-    if (Number.isFinite(n) && n > 0) limits[key] = n;
-  }
-  return limits;
-}
-
-/**
- * The allowances to draw bars against, or null when nobody has said.
- *
- * A custom plan may know one window and not the others — someone who has only
- * bothered to work out their weekly number gets a real weekly bar and an
- * honest share-of-the-week for the rest.
- */
-function planLimitsFor({ plan = 'unknown', planLimits = {} } = {}) {
-  if (plan === 'custom') {
-    const limits = cleanLimits(planLimits);
-    return Object.keys(limits).length ? limits : null;
-  }
-  const named = PLANS.find((p) => p.id === plan);
-  return named && named.limits ? { ...named.limits } : null;
-}
-
 module.exports = {
   parseTranscript,
   modelFromTranscript,
@@ -648,10 +581,6 @@ module.exports = {
   agesOutAt,
   usageWindows,
   readOfficialUsage,
-  cleanLimits,
-  planLimitsFor,
-  PLANS,
-  PLAN_WINDOWS,
   OPUS,
   SESSION_WINDOW_MS,
   WEEK_WINDOW_MS,

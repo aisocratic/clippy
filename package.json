@@ -1,6 +1,6 @@
 {
   "name": "clippy-for-claude",
-  "version": "0.1.0",
+  "version": "0.2.1",
   "description": "A Clippy for your Mac that watches Claude Code and Codex sessions and lets you answer them without hunting through terminal tabs",
   "author": "AI Socratic (https://aisocratic.org)",
   "keywords": [
@@ -42,7 +42,7 @@
     "website": "node website/build.js && open website/index.html"
   },
   "devDependencies": {
-    "electron": "^33.0.0"
+    "electron": "^33.4.11"
   },
   "optionalDependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.1.0"

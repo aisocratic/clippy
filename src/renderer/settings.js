@@ -20,7 +20,7 @@ const STATUS_TEXT = {
 
 // One flat object, exactly as main sends it: the settings themselves plus the
 // rosters and catalogue the page is drawn from.
-let state = { characters: [], sizes: [], actions: [], sessions: [], plans: [] };
+let state = { characters: [], sizes: [], actions: [], sessions: [] };
 const sheetTimers = [];
 
 /* ---------- Buddies ---------- */
@@ -197,130 +197,7 @@ function renderSizes() {
   }
 }
 
-/* ---------- Plan & allowances ---------- */
-
-// The windows Clippy measures, in the order `/usage` lists them; the ids are
-// the keys main keeps a custom allowance under.
-const LIMIT_ROWS = [
-  { key: 'session', label: 'Current session', note: 'the rolling 5-hour block' },
-  { key: 'week', label: 'Current week', note: 'all models, last 7 days' },
-  { key: 'weekOpus', label: 'Current week — Opus', note: 'your plan counts Opus again on its own' },
-];
-
-// Allowances are typed in millions of tokens: nobody wants to count zeroes,
-// and a week of real work runs to hundreds of millions once cache is included.
-const MILLION = 1_000_000;
-const inMillions = (n) => (n > 0 ? String(Math.round((n / MILLION) * 100) / 100) : '');
-
-function renderPlans() {
-  const host = document.getElementById('plans');
-  const note = document.getElementById('plan-note');
-  const plans = state.plans || [];
-  host.replaceChildren();
-
-  for (const plan of plans) {
-    const btn = document.createElement('button');
-    btn.className = plan.id === (state.plan || 'unknown') ? 'on' : '';
-    btn.textContent = plan.label;
-    btn.addEventListener('click', () => set('plan', plan.id));
-    host.appendChild(btn);
-  }
-  const current = plans.find((p) => p.id === (state.plan || 'unknown'));
-  note.textContent = current ? current.note : '';
-  renderLimits(current);
-}
-
-// The three boxes currently on screen, kept so a re-render can leave them
-// exactly where they are. Typing a number saves it, saving pushes fresh state
-// back from main, and a rebuild at that moment would hand the caret to <body>
-// mid-form — so the boxes outlive the render that would have replaced them.
-let limitBoxes = null; // { plan: id, boxes: Map<key, input> }
-
-/**
- * The three allowances the bars are drawn against.
- *
- * A named tier shows the numbers it is guessing with, so nobody has to take
- * them on trust; only Custom can be typed into, because those are the ones that
- * came from a real `/usage`. Leave a Custom box empty and that window quietly
- * goes back to showing a share of the week — no allowance, no percentage.
- */
-function renderLimits(plan) {
-  const host = document.getElementById('plan-limits');
-  const known = plan && plan.id !== 'unknown';
-  host.classList.toggle('hidden', !known);
-  if (!known) {
-    host.replaceChildren();
-    limitBoxes = null;
-    return;
-  }
-
-  const custom = plan.id === 'custom';
-  const mine = state.planLimits || {};
-  const valueFor = (key) => inMillions(custom ? mine[key] : (plan.limits || {})[key]);
-
-  // Same plan, same three boxes: refresh what they say and leave the nodes —
-  // and whichever one you are halfway through typing into — alone.
-  if (limitBoxes && limitBoxes.plan === plan.id) {
-    for (const [key, box] of limitBoxes.boxes) {
-      if (box !== document.activeElement) box.value = valueFor(key);
-    }
-    return;
-  }
-
-  host.replaceChildren();
-  const boxes = new Map();
-  // One change writes all three, so a half-typed row can never strand the
-  // other two on an older number.
-  const commit = () => {
-    const limits = {};
-    for (const [key, box] of boxes) limits[key] = Math.round(Number(box.value) * MILLION) || 0;
-    set('planLimits', limits);
-  };
-
-  for (const row of LIMIT_ROWS) {
-    const field = document.createElement('div');
-    field.className = 'limit';
-
-    const label = document.createElement('label');
-    label.textContent = row.label;
-    const note = document.createElement('span');
-    note.className = 'limit-note';
-    note.textContent = row.note;
-
-    const box = document.createElement('input');
-    box.type = 'number';
-    box.min = '0';
-    box.step = '1';
-    box.placeholder = 'not set';
-    box.value = valueFor(row.key);
-    box.disabled = !custom;
-    box.title = custom
-      ? 'What `/usage` implies this window allows, in millions of tokens'
-      : `A ${plan.label} estimate — switch to Custom to correct it`;
-    box.addEventListener('change', commit);
-    boxes.set(row.key, box);
-
-    const unit = document.createElement('span');
-    unit.className = 'limit-unit';
-    unit.textContent = 'M tokens';
-
-    field.append(label, note, box, unit);
-    host.appendChild(field);
-  }
-  limitBoxes = { plan: plan.id, boxes };
-
-  if (plan.estimated) {
-    const warning = document.createElement('p');
-    warning.className = 'limit-warning';
-    warning.textContent =
-      'Estimates, not facts — Anthropic publishes no token numbers and Claude Code stores none. ' +
-      'Run /usage, compare it with the panel over your buddy, and put the corrected numbers in ' +
-      'under Custom.';
-    host.appendChild(warning);
-  }
-}
-
-/* ---------- What Clippy can do ---------- */
+/* ---------- Clippy's Features ---------- */
 
 function renderActions() {
   const host = document.getElementById('action-list');
@@ -487,7 +364,8 @@ function renderSessions() {
 
     const status = document.createElement('span');
     status.className = 'session-status';
-    status.textContent = `${session.agent === 'codex' ? 'Codex' : 'Claude'} · ${STATUS_TEXT[session.status] || session.status || ''}`;
+    const agentName = { claude: 'Claude', codex: 'Codex', openclaw: 'OpenClaw' }[session.agent] || 'Claude';
+    status.textContent = `${agentName} · ${STATUS_TEXT[session.status] || session.status || ''}`;
 
     // A buddy of its own, kept against the project name so the same repo looks
     // the same tomorrow.
@@ -537,7 +415,6 @@ function render() {
   renderAccess();
   renderSizes();
   renderCast();
-  renderPlans();
   renderActions();
   renderSessions();
 
@@ -617,8 +494,9 @@ window.clippySettings.ready();
 /* ---------- Updates ---------- */
 
 // The one deliberate network call in the app, made when you press the button
-// and never before. The result speaks plainly: a checkout compares commits,
-// the packaged app can only tell you what the newest commit is.
+// and never before. The result speaks plainly: a checkout compares commits
+// against main (git pull to catch up), the packaged app compares its version
+// against the newest release and links the fresh DMG.
 {
   const version = document.getElementById('update-version');
   const source = document.getElementById('update-source');
@@ -643,6 +521,29 @@ window.clippySettings.ready();
     if (info.error) {
       result.textContent = `couldn't reach GitHub: ${info.error}`;
       result.className = 'update-result bad';
+      return;
+    }
+    if (info.release) {
+      // The packaged app measured itself against the newest release.
+      const when = info.release.date ? new Date(info.release.date).toLocaleDateString() : '';
+      if (info.upToDate === true) {
+        result.textContent = `you're on the newest release (v${info.release.version}, ${when})`;
+        result.className = 'update-result good';
+      } else {
+        result.replaceChildren();
+        result.append(`v${info.release.version} is out (${when}) — `);
+        const link = document.createElement('a');
+        link.href = info.release.dmg || info.release.url;
+        link.textContent = 'download the new DMG';
+        // Born after the page-load pass that rewires anchors, so it routes
+        // itself: out to the browser, never navigating this window.
+        link.addEventListener('click', (e) => {
+          e.preventDefault();
+          window.clippySettings.openExternal(link.href);
+        });
+        result.append(link, ' and drag it into Applications again.');
+        result.className = info.upToDate === false ? 'update-result warn' : 'update-result';
+      }
       return;
     }
     if (!info.latest) return; // the offline fill — nothing has been checked yet
