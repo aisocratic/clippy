@@ -197,7 +197,7 @@ function renderSizes() {
   }
 }
 
-/* ---------- What Clippy can do ---------- */
+/* ---------- Clippy's Features ---------- */
 
 function renderActions() {
   const host = document.getElementById('action-list');

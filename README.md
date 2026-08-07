@@ -485,7 +485,7 @@ and read, and it has five sections:
 - **Updates** — which copy you're running (checkout vs packaged app, version,
   commit), and a button that compares it with the tip of `main` on GitHub. The
   one deliberate non-localhost request in the app, made only when you press it.
-- **What Clippy can do** — the full catalogue: what triggers each behaviour,
+- **Clippy's Features** — the full catalogue: what triggers each behaviour,
   which hook it rides on, what you see, and — for anything that answers on your
   behalf — **the exact JSON Claude Code receives** for each button. Those strings
   come from the same `toHookResponse` the app answers with (`src/actions.js`), so
@@ -495,7 +495,7 @@ and read, and it has five sections:
 The on/off switches for what Clippy answers aren't in this window at all: they
 live in **📎 menu bar → Quick settings**, one right-click from anywhere. Turn one
 off and that moment goes back to the terminal exactly as if Clippy weren't
-running — *What Clippy can do* marks the affected entries **off**.
+running — *Clippy's Features* marks the affected entries **off**.
 
 ## Bring your own buddy (sprite-sheet themes)
 
