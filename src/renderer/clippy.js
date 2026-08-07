@@ -26,6 +26,7 @@ const me = {
   name: params.get('name') || 'session',
   color: params.get('color') || '#9aa3ad',
   agent: HARNESS_NAMES[params.get('agent')] ? params.get('agent') : 'claude',
+  pet: params.get('pet') || 'Buddy', // the RPG party-member name main dealt us
   model: '',
 };
 
@@ -64,8 +65,6 @@ const driveInput = document.getElementById('drive-input');
 const buddyEl = document.getElementById('buddy');
 
 const usageEl = document.getElementById('usage');
-const usageName = document.getElementById('usage-name');
-const usageModel = document.getElementById('usage-model');
 const usageStatus = document.getElementById('usage-status');
 const usageRecap = document.getElementById('usage-recap');
 const usageBarFill = document.getElementById('usage-bar-fill');
@@ -96,6 +95,10 @@ let walkTimer = null;
 
 const whoEl = document.getElementById('who');
 const whoProject = document.getElementById('who-project');
+const whoPet = document.getElementById('who-pet');
+const whoSub = document.getElementById('who-sub');
+const whoBarFill = document.getElementById('who-bar-fill');
+const whoBarLabel = document.getElementById('who-bar-label');
 const activityEl = document.getElementById('activity');
 const qcardEl = document.getElementById('qcard');
 const qcardTitle = document.getElementById('qcard-title');
@@ -196,10 +199,31 @@ function applyIdentity() {
   const buddyName = character?.label || 'Buddy';
   const harness = HARNESS_NAMES[me.agent] || HARNESS_NAMES.claude;
   const model = shortModel(me.model);
-  // The plate shows only the project; the full identity rides its tooltip
-  // (the open panel's own header carries the model).
+  // Hover names the project; the full plate leads with the pet's own name and
+  // keeps the quest details (project · model) as small print under it.
   whoProject.textContent = me.name;
-  whoEl.title = `${buddyName} in ${me.name} — running ${harness} with ${model}`;
+  whoPet.textContent = me.pet;
+  whoSub.textContent = model ? `${me.name} · ${model}` : me.name;
+  whoEl.title = `${me.pet} the ${buddyName}, on “${me.name}” — running ${harness} with ${model}`;
+}
+
+/**
+ * The plate's energy bar: how much of this session's context is LEFT, drained
+ * like HP. Fed by the context poll and by the usage panel's own reads.
+ */
+function updateEnergy(session) {
+  if (session && session.turns > 0 && session.contextLimit > 0) {
+    const left = Math.max(0, session.contextLimit - session.context);
+    const frac = Math.max(0, Math.min(1, left / session.contextLimit));
+    whoBarFill.className = frac < 0.15 ? 'hot' : frac < 0.4 ? 'warn' : '';
+    whoBarFill.style.width = `${Math.max(2, Math.round(frac * 100))}%`;
+    whoBarLabel.textContent = `${fmtTokens(left)} left`;
+  } else {
+    // No transcript yet: a full but visibly "uncharged" bar, not a fake 100%.
+    whoBarFill.className = 'unknown';
+    whoBarFill.style.width = '100%';
+    whoBarLabel.textContent = '';
+  }
 }
 
 // Hook payloads identify the harness, while its transcript is the reliable
@@ -727,9 +751,8 @@ async function showUsage({ restore = false } = {}) {
   if (!restore) usageExpanded = false;
   applyUsageExpansion();
 
-  usageName.textContent = data.name || me.name;
-  usageModel.textContent = shortModel(session?.model);
   latestRecap = data.recap || '';
+  updateEnergy(session); // the plate's bar rides on the freshest read we have
   if (session?.model && session.model !== me.model) {
     me.model = session.model;
     applyIdentity();
@@ -1306,6 +1329,7 @@ async function checkContext() {
     contextCheckInFlight = false;
   }
   const session = data && data.session;
+  updateEnergy(session);
   const tight = Boolean(
     session && session.turns > 0 && session.context / session.contextLimit > CONTEXT_STRESS
   );

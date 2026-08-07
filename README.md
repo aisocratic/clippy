@@ -21,10 +21,11 @@ through terminal tabs.
 |---|---|---|
 | ![approval](shots/7-approval-card.png) | ![plan](shots/10-plan-card.png) | ![question](shots/11-question-card.png) |
 
-Each buddy wears a **name plate** in its own colour: hover and it names just the
-project (the fuller identity — pet, harness, model — rides its tooltip); click
-and the open panel's own header shows the project with the model beside it
-(`my-app · gpt-5.5`, for example). Concurrent agents in the same folder are assigned different available buddy
+Each buddy wears an **RPG-style name plate** in its own colour: hover and it
+names just the project; open any popup and the full plate appears — an energy
+bar of how much context this session has left, the buddy's own **pet name**
+(`Biscuit`, `Nori` — dealt from the session id, so it sticks), and the quest
+details in small print (`my-app · gpt-5.5`). Concurrent agents in the same folder are assigned different available buddy
 animations, so five parallel agents are distinguishable characters rather than one confused paperclip. A live
 **activity line** under each shows what that session
 is doing — `⚙ my-app — Running: npm test`, `✏ Editing server.js`,

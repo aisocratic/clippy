@@ -22,7 +22,7 @@ const { SessionTracker, AGENTS, agentDisplayName, WORKING, WAITING } = require('
 const { DecisionBroker, toHookResponse, describeToolCall } = require('./decisions');
 const { DriveSession } = require('./sdk-session');
 const { checkDrift, checkCodexDrift, checkOpenclawDrift, installToFiles } = require('../bin/clippy-hooks');
-const { identityFor } = require('./identity');
+const { identityFor, petNameFor } = require('./identity');
 const { SIZES, sizeList, allCharacters, characterFor } = require('./characters');
 const { ACTIONS } = require('./actions');
 const { windowActionFor } = require('./visibility');
@@ -80,6 +80,7 @@ const tracker = new SessionTracker();
 const broker = new DecisionBroker({ hardCapMs: 100_000 });
 let drive = null; // the active Clippy-driven (Agent SDK) session, if any
 let tray = null;
+let trayTextFallback = false; // the icon failed to render; the 📎 title stands in
 let hookDrift = null; // set when the installed hooks are older than this build
 let hooksAbsent = false; // no agent has any Clippy hooks — a fresh (DMG) install
 
@@ -454,6 +455,7 @@ function buddyFor(key, name = '', agent = '') {
       name: identity.name,
       color: identity.color,
       agent: agent || 'claude',
+      pet: petNameFor(key),
     },
   });
   // CLIPPY_SANDBOXTOOLS=1 npm start opens an inspector per buddy, detached so it
@@ -1334,9 +1336,13 @@ function trayIcon() {
 }
 
 function createTray() {
-  tray =
-    process.platform === 'darwin' ? new Tray(nativeImage.createEmpty()) : new Tray(trayIcon());
-  updateTray(); // paints the 📎 (and any waiting count)
+  // A real image, always: an item with only a text title can be swallowed
+  // whole by a full menu bar (or the notch), which reads as "Clippy isn't
+  // running". The 📎 emoji title is the fallback when even the image fails.
+  const icon = trayIcon();
+  trayTextFallback = icon.isEmpty();
+  tray = new Tray(icon);
+  updateTray(); // paints the count (and the fallback clip if needed)
   tray.setToolTip('Clippy for Claude Code + Codex — click for settings');
   // Click opens the settings window; right-click (or ctrl-click) drops the
   // menu. The menu is *not* attached with setContextMenu, because on macOS that
@@ -1351,9 +1357,7 @@ function updateTray() {
   // The count beside the clip is how many buddies are open — three sessions
   // read "3", not the number that happen to be waiting. Who is waiting on you
   // is the tooltip's job (the buddies themselves already bounce for it).
-  // On macOS the clip itself is the 📎 emoji, set as the tray title; other
-  // platforms wear the drawn template icon, so their title is just the count.
-  const clip = process.platform === 'darwin' ? '📎' : '';
+  const clip = trayTextFallback ? '📎' : '';
   tray.setTitle(total > 0 ? `${clip} ${total}` : clip);
   tray.setToolTip(
     waiting > 0
