@@ -545,7 +545,8 @@ sheet, as the ones on [openpets.dev/gallery](https://openpets.dev/gallery) do â€
 so there's a script for it:
 
 ```bash
-npm run add-sprite-pack -- ~/Downloads/miso     # a folder from the zip
+npm run add-sprite-pack -- https://openpets.dev/pets/miso-openpets/   # straight from the gallery
+npm run add-sprite-pack -- miso                                        # a pet id works too
 npm run add-sprite-pack -- ~/Downloads/fox --walk 1:8 --sleep 5:8 --cheer 2:8
 ```
 
