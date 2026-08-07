@@ -22,8 +22,7 @@ const { SessionTracker, AGENTS, agentDisplayName, WORKING, WAITING } = require('
 const { DecisionBroker, toHookResponse, describeToolCall } = require('./decisions');
 const { DriveSession } = require('./sdk-session');
 const { checkDrift, checkCodexDrift, checkOpenclawDrift, installToFiles } = require('../bin/clippy-hooks');
-const { identityFor } = require('./identity');
-const { sessionBannerOutput } = require('./session-banner');
+const { identityFor, petNameFor } = require('./identity');
 const { SIZES, sizeList, allCharacters, characterFor } = require('./characters');
 const { ACTIONS } = require('./actions');
 const { windowActionFor } = require('./visibility');
@@ -37,7 +36,13 @@ const {
   promptPosition,
   typeAndSubmit,
 } = require('./terminal');
-const { sessionUsage, lastAssistantText, usageWindows, readOfficialUsage } = require('./usage');
+const {
+  sessionUsage,
+  lastAssistantText,
+  usageWindows,
+  readOfficialUsage,
+  modelFromTranscriptFile,
+} = require('./usage');
 const { checkForUpdates, localBuild } = require('./updates');
 const { DEV_SESSION, eventsFor, storyList, sandboxUsage } = require('./sandbox-scenarios');
 const { startCompletionPoll, coalesceAsync } = require('./async-control');
@@ -66,7 +71,6 @@ const POINT_EXTRA_H = 30;
 // normal terminal flow. They can be extended while the user is typing, but
 // never past the broker's hard cap (which stays under the hook's curl -m).
 const APPROVAL_HOLD_MS = Number(process.env.CLIPPY_APPROVAL_HOLD_SECS || 60) * 1000;
-const REVIEW_HOLD_MS = Number(process.env.CLIPPY_REVIEW_HOLD_SECS || 30) * 1000;
 const QUESTION_HOLD_MS = Number(process.env.CLIPPY_QUESTION_HOLD_SECS || 90) * 1000;
 
 // How often to drop sessions whose terminal went away without a SessionEnd.
@@ -76,6 +80,7 @@ const tracker = new SessionTracker();
 const broker = new DecisionBroker({ hardCapMs: 100_000 });
 let drive = null; // the active Clippy-driven (Agent SDK) session, if any
 let tray = null;
+let trayTextFallback = false; // the icon failed to render; the 📎 title stands in
 let hookDrift = null; // set when the installed hooks are older than this build
 let hooksAbsent = false; // no agent has any Clippy hooks — a fresh (DMG) install
 
@@ -243,6 +248,19 @@ function openSettingsWindow(section) {
     settingsWin = null;
   });
   return settingsWin;
+}
+
+/**
+ * Tray-click behaviour only: the 📎 works like a switch — one click opens
+ * settings, the next closes them. Every other entry point (right-click menu,
+ * deep links into a section) still plainly opens.
+ */
+function toggleSettingsWindow() {
+  if (settingsWin && !settingsWin.isDestroyed() && settingsWin.isVisible()) {
+    settingsWin.close();
+    return;
+  }
+  openSettingsWindow();
 }
 
 /**
@@ -450,6 +468,7 @@ function buddyFor(key, name = '', agent = '') {
       name: identity.name,
       color: identity.color,
       agent: agent || 'claude',
+      pet: petNameFor(key),
     },
   });
   // CLIPPY_SANDBOXTOOLS=1 npm start opens an inspector per buddy, detached so it
@@ -747,7 +766,6 @@ async function perchOn(key, { raise = false, auto = false, mode = null } = {}) {
   }
 }
 
-/** The "go to terminal" button: raise that session's window and ride along. */
 /**
  * Raise a session's window and ride over to it. `point` follows that up with
  * the walk to the prompt — used when the reason you're going there is that
@@ -1093,7 +1111,6 @@ function send(buddy, event) {
   if (buddy && !buddy.win.isDestroyed()) buddy.win.webContents.send('clippy-event', event);
 }
 
-/** Say something in a buddy's bubble (used for "that didn't work" news). */
 /**
  * Say something in the buddy's speech bubble.
  *
@@ -1238,6 +1255,13 @@ function trayMenu() {
         ]
       : []),
     { label: `Hook server: 127.0.0.1:${PORT}`, enabled: false },
+    {
+      label: 'Restart Clippy',
+      click: () => {
+        app.relaunch();
+        app.exit(0);
+      },
+    },
     { label: 'Quit', click: () => app.quit() },
   ]);
 }
@@ -1277,7 +1301,9 @@ function globalSettingsMenu() {
     },
     { type: 'separator' },
     { label: 'Appearance', enabled: false },
-    { label: 'Character', submenu: radios('character', allCharacters()) },
+    // No global "Character" here: buddies are cast per session, and per-project
+    // choices live in the settings window's cast (the retired `character`
+    // setting made this menu a row of radios nothing ever checked).
     {
       label: 'Size',
       submenu: radios('size', [
@@ -1301,11 +1327,11 @@ function globalSettingsMenu() {
 }
 
 /**
- * The menu bar item wears a real image: the paperclip, rendered from the same
- * pixel grid the app icon uses, as a macOS *template* (black + alpha) so it
- * follows light and dark menu bars. The old empty-image-plus-emoji-title tray
- * could end up invisible — an item with no image is fragile, and a full menu
- * bar hides what it can't fit with nothing to grab onto.
+ * On macOS the menu bar item is the 📎 emoji itself, set as the tray title —
+ * it's what the docs and the settings window mean by “📎 in the menu bar”,
+ * and as full-colour emoji it reads the same on light and dark bars. Other
+ * platforms never render tray titles, so they wear a drawn paperclip instead:
+ * the same pixel grid the app icon uses, as a template image (black + alpha).
  */
 function trayIcon() {
   try {
@@ -1323,14 +1349,18 @@ function trayIcon() {
 }
 
 function createTray() {
+  // A real image, always: an item with only a text title can be swallowed
+  // whole by a full menu bar (or the notch), which reads as "Clippy isn't
+  // running". The 📎 emoji title is the fallback when even the image fails.
   const icon = trayIcon();
+  trayTextFallback = icon.isEmpty();
   tray = new Tray(icon);
-  if (icon.isEmpty()) tray.setTitle('📎'); // the old fallback, better than nothing
+  updateTray(); // paints the count (and the fallback clip if needed)
   tray.setToolTip('Clippy for Claude Code + Codex — click for settings');
-  // Click opens the settings window; right-click (or ctrl-click) drops the
+  // Click toggles the settings window; right-click (or ctrl-click) drops the
   // menu. The menu is *not* attached with setContextMenu, because on macOS that
   // makes the icon swallow left-clicks and we'd never see one.
-  tray.on('click', () => openSettingsWindow());
+  tray.on('click', () => toggleSettingsWindow());
   tray.on('right-click', () => tray.popUpContextMenu(trayMenu()));
 }
 
@@ -1340,7 +1370,8 @@ function updateTray() {
   // The count beside the clip is how many buddies are open — three sessions
   // read "3", not the number that happen to be waiting. Who is waiting on you
   // is the tooltip's job (the buddies themselves already bounce for it).
-  tray.setTitle(total > 0 ? ` ${total}` : '');
+  const clip = trayTextFallback ? '📎' : '';
+  tray.setTitle(total > 0 ? `${clip} ${total}` : clip);
   tray.setToolTip(
     waiting > 0
       ? `Clippy — ${total} open session${total === 1 ? '' : 's'}, ${waiting} waiting on you`
@@ -1619,27 +1650,25 @@ async function handlePermissionRequest(payload, ctx) {
 }
 
 /**
- * Claude finished a turn. If review mode is on, hold the Stop hook briefly:
- * "looks good" (or timeout) lets Claude stop; typed feedback blocks the stop
- * and sends Claude back to work with that feedback.
+ * Claude finished a turn. The Stop hook is answered immediately — the chat is
+ * never held open — and the review card shows anyway, with no deadline:
+ * "Looks good" just puts Clippy away, and typed feedback is typed into the
+ * session's terminal as your next message.
  */
-async function handleStop(payload, ctx) {
+let reviewSeq = 0;
+const pendingReviews = new Map(); // requestId -> sessionId
+
+async function handleStop(payload) {
   const reaction = tracker.handle('Stop', null, payload);
   const agentName = reaction.agentName;
 
-  // OpenClaw is watch-mode only: its handler fires and forgets, so a held
-  // review card could never send feedback anywhere. Plain nudge instead.
+  // Review feedback is typed into the session's terminal, and an OpenClaw
+  // session has no terminal window to type into. Plain nudge instead.
   if (!settings.reviewOnStop || payload.agent === 'openclaw') {
     emitPassive(reaction);
     return {};
   }
   updateTray();
-
-  const { id, expiresAt, promise } = broker.ask(
-    { event: 'Stop', sessionId: reaction.sessionId },
-    REVIEW_HOLD_MS
-  );
-  ctx.onClose(() => broker.resolve(id, 'cancel'));
 
   // What Claude actually said right before stopping, if it said anything — a
   // turn that ends on a bare tool call has no recap, and the card falls back
@@ -1651,6 +1680,8 @@ async function handleStop(payload, ctx) {
   const firstLine = (recap.split('\n').find((l) => l.trim()) || '').trim();
   const short = firstLine.length > 90 ? `${firstLine.slice(0, 90).trim()}…` : firstLine;
 
+  const id = `review-${++reviewSeq}`;
+  pendingReviews.set(id, reaction.sessionId);
   sendTo(reaction.sessionId, {
     ...reaction,
     kind: 'review',
@@ -1660,38 +1691,46 @@ async function handleStop(payload, ctx) {
     detail: recap !== firstLine ? recap : '',
     counts: tracker.counts(),
     requestId: id,
-    expiresAt,
+    expiresAt: 0, // nothing is held open, so the card has no deadline
   });
   showBuddy(reaction.sessionId);
   notify(`📎 ${agentName} finished`, short || `“${reaction.name}” — review it from Clippy`, {
     silent: true,
     sessionId: reaction.sessionId,
   });
-
-  const { action, message, timedOut } = await promise;
-
-  sendTo(reaction.sessionId, {
-    kind: 'request-closed',
-    requestId: id,
-    sessionId: reaction.sessionId,
-    outcome: action,
-    timedOut,
-    counts: tracker.counts(),
-  });
-
-  if (action === 'feedback' && message.trim()) {
-    tracker.setStatus(reaction.sessionId, WORKING);
-    updateTray();
-    hideBuddy(reaction.sessionId); // sent back to work — nothing to look at
-    return toHookResponse('Stop', action, message);
-  }
-  if (!timedOut) hideBuddy(reaction.sessionId); // reviewed ("looks good") or cancelled
-  if (timedOut) {
-    // Nobody reviewed in time — degrade to the classic passive nudge (without
-    // a second OS notification; one was shown when the review card appeared).
-    emitPassive(reaction, { osNotification: false });
-  }
   return {};
+}
+
+/** A review card's button: "Looks good" hides, feedback becomes a prompt. */
+async function resolveReview(id, action, message) {
+  const sessionId = pendingReviews.get(id);
+  if (!sessionId) return false;
+  pendingReviews.delete(id);
+  if (action === 'feedback' && message.trim()) {
+    tracker.setStatus(sessionId, WORKING);
+    updateTray();
+    // Typing into the terminal has its own failure messages (no window, no
+    // accessibility) — only put Clippy away once the prompt actually landed.
+    if (await sendPromptToTerminal(sessionId, message.trim())) hideBuddy(sessionId);
+    return true;
+  }
+  hideBuddy(sessionId); // "Looks good" — the agent already stopped
+  return true;
+}
+
+/** The user moved on (typed a prompt, ended the session): the card is moot. */
+function closeReviewsFor(sessionId) {
+  for (const [id, sid] of pendingReviews) {
+    if (sid !== sessionId) continue;
+    pendingReviews.delete(id);
+    sendTo(sessionId, {
+      kind: 'request-closed',
+      requestId: id,
+      sessionId,
+      outcome: 'cancel',
+      counts: tracker.counts(),
+    });
+  }
 }
 
 /**
@@ -1819,7 +1858,7 @@ function handleHookEvent(eventName, kind, payload, ctx) {
   noteTerminal(payload, ctx);
 
   if (eventName === 'PermissionRequest') return handlePermissionRequest(payload, ctx);
-  if (eventName === 'Stop') return handleStop(payload, ctx);
+  if (eventName === 'Stop') return handleStop(payload);
 
   if (eventName === 'PreToolUse' && payload.tool_name === 'AskUserQuestion') {
     return handleQuestion(payload, ctx);
@@ -1844,23 +1883,30 @@ function handleHookEvent(eventName, kind, payload, ctx) {
   if (eventName === 'UserPromptSubmit' || eventName === 'SessionEnd') {
     // The user moved on in the terminal — pending cards for this session are moot.
     broker.cancelBySession(payload.session_id || 'unknown');
+    closeReviewsFor(payload.session_id || 'unknown');
   }
 
   const reaction = tracker.handle(eventName, kind, payload);
   if (reaction) emitPassive(reaction);
-  if (eventName === 'SessionStart' && reaction) {
-    const buddy = buddies.get(reaction.sessionId);
-    const character = buddy?.character || 'clip';
-    const label = allCharacters().find((item) => item.id === character)?.label || 'Clippy';
-    return sessionBannerOutput({
-      character,
-      label,
-      project: reaction.name,
-      agent: reaction.agentName,
-      model: reaction.model,
-    });
-  }
   return undefined;
+}
+
+/**
+ * Claude Code's statusline: a small 📎 and nothing else, padded over to the
+ * right edge when the hook could read the terminal's width (cols is 0 when it
+ * couldn't). The clip is an OSC 8 hyperlink, so terminals that support it
+ * (iTerm2, Ghostty, kitty, WezTerm) can cmd+click to bring this session's
+ * buddy to the front via GET /focus. Unknown session -> empty line -> Claude
+ * Code shows nothing, same as when the app isn't running at all.
+ */
+function statuslineFor(payload = {}, cols = 0) {
+  const sessionId = payload.session_id || '';
+  if (!tracker.has(sessionId)) return '';
+  const link = `http://127.0.0.1:${PORT}/focus?session=${encodeURIComponent(sessionId)}`;
+  const clip = `\x1b]8;;${link}\x07📎\x1b]8;;\x07`;
+  // The emoji is two cells wide; keep one more free so the line never wraps.
+  const pad = Math.max(0, Math.floor(cols) - 3);
+  return `${' '.repeat(pad)}${clip}`;
 }
 
 /* ---------------- App lifecycle ---------------- */
@@ -1886,14 +1932,12 @@ function warnOnHookDrift() {
       const drift = config.check(raw.trim() ? JSON.parse(raw) : {}, PORT);
       if (!drift.installed) continue;
       installed.push(config.agent);
-      if (drift.missing.length || drift.wrongPort || drift.noTerminalInfo) {
+      if (drift.missing.length || drift.stale || drift.wrongPort || drift.noTerminalInfo) {
         stale.push({ agent: config.agent, ...drift });
       }
     } catch (err) {
       console.warn(`clippy: could not check ${config.agent} hooks:`, err.message);
     }
-
-
   }
   // Re-run after every install, so a fixed state clears the tray warnings.
   hooksAbsent = installed.length === 0;
@@ -1963,6 +2007,7 @@ function sweepStaleSessions() {
   if (removed.length === 0) return;
   for (const s of removed) {
     broker.cancelBySession(s.sessionId);
+    closeReviewsFor(s.sessionId); // a review card for a vanished session is moot
     closeBuddy(s.sessionId);
   }
   updateTray();
@@ -1991,8 +2036,8 @@ app.whenReady().then(async () => {
   ipcMain.handle('clippy-context', async (e) => {
     const buddy = buddyForSender(e.sender);
     if (!buddy) return null;
-    if (buddy.sessionId.startsWith('dev:')) {
-      return { session: devUsage(buddy.name).session };
+    if (buddy.sessionId.startsWith('sandbox:')) {
+      return { session: sandboxUsage(buddy.name).session };
     }
     return { session: await sessionUsage(tracker.transcriptFor(buddy.sessionId)) };
   });
@@ -2007,14 +2052,16 @@ app.whenReady().then(async () => {
   ipcMain.handle('clippy-session-identity', async (e) => {
     const buddy = buddyForSender(e.sender);
     if (!buddy) return null;
-    const session = buddy.sessionId.startsWith('sandbox:')
-      ? sandboxUsage(buddy.name).session
-      : await sessionUsage(tracker.transcriptFor(buddy.sessionId));
-    return {
-      name: buddy.name,
-      agent: buddy.agent,
-      model: session?.model || tracker.modelFor(buddy.sessionId) || '',
-    };
+    // The renderer polls this until a model shows up, so answer from what the
+    // hooks already reported before falling back to reading the transcript —
+    // and read it with the cheap single-pass scan, not a full usage parse.
+    let model = tracker.modelFor(buddy.sessionId) || '';
+    if (!model) {
+      model = buddy.sessionId.startsWith('sandbox:')
+        ? sandboxUsage(buddy.name).session?.model || ''
+        : await modelFromTranscriptFile(tracker.transcriptFor(buddy.sessionId));
+    }
+    return { name: buddy.name, agent: buddy.agent, model };
   });
   ipcMain.on('clippy-mode', (e, payload) => {
     // The renderer knows whether it has anything on screen, and how tall that
@@ -2036,6 +2083,20 @@ app.whenReady().then(async () => {
     }
   });
   ipcMain.on('clippy-open-settings', () => openSettingsWindow());
+  ipcMain.handle('clippy-settings-install-pet', async (_e, url) => {
+    // The "add a pet" box takes a pasted link only — local folders stay a CLI
+    // affair, so this window never reads arbitrary paths off the disk.
+    const src = String(url || '').trim();
+    if (!/^https?:\/\//i.test(src)) return { ok: false, error: 'paste the pet’s page link (https://…)' };
+    try {
+      const { installPack } = require('../scripts/add-sprite-pack');
+      const { id, theme } = await installPack(src);
+      pushSettingsState(); // the cast re-reads the themes folder, so this repaints it
+      return { ok: true, id, label: theme.label };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
   ipcMain.on('clippy-fix', (e, what) => {
     // The "fix it" button on a sticky message.
     const buddy = buddyForSender(e.sender);
@@ -2090,7 +2151,12 @@ app.whenReady().then(async () => {
   ipcMain.on('clippy-decide', (_e, { id, action, message }) => {
     const a = String(action || '');
     const m = typeof message === 'string' ? message : '';
-    // Ids are globally unique; try the hook broker, then the Drive session.
+    // Ids are globally unique; review cards first (they hold nothing open),
+    // then the hook broker, then the Drive session.
+    if (pendingReviews.has(id)) {
+      resolveReview(id, a, m);
+      return;
+    }
     if (!broker.resolve(id, a, m)) drive?.resolve(id, a, m);
   });
   ipcMain.on('clippy-extend', (e, id) => {
@@ -2125,6 +2191,8 @@ app.whenReady().then(async () => {
   const server = createHookServer({
     port: PORT,
     onEvent: handleHookEvent,
+    onStatusline: statuslineFor,
+    onFocus: (sessionId) => showBuddy(sessionId, { pin: true }),
     getStatus: () => ({
       sessions: tracker.list(),
       counts: tracker.counts(),

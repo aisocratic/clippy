@@ -189,14 +189,15 @@ function characterFor(settings, name, sessionId = '', used = []) {
   const cast = allCharacters();
   const unavailable = new Set(used);
 
-  // A buddy assigned to this project by hand is the first choice. A second live
-  // session still gets a different animation when the cast has one available.
+  // A buddy assigned to this project by hand still wins — but only while it's
+  // free. Everyone else picks from their own session id, so parallel sessions
+  // in one folder never read as twins, and never all march in cast order.
   const assigned = (settings.characterByProject || {})[name];
-  const assignedAt = cast.findIndex((c) => c.id === assigned);
-  const start = assignedAt >= 0
-    ? assignedAt
-    : hash(String(sessionId || name || 'clippy')) % cast.length;
+  if (assigned && !unavailable.has(assigned) && cast.some((c) => c.id === assigned)) {
+    return assigned;
+  }
 
+  const start = hash(String(sessionId || name || 'clippy')) % cast.length;
   for (let offset = 0; offset < cast.length; offset++) {
     const id = cast[(start + offset) % cast.length].id;
     if (!unavailable.has(id)) return id;

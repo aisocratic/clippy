@@ -44,4 +44,23 @@ function identityFor(key, name = '') {
   return { name: label, color: palette.color, dark: palette.dark };
 }
 
-module.exports = { identityFor, PALETTE, hash };
+// Every buddy answers to a pet name of its own, like an RPG party member —
+// the project and model are its small print, not its name. Derived from the
+// session id, so the same session keeps its name across restarts and two
+// sessions in one folder still introduce themselves differently.
+const PET_NAMES = [
+  'Biscuit', 'Mochi', 'Waffle', 'Pixel', 'Nori', 'Clover', 'Ziggy', 'Pepper',
+  'Miso', 'Tofu', 'Pickle', 'Noodle', 'Bean', 'Maple', 'Cocoa', 'Sprout',
+  'Pudding', 'Nimbus', 'Comet', 'Ember', 'Fig', 'Juniper', 'Kiwi', 'Lentil',
+  'Mango', 'Olive', 'Pesto', 'Quill', 'Radish', 'Sesame', 'Truffle', 'Umami',
+  'Velvet', 'Wasabi', 'Yuzu', 'Zephyr', 'Acorn', 'Bramble', 'Chirpy', 'Dumpling',
+  'Echo', 'Flapjack', 'Ginger', 'Hazel', 'Inky', 'Jelly', 'Kelp', 'Lychee',
+  'Muffin', 'Nutmeg', 'Onyx', 'Poppy', 'Quokka', 'Rosco', 'Scone', 'Taro',
+  'Ube', 'Vinnie', 'Wonton', 'Xylo', 'Yam', 'Zucchini', 'Alfie', 'Butter',
+];
+
+function petNameFor(key) {
+  return PET_NAMES[hash(`pet:${String(key || 'clippy')}`) % PET_NAMES.length];
+}
+
+module.exports = { identityFor, petNameFor, PET_NAMES, PALETTE, hash };

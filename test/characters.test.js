@@ -64,6 +64,12 @@ test('parallel sessions get different buddies, and a hand-picked one goes first'
   const assigned = { characterByProject: { 'billing-api': 'cat' } };
   assert.equal(characterFor(assigned, 'billing-api', 'session-a'), 'cat');
   assert.notEqual(characterFor(assigned, 'billing-api', 'session-b', ['cat']), 'cat');
+  // A second session picks from its own id, not from the assignment's spot in
+  // the cast — so concurrent sessions don't all march in cast order.
+  assert.equal(
+    characterFor(assigned, 'billing-api', 'session-b', ['cat']),
+    characterFor({}, 'billing-api', 'session-b', ['cat'])
+  );
   // …and only for that repo: everyone else is still cast automatically.
   assert.ok(cast.includes(characterFor(assigned, 'my-app', 'session-c')));
 

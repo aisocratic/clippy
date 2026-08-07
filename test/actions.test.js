@@ -36,6 +36,12 @@ test('the JSON shown for each choice is the JSON Claude Code would get', () => {
   for (const action of withChoices) {
     for (const choice of action.choices) {
       assert.ok(choice.label && choice.effect, `${action.id}: a choice needs a label and an effect`);
+      // The review card answers no hook (Stop is passive), so its choices
+      // carry no json at all rather than claiming a response that never goes.
+      if (action.id === 'review') {
+        assert.equal(choice.json, undefined);
+        continue;
+      }
       const parsed = JSON.parse(choice.json); // never a hand-written string
       assert.equal(typeof parsed, 'object');
     }

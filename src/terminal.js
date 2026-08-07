@@ -290,7 +290,9 @@ async function appForPid(pid) {
   try {
     const table = parseProcessTable(await run('/bin/ps', ['-Ao', 'pid=,ppid=,comm=']));
     return findAppAncestor(pid, table);
-  } catch {
+  } catch (err) {
+    // Indistinguishable from "no terminal app" upstream, so leave a trace here.
+    console.warn('clippy: could not read the process table:', err.message);
     return null;
   }
 }

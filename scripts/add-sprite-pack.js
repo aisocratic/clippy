@@ -40,7 +40,9 @@
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { execFileSync } = require('node:child_process');
+const { execFile } = require('node:child_process');
+const { promisify } = require('node:util');
+const execFileAsync = promisify(execFile);
 const { THEMES_DIR, POSES } = require('../src/characters');
 
 const CATALOG_URL = 'https://openpets.dev/pets/catalog.v2.json';
@@ -136,17 +138,19 @@ async function fetchPack(arg) {
   const out = path.join(tmp, 'pack');
   // ditto ships with macOS (the only platform Clippy runs on) and refuses the
   // path-traversal tricks a hand-rolled extractor would have to fend off.
-  execFileSync('ditto', ['-x', '-k', zipFile, out]);
+  // Awaited, not sync: the settings window's "add a pet" runs this on the
+  // Electron main process, which must not freeze while a 50MB zip unpacks.
+  await execFileAsync('ditto', ['-x', '-k', zipFile, out]);
   return out;
 }
 
-async function main() {
-  const src = args[0];
-  if (!src || src.startsWith('--')) {
-    console.error('usage: node scripts/add-sprite-pack.js <pet-url | pet-id | pack-folder> [flags]');
-    process.exit(1);
-  }
-
+/**
+ * The whole install, callable from anywhere — the CLI below, or the settings
+ * window's "add a pet" box (via main's IPC handler). `src` is a folder, a pet
+ * page URL, a direct .zip link, or a bare pet id; `opts` carries the same
+ * values the CLI flags do, keyed by flag name.
+ */
+async function installPack(src, opts = {}) {
   // A URL or a name that isn't a folder here: fetch it from openpets.dev.
   // Packs zip up either flat or inside a folder of their own name.
   const fetched = /^https?:\/\//i.test(src) || !fs.existsSync(path.resolve(src));
@@ -167,15 +171,21 @@ async function main() {
     // no descriptor: the flags carry everything
   }
 
-  const sheetName =
+  // pet.json came out of a downloaded zip — remote input. basename() keeps the
+  // sheet inside the pack folder no matter what path the descriptor claims.
+  const sheetName = path.basename(
     meta.spritesheetPath ||
-    fs.readdirSync(dir).find((f) => /\.(webp|png)$/i.test(f)) ||
-    '';
+      fs.readdirSync(dir).find((f) => /\.(webp|png)$/i.test(f)) ||
+      ''
+  );
   const sheetFile = path.join(dir, sheetName);
   if (!sheetName || !fs.existsSync(sheetFile)) throw new Error(`no sprite sheet in ${dir}`);
 
-  const id = flag('id', meta.id || path.basename(dir));
-  const [columns, rows] = flag('grid', '8x9').split('x').map(Number);
+  // The id becomes a folder name under THEMES_DIR, so it must be a plain name:
+  // no separators (sanitized away) and never just dots.
+  const id = String(opts.id || meta.id || path.basename(dir)).replace(/[^\w.-]/g, '-');
+  if (!id || /^\.+$/.test(id)) throw new Error(`"${id}" is not a usable character id`);
+  const [columns, rows] = String(opts.grid || '8x9').split('x').map(Number);
   if (!(columns > 0) || !(rows > 0)) throw new Error('--grid wants COLUMNSxROWS, e.g. 8x9');
 
   const { width, height } = imageSize(sheetFile);
@@ -188,17 +198,17 @@ async function main() {
 
   const poses = {};
   for (const name of POSES) {
-    const spec = flag(name, name === 'idle' ? '0:6' : name === 'excited' ? '3:4' : null);
+    const spec = opts[name] || (name === 'idle' ? '0:6' : name === 'excited' ? '3:4' : null);
     if (spec) poses[name] = { file: sheetName, ...pose(spec, name) };
   }
 
   const theme = {
-    label: flag('label', meta.displayName || id),
+    label: opts.label || meta.displayName || id,
     frameWidth: Math.floor(width / columns),
     frameHeight: Math.floor(height / rows),
     columns,
     rows,
-    fps: Number(flag('fps', 6)),
+    fps: Number(opts.fps || 6),
     poses,
   };
 
@@ -206,6 +216,24 @@ async function main() {
   fs.mkdirSync(out, { recursive: true });
   fs.copyFileSync(sheetFile, path.join(out, sheetName));
   fs.writeFileSync(path.join(out, 'theme.json'), `${JSON.stringify(theme, null, 2)}\n`);
+
+  return { id, theme, out, width, height };
+}
+
+async function main() {
+  const src = args[0];
+  if (!src || src.startsWith('--')) {
+    console.error('usage: node scripts/add-sprite-pack.js <pet-url | pet-id | pack-folder> [flags]');
+    process.exit(1);
+  }
+
+  const opts = {};
+  for (const name of ['id', 'label', 'grid', 'fps', ...POSES]) {
+    const value = flag(name);
+    if (value != null) opts[name] = value;
+  }
+
+  const { id, theme, out, width, height } = await installPack(src, opts);
 
   console.log(`installed “${theme.label}” as ${id}`);
   console.log(`  ${width}x${height} sheet -> ${theme.frameWidth}x${theme.frameHeight} frames`);
@@ -223,4 +251,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { imageSize, zipUrlFor };
+module.exports = { imageSize, zipUrlFor, installPack };

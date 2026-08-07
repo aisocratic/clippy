@@ -13,6 +13,9 @@ const KNOWN_SOURCES = new Set(['claude', 'codex', 'openclaw']);
  * OpenClaw hook events.
  *
  * Hooks POST their stdin JSON to:  POST /hook/<EventName>[?kind=<matcher>]
+ * Statusline hook:                 POST /statusline?cols=N  (body: Claude
+ *                                  Code's statusline JSON; response: the line)
+ * Click-through from the terminal: GET  /focus?session=<id>
  * Debugging endpoint:              GET  /status
  *
  * Binds to 127.0.0.1 only — this never listens on the network.
@@ -26,10 +29,12 @@ const KNOWN_SOURCES = new Set(['claude', 'codex', 'openclaw']);
  * @param {object} opts
  * @param {(eventName: string, kind: string|null, payload: object, ctx: {onClose: (fn: () => void) => void, headers: object, source: string}) => (object|void|Promise<object|void>)} opts.onEvent
  * @param {() => object} [opts.getStatus]  Returns JSON for GET /status
+ * @param {(payload: object, cols: number) => string} [opts.onStatusline]  Returns the line for POST /statusline
+ * @param {(sessionId: string) => void} [opts.onFocus]  Reveal a session's buddy for GET /focus
  * @param {number} [opts.port]
  * @param {string} [opts.host]
  */
-function createHookServer({ onEvent, getStatus, port = 43117, host = '127.0.0.1' }) {
+function createHookServer({ onEvent, getStatus, onStatusline, onFocus, port = 43117, host = '127.0.0.1' }) {
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, `http://${host}`);
 
@@ -39,14 +44,28 @@ function createHookServer({ onEvent, getStatus, port = 43117, host = '127.0.0.1'
       return;
     }
 
+    // The OSC 8 hyperlink on the statusline's 📎 lands here: a browser opens
+    // the link, the buddy comes to the front, and the tab says so.
+    if (req.method === 'GET' && url.pathname === '/focus') {
+      try {
+        if (onFocus) onFocus(url.searchParams.get('session') || '');
+      } catch (err) {
+        console.error('clippy: error focusing session', err);
+      }
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end('<title>Clippy</title>Your buddy is on screen — you can close this tab.');
+      return;
+    }
+
+    const statusline = req.method === 'POST' && url.pathname === '/statusline';
     const match = req.method === 'POST' && url.pathname.match(/^\/hook\/([A-Za-z]+)$/);
-    if (!match) {
+    if (!match && !statusline) {
       res.writeHead(404, { 'Content-Type': 'application/json' });
       res.end('{"error":"not found"}');
       return;
     }
 
-    const eventName = match[1];
+    const eventName = match ? match[1] : null;
     const kind = url.searchParams.get('kind');
     let body = '';
     let tooBig = false;
@@ -66,6 +85,22 @@ function createHookServer({ onEvent, getStatus, port = 43117, host = '127.0.0.1'
         payload = body ? JSON.parse(body) : {};
       } catch {
         // Hook payloads should always be JSON, but never punish the sender.
+      }
+
+      if (statusline) {
+        // Claude Code renders this response verbatim under its input box, so
+        // it is plain text (with ANSI colour), not JSON. Empty means "show
+        // nothing", which is also what the terminal gets if we're not running.
+        let line = '';
+        try {
+          const cols = Number(url.searchParams.get('cols')) || 0;
+          line = (onStatusline && onStatusline(payload, cols)) || '';
+        } catch (err) {
+          console.error('clippy: error building statusline', err);
+        }
+        res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+        res.end(String(line));
+        return;
       }
 
       const closeHandlers = [];

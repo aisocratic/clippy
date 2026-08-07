@@ -265,11 +265,16 @@ function renderActions() {
         const effect = document.createElement('span');
         effect.className = 'choice-effect';
         effect.textContent = `— ${choice.effect}`;
-        const json = document.createElement('code');
-        json.className = `choice-json${choice.json === '{}' ? ' empty' : ''}`;
-        json.textContent =
-          choice.json === '{}' ? '{}  · no opinion, the agent carries on as normal' : choice.json;
-        row.append(label, effect, json);
+        row.append(label, effect);
+        // A choice with no json answers no hook (the review card's buttons) —
+        // showing "{}" there would claim a response that never happens.
+        if (choice.json) {
+          const json = document.createElement('code');
+          json.className = `choice-json${choice.json === '{}' ? ' empty' : ''}`;
+          json.textContent =
+            choice.json === '{}' ? '{}  · no opinion, the agent carries on as normal' : choice.json;
+          row.append(json);
+        }
         choices.appendChild(row);
       }
       card.appendChild(choices);
@@ -454,6 +459,42 @@ const spy = new IntersectionObserver(
 for (const panel of document.querySelectorAll('.panel')) spy.observe(panel);
 
 window.clippySettings.ready();
+
+/* ---------- Add a pet ---------- */
+
+// Paste a pet's page link and main downloads and installs the pack; the cast
+// above repaints on the state push that follows.
+{
+  const input = document.getElementById('pet-url');
+  const button = document.getElementById('pet-install');
+  const status = document.getElementById('pet-status');
+
+  const say = (text, tone) => {
+    status.hidden = false;
+    status.className = `field-note${tone ? ` ${tone}` : ''}`;
+    status.textContent = text;
+  };
+
+  const install = async () => {
+    const url = input.value.trim();
+    if (!url) return;
+    input.disabled = button.disabled = true;
+    say('Fetching the pack…');
+    const res = await window.clippySettings.installPet(url);
+    input.disabled = button.disabled = false;
+    if (res && res.ok) {
+      say(`${res.label} joined the cast.`, 'good');
+      input.value = '';
+    } else {
+      say((res && res.error) || 'that didn’t work', 'bad');
+    }
+  };
+
+  button.addEventListener('click', install);
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') install();
+  });
+}
 
 /* ---------- Updates ---------- */
 

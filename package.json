@@ -28,6 +28,7 @@
     "sandbox": "node scripts/demo-web.js --open /gallery",
     "sandbox:app": "node scripts/make-buddies.js --if-missing && CLIPPY_SANDBOX=1 electron .",
     "test": "node --test test/*.test.js",
+    "test:all": "npm test && npm --prefix website test",
     "test:watch": "node --test --watch test/*.test.js",
     "check": "find bin demo scripts src test -name '*.js' -exec node --check {} \\; && node --test test/*.test.js",
     "make-buddies": "node scripts/make-buddies.js",

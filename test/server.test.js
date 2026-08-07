@@ -4,11 +4,12 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const { createHookServer } = require('../src/server');
 
-async function withServer(onEvent, fn) {
+async function withServer(onEvent, fn, extra = {}) {
   const server = createHookServer({
     port: 0, // ephemeral
     onEvent,
     getStatus: () => ({ hello: 'clippy' }),
+    ...extra,
   });
   const addr = await server.listenOn();
   try {
@@ -125,6 +126,54 @@ test('a rejecting handler still answers the hook', async () => {
       assert.deepEqual(await res.json(), { ok: true });
     }
   );
+});
+
+test('statusline answers with the handler\'s line as plain text, passing the width', async () => {
+  await withServer(
+    () => {},
+    async (base) => {
+      const res = await fetch(`${base}/statusline?cols=120`, {
+        method: 'POST',
+        body: JSON.stringify({ session_id: 's1' }),
+      });
+      assert.equal(res.status, 200);
+      assert.match(res.headers.get('content-type'), /text\/plain/);
+      assert.equal(await res.text(), 's1@120');
+    },
+    { onStatusline: (payload, cols) => `${payload.session_id}@${cols}` }
+  );
+
+  // No handler, or a throwing one: an empty line, so Claude Code shows nothing.
+  await withServer(
+    () => {},
+    async (base) => {
+      const bare = await fetch(`${base}/statusline`, { method: 'POST', body: 'not json' });
+      assert.equal(await bare.text(), '');
+    }
+  );
+  await withServer(
+    () => {},
+    async (base) => {
+      const res = await fetch(`${base}/statusline`, { method: 'POST', body: '{}' });
+      assert.equal(res.status, 200);
+      assert.equal(await res.text(), '');
+    },
+    { onStatusline: () => { throw new Error('boom'); } }
+  );
+});
+
+test('focus reveals the linked session and tells the browser tab so', async () => {
+  const focused = [];
+  await withServer(
+    () => {},
+    async (base) => {
+      const res = await fetch(`${base}/focus?session=s%201`);
+      assert.equal(res.status, 200);
+      assert.match(await res.text(), /close this tab/);
+    },
+    { onFocus: (id) => focused.push(id) }
+  );
+  assert.deepEqual(focused, ['s 1']);
 });
 
 test('serves /status and 404s everything else', async () => {

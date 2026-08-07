@@ -57,10 +57,18 @@
 
       <div class="drop-hint">
         <p><b>Want more buddies?</b> Pick one on
-          <a id="pack-link" href="https://openpets.dev/gallery">openpets.dev/gallery ↗</a>
-          and run <code>npm run add-sprite-pack -- &lt;pet url&gt;</code> — paste the pet's
-          page URL (its id, or a downloaded folder, work too). Any folder under
-          <code>src/renderer/assets/themes/</code> with a <code>theme.json</code> shows up here.</p>
+          <a id="pack-link" href="https://openpets.dev/gallery">openpets.dev/gallery ↗</a>,
+          then paste the pet's page link:</p>
+        <div class="add-pet">
+          <input id="pet-url" type="url" placeholder="https://openpets.dev/pets/…"
+            spellcheck="false" aria-label="Add a pet">
+          <button id="pet-install">Install</button>
+        </div>
+        <p class="field-note" id="pet-status" hidden></p>
+        <p>The same install from a terminal is
+          <code>npm run add-sprite-pack -- &lt;pet url&gt;</code> (a pet id or a downloaded
+          pack folder work too). Any folder under <code>src/renderer/assets/themes/</code>
+          with a <code>theme.json</code> shows up here.</p>
         <p>Packs stay on this machine and keep their own licence — Clippy never
           redistributes them.</p>
       </div>

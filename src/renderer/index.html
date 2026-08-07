@@ -58,7 +58,8 @@
          context is. Expand grows the same window into the fuller panel (the
          allowance bars, the plan note, and a box to keep talking to it). -->
     <div id="usage" class="hidden collapsed">
-      <div id="usage-head"><span id="usage-name"></span><span id="usage-model"></span></div>
+      <!-- No name row here: the RPG plate above the buddy already carries the
+           pet's name, the project · model line, and the energy bar. -->
       <div id="usage-status"></div>
       <div id="usage-recap" class="hidden"></div>
       <div id="usage-bar"><div id="usage-bar-fill"></div></div>
@@ -105,13 +106,15 @@
       <button id="menu-hide" class="menu-item dim"><span class="mi">×</span>Hide Clippy</button>
     </div>
 
+    <!-- The buddy's RPG name plate. Hovering the compact buddy names just the
+         project; whenever a panel is open the plate goes full: an energy bar
+         (tokens left in this session's context) on top, the buddy's own pet
+         name, and the small print of which quest this is (project · model). -->
     <div id="who" title="Which coding-agent session this buddy is watching">
-      <span id="who-dot"></span>
-      <span id="who-copy">
-        <span id="who-name">…</span>
-        <span id="who-project">…</span>
-        <span id="who-runtime">…</span>
-      </span>
+      <div id="who-bar"><div id="who-bar-fill"></div><span id="who-bar-label"></span></div>
+      <span id="who-pet">…</span>
+      <span id="who-project">…</span>
+      <span id="who-sub">…</span>
     </div>
 
     <div id="clippy" title="Drag me around. Click for this session's status — expand it for usage and a box to talk to this agent; right-click for more; double-click to say hi.">
@@ -137,11 +140,7 @@
     <div id="activity" class="hidden"></div>
     <div id="statusline">waiting for sessions…</div>
     <div id="controls">
-      <button id="btn-open" class="hidden"
-              title="Open this session's terminal window — brings it to the front and perches Clippy on it"><span
-              class="wide">open session </span>↗</button>
-      <button id="btn-hide" title="Hide (Clippy keeps running in the menu bar)"><span
-              class="wide">hide</span><span class="narrow">×</span></button>
+      <button id="btn-hide" title="Hide (Clippy keeps running in the menu bar)">×</button>
     </div>
   </div>
   <script src="vector-buddies.js"></script>

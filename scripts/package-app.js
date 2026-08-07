@@ -244,6 +244,11 @@ function packageApp({
     path.join(__dirname, 'make-buddies.js'),
     path.join(appDir, 'scripts', 'make-buddies.js')
   );
+  // The settings window's "add a pet" box installs packs through this.
+  fs.copyFileSync(
+    path.join(__dirname, 'add-sprite-pack.js'),
+    path.join(appDir, 'scripts', 'add-sprite-pack.js')
+  );
   fs.copyFileSync(path.join(ROOT, 'LICENSE'), path.join(appDir, 'LICENSE'));
   fs.writeFileSync(
     path.join(appDir, 'package.json'),
