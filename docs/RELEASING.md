@@ -8,10 +8,15 @@ useful for testing but are not release artifacts.
 
 1. Install an Apple **Developer ID Application** certificate and its private
    key in the login keychain.
-2. Store App Store Connect notarization credentials in the keychain:
+2. Store App Store Connect notarization credentials in the keychain. The
+   profile name is a local label of your choosing — whatever you pick here is
+   what `CLIPPY_NOTARY_PROFILE` has to say at build time. Authenticate with an
+   app-specific password (created at account.apple.com) for the Apple ID
+   enrolled in the signing team, or with an App Store Connect API key:
 
    ```bash
-   xcrun notarytool store-credentials clippy-notary
+   xcrun notarytool store-credentials clippy-notary \
+     --apple-id you@example.com --team-id TEAMID
    ```
 
 3. Confirm the signing identity appears in:
