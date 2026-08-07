@@ -36,7 +36,13 @@ const {
   promptPosition,
   typeAndSubmit,
 } = require('./terminal');
-const { sessionUsage, lastAssistantText, usageWindows, readOfficialUsage } = require('./usage');
+const {
+  sessionUsage,
+  lastAssistantText,
+  usageWindows,
+  readOfficialUsage,
+  modelFromTranscriptFile,
+} = require('./usage');
 const { checkForUpdates, localBuild } = require('./updates');
 const { DEV_SESSION, eventsFor, storyList, sandboxUsage } = require('./sandbox-scenarios');
 const { startCompletionPoll, coalesceAsync } = require('./async-control');
@@ -745,7 +751,6 @@ async function perchOn(key, { raise = false, auto = false, mode = null } = {}) {
   }
 }
 
-/** The "go to terminal" button: raise that session's window and ride along. */
 /**
  * Raise a session's window and ride over to it. `point` follows that up with
  * the walk to the prompt — used when the reason you're going there is that
@@ -1091,7 +1096,6 @@ function send(buddy, event) {
   if (buddy && !buddy.win.isDestroyed()) buddy.win.webContents.send('clippy-event', event);
 }
 
-/** Say something in a buddy's bubble (used for "that didn't work" news). */
 /**
  * Say something in the buddy's speech bubble.
  *
@@ -1282,7 +1286,9 @@ function globalSettingsMenu() {
     },
     { type: 'separator' },
     { label: 'Appearance', enabled: false },
-    { label: 'Character', submenu: radios('character', allCharacters()) },
+    // No global "Character" here: buddies are cast per session, and per-project
+    // choices live in the settings window's cast (the retired `character`
+    // setting made this menu a row of radios nothing ever checked).
     {
       label: 'Size',
       submenu: radios('size', [
@@ -1639,8 +1645,8 @@ async function handleStop(payload) {
   const reaction = tracker.handle('Stop', null, payload);
   const agentName = reaction.agentName;
 
-  // OpenClaw is watch-mode only: its handler fires and forgets, so a held
-  // review card could never send feedback anywhere. Plain nudge instead.
+  // Review feedback is typed into the session's terminal, and an OpenClaw
+  // session has no terminal window to type into. Plain nudge instead.
   if (!settings.reviewOnStop || payload.agent === 'openclaw') {
     emitPassive(reaction);
     return {};
@@ -1878,7 +1884,7 @@ function handleHookEvent(eventName, kind, payload, ctx) {
  */
 function statuslineFor(payload = {}, cols = 0) {
   const sessionId = payload.session_id || '';
-  if (!tracker.list().some((s) => s.sessionId === sessionId)) return '';
+  if (!tracker.has(sessionId)) return '';
   const link = `http://127.0.0.1:${PORT}/focus?session=${encodeURIComponent(sessionId)}`;
   const clip = `\x1b]8;;${link}\x07📎\x1b]8;;\x07`;
   // The emoji is two cells wide; keep one more free so the line never wraps.
@@ -1984,6 +1990,7 @@ function sweepStaleSessions() {
   if (removed.length === 0) return;
   for (const s of removed) {
     broker.cancelBySession(s.sessionId);
+    closeReviewsFor(s.sessionId); // a review card for a vanished session is moot
     closeBuddy(s.sessionId);
   }
   updateTray();
@@ -2012,8 +2019,8 @@ app.whenReady().then(async () => {
   ipcMain.handle('clippy-context', async (e) => {
     const buddy = buddyForSender(e.sender);
     if (!buddy) return null;
-    if (buddy.sessionId.startsWith('dev:')) {
-      return { session: devUsage(buddy.name).session };
+    if (buddy.sessionId.startsWith('sandbox:')) {
+      return { session: sandboxUsage(buddy.name).session };
     }
     return { session: await sessionUsage(tracker.transcriptFor(buddy.sessionId)) };
   });
@@ -2028,14 +2035,16 @@ app.whenReady().then(async () => {
   ipcMain.handle('clippy-session-identity', async (e) => {
     const buddy = buddyForSender(e.sender);
     if (!buddy) return null;
-    const session = buddy.sessionId.startsWith('sandbox:')
-      ? sandboxUsage(buddy.name).session
-      : await sessionUsage(tracker.transcriptFor(buddy.sessionId));
-    return {
-      name: buddy.name,
-      agent: buddy.agent,
-      model: session?.model || tracker.modelFor(buddy.sessionId) || '',
-    };
+    // The renderer polls this until a model shows up, so answer from what the
+    // hooks already reported before falling back to reading the transcript —
+    // and read it with the cheap single-pass scan, not a full usage parse.
+    let model = tracker.modelFor(buddy.sessionId) || '';
+    if (!model) {
+      model = buddy.sessionId.startsWith('sandbox:')
+        ? sandboxUsage(buddy.name).session?.model || ''
+        : await modelFromTranscriptFile(tracker.transcriptFor(buddy.sessionId));
+    }
+    return { name: buddy.name, agent: buddy.agent, model };
   });
   ipcMain.on('clippy-mode', (e, payload) => {
     // The renderer knows whether it has anything on screen, and how tall that

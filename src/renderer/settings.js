@@ -265,11 +265,16 @@ function renderActions() {
         const effect = document.createElement('span');
         effect.className = 'choice-effect';
         effect.textContent = `— ${choice.effect}`;
-        const json = document.createElement('code');
-        json.className = `choice-json${choice.json === '{}' ? ' empty' : ''}`;
-        json.textContent =
-          choice.json === '{}' ? '{}  · no opinion, the agent carries on as normal' : choice.json;
-        row.append(label, effect, json);
+        row.append(label, effect);
+        // A choice with no json answers no hook (the review card's buttons) —
+        // showing "{}" there would claim a response that never happens.
+        if (choice.json) {
+          const json = document.createElement('code');
+          json.className = `choice-json${choice.json === '{}' ? ' empty' : ''}`;
+          json.textContent =
+            choice.json === '{}' ? '{}  · no opinion, the agent carries on as normal' : choice.json;
+          row.append(json);
+        }
         choices.appendChild(row);
       }
       card.appendChild(choices);

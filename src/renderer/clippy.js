@@ -95,9 +95,7 @@ const pointerEl = document.getElementById('pointer');
 let walkTimer = null;
 
 const whoEl = document.getElementById('who');
-const whoName = document.getElementById('who-name');
 const whoProject = document.getElementById('who-project');
-const whoRuntime = document.getElementById('who-runtime');
 const activityEl = document.getElementById('activity');
 const qcardEl = document.getElementById('qcard');
 const qcardTitle = document.getElementById('qcard-title');
@@ -138,10 +136,8 @@ let settings = {
   characters: [{ id: 'clip', label: 'Clippy', perColour: true }],
   sizes: [{ id: 'medium', buddy: 96 }],
 };
-const SIZE_LABEL = { small: 'S', medium: 'M', large: 'L' };
 let lastExtendAt = 0;
 let canOpen = false; // do we know which terminal window this session lives in?
-let docked = false; // perched on that window's top-right corner
 
 /* ---------- Window size: a paperclip until there's something to read ---------- */
 
@@ -200,9 +196,9 @@ function applyIdentity() {
   const buddyName = character?.label || 'Buddy';
   const harness = HARNESS_NAMES[me.agent] || HARNESS_NAMES.claude;
   const model = shortModel(me.model);
-  whoName.textContent = buddyName;
+  // The plate shows only the project; the full identity rides its tooltip
+  // (the open panel's own header carries the model).
   whoProject.textContent = me.name;
-  whoRuntime.textContent = `${harness} · ${model}`;
   whoEl.title = `${buddyName} in ${me.name} — running ${harness} with ${model}`;
 }
 
@@ -448,7 +444,6 @@ function render() {
 
   // This window speaks for one session only, so the status line is about it.
   statusEl.textContent = STATUS_TEXT[myStatus] || myStatus;
-  whoEl.classList.toggle('busy', myStatus === 'working');
 
   // Every route to the terminal window needs to know we can find it.
   btnGoto.classList.toggle('hidden', !canOpen);
@@ -766,49 +761,63 @@ async function showUsage({ restore = false } = {}) {
   const weekTotal = week ? allTokens(week.totals) : 0;
   usageBars.replaceChildren();
 
-  const hasOfficial = Boolean(data.official && data.official.limits && data.official.limits.length);
-  if (hasOfficial) {
-    // The real thing, kept simple: what's LEFT of each limit, straight from
-    // Claude Code's own cached /usage numbers. The 5-hour block is the
-    // near-term row, the week rows carry the total and whichever model the
-    // plan counts on its own. Nothing else — this is a glance, not a report.
-    const age = now - (data.official.fetchedAtMs || 0);
-    const fetched = data.official.fetchedAtMs
-      ? clockOf(data.official.fetchedAtMs, now)
-      : 'some time ago';
-    for (const limit of data.official.limits) {
-      const left = Math.max(0, 100 - limit.percent);
-      const resets = limit.resetsAt ? `resets ${clockOf(limit.resetsAt, now)}` : '';
-      usageBars.append(
-        bar(limit.label, `${left}% left`, Math.min(1, limit.percent / 100), {
-          sub: resets,
-          tone: limit.percent >= 85 || limit.severity !== 'normal' ? 'hot' : limit.percent >= 60 ? 'warn' : '',
-          hint:
-            `${limit.percent}% of this limit used — Claude Code's own number, cached when ` +
-            `/usage last loaded (${fetched}).`,
-        })
-      );
-    }
-    usageNote.textContent =
-      `From /usage, cached ${fetched}` +
-      `${age > 6 * 60 * 60 * 1000 ? ' — getting stale: open /usage in any session to refresh' : ''}.`;
+  if (data.official && data.official.limits && data.official.limits.length) {
+    renderOfficialBars(data.official, now);
   } else {
-    const rows = data.agent === 'codex' ? WINDOWS.filter((row) => row.key !== 'weekOpus') : WINDOWS;
-    for (const row of rows) {
-      const win = windows && windows[row.key];
-      if (!win) continue;
-      usageBars.append(windowBar(row, win, weekTotal, now, data.agent));
-    }
+    renderMeasuredBars(data, windows, week, weekTotal, now);
   }
 
-  // Where it went, by model — detail for the fallback view only; with the real
-  // limits on screen the panel stays a glance.
-  const models = hasOfficial
-    ? []
-    : Object.entries((week && week.byModel) || {})
-        .map(([model, totals]) => [model, allTokens(totals)])
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 3);
+  usageEl.classList.remove('hidden');
+  syncMode();
+  // The full view is also where you type the next prompt, so the caret starts
+  // there — but only once it's on screen; the collapsed summary has no box.
+  if (usageExpanded) usageInput.focus();
+}
+
+/**
+ * The real thing, kept simple: what's LEFT of each limit, straight from
+ * Claude Code's own cached /usage numbers. The 5-hour block is the near-term
+ * row, the week rows carry the total and whichever model the plan counts on
+ * its own. Nothing else — this is a glance, not a report.
+ */
+function renderOfficialBars(official, now) {
+  const age = now - (official.fetchedAtMs || 0);
+  const fetched = official.fetchedAtMs ? clockOf(official.fetchedAtMs, now) : 'some time ago';
+  for (const limit of official.limits) {
+    const left = Math.max(0, 100 - limit.percent);
+    const resets = limit.resetsAt ? `resets ${clockOf(limit.resetsAt, now)}` : '';
+    usageBars.append(
+      bar(limit.label, `${left}% left`, Math.min(1, limit.percent / 100), {
+        sub: resets,
+        tone: limit.percent >= 85 || limit.severity !== 'normal' ? 'hot' : limit.percent >= 60 ? 'warn' : '',
+        hint:
+          `${limit.percent}% of this limit used — Claude Code's own number, cached when ` +
+          `/usage last loaded (${fetched}).`,
+      })
+    );
+  }
+  usageNote.textContent =
+    `From /usage, cached ${fetched}` +
+    `${age > 6 * 60 * 60 * 1000 ? ' — getting stale: open /usage in any session to refresh' : ''}.`;
+}
+
+/**
+ * The measured-spend fallback: per-window bars from the transcripts, then
+ * where it went by model. The note must never fudge whose number the bars
+ * are — measured spend, not an allowance.
+ */
+function renderMeasuredBars(data, windows, week, weekTotal, now) {
+  const rows = data.agent === 'codex' ? WINDOWS.filter((row) => row.key !== 'weekOpus') : WINDOWS;
+  for (const row of rows) {
+    const win = windows && windows[row.key];
+    if (!win) continue;
+    usageBars.append(windowBar(row, win, weekTotal, now, data.agent));
+  }
+
+  const models = Object.entries((week && week.byModel) || {})
+    .map(([model, totals]) => [model, allTokens(totals)])
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 3);
   if (models.length) {
     const head = document.createElement('div');
     head.className = 'ubar-group';
@@ -824,21 +833,10 @@ async function showUsage({ restore = false } = {}) {
     }
   }
 
-  // The one thing this panel must never fudge: whose number the bars are.
-  // With the official cache on screen its own note (set above) stands; the
-  // wording below belongs to the measured-spend fallback only.
-  if (!(data.official && data.official.limits && data.official.limits.length)) {
-    usageNote.textContent = data.agent === 'codex'
-      ? 'Measured from local Codex rollout transcripts. These are token totals, not your remaining account allowance.'
-      : 'Bars are shares of the last 7 days — measured spend, not an allowance. Run /usage in ' +
-        'Claude Code once and Clippy picks up the real percentages it caches, no setup needed.';
-  }
-
-  usageEl.classList.remove('hidden');
-  syncMode();
-  // The full view is also where you type the next prompt, so the caret starts
-  // there — but only once it's on screen; the collapsed summary has no box.
-  if (usageExpanded) usageInput.focus();
+  usageNote.textContent = data.agent === 'codex'
+    ? 'Measured from local Codex rollout transcripts. These are token totals, not your remaining account allowance.'
+    : 'Bars are shares of the last 7 days — measured spend, not an allowance. Run /usage in ' +
+      'Claude Code once and Clippy picks up the real percentages it caches, no setup needed.';
 }
 
 function hideUsage() {
@@ -1164,8 +1162,7 @@ function handleEvent(evt) {
     case 'dock': {
       // Perched on the session's terminal window: happy, small, and quiet
       // until something actually needs an answer.
-      docked = Boolean(evt.docked);
-      document.body.classList.toggle('docked', docked);
+      document.body.classList.toggle('docked', Boolean(evt.docked));
       // Compact is about size, not about being perched — a corner buddy is a
       // bare paperclip too until it has something to show.
       document.body.classList.toggle('compact', Boolean(evt.compact));

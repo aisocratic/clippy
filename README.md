@@ -22,8 +22,9 @@ through terminal tabs.
 | ![approval](shots/7-approval-card.png) | ![plan](shots/10-plan-card.png) | ![question](shots/11-question-card.png) |
 
 Each buddy wears a **name plate** in its own colour: hover and it names just the
-project; click and the open panel's plate adds the pet's name and the harness +
-model running it (`my-app` / `Pixel cat` / `Codex · gpt-5.5`, for example). Concurrent agents in the same folder are assigned different available buddy
+project (the fuller identity — pet, harness, model — rides its tooltip); click
+and the open panel's own header shows the project with the model beside it
+(`my-app · gpt-5.5`, for example). Concurrent agents in the same folder are assigned different available buddy
 animations, so five parallel agents are distinguishable characters rather than one confused paperclip. A live
 **activity line** under each shows what that session
 is doing — `⚙ my-app — Running: npm test`, `✏ Editing server.js`,
@@ -493,8 +494,9 @@ and read, and it has five sections:
   come from the same `toHookResponse` the app answers with (`src/actions.js`), so
   the page can't drift from the behaviour, and a test asserts it.
 - **Updates** — which copy you're running (checkout vs packaged app, version,
-  commit), and a button that compares it with the tip of `main` on GitHub. The
-  one deliberate non-localhost request in the app, made only when you press it.
+  commit), and a button that compares it with the tip of `main` on GitHub.
+  Like the pet downloads above, it's a deliberate, user-initiated request —
+  the app never talks to anything but localhost on its own.
 (Clicking a session's name brings its buddy to the front.)
 
 The on/off switches for what Clippy answers aren't in this window at all: they

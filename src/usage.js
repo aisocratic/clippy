@@ -181,7 +181,10 @@ function modelFromTranscript(text) {
 function parseTranscript(text, { sinceMs = 0 } = {}) {
   const totals = emptyTotals();
   const byModel = new Map(); // model id -> totals, for "where did it all go?"
-  let model = modelFromTranscript(text);
+  // The usage sweep below names the model as it goes; the dedicated scan is
+  // only needed when no usage line carried one (a brand-new or idle session),
+  // so the common case parses the transcript once, not twice.
+  let model = '';
   let context = 0;
   let biggest = 0;
   let turns = 0;
@@ -213,6 +216,8 @@ function parseTranscript(text, { sinceMs = 0 } = {}) {
     }
   });
 
+  if (!model) model = modelFromTranscript(text);
+
   // The transcript records the plain model id even on the 1M-context variant,
   // so a context that has already run past the standard window is the only
   // evidence that this session has the bigger one.
@@ -221,6 +226,16 @@ function parseTranscript(text, { sinceMs = 0 } = {}) {
     biggest > DEFAULT_CONTEXT ? LONG_CONTEXT : 0
   );
   return { model, context, contextLimit, totals, turns, lastAt, byModel: Object.fromEntries(byModel) };
+}
+
+/** Just the model named in a transcript — the cheap read for identity polls. */
+async function modelFromTranscriptFile(transcriptPath) {
+  if (!transcriptPath) return '';
+  try {
+    return modelFromTranscript(await fs.readFile(transcriptPath, 'utf8'));
+  } catch {
+    return ''; // no transcript yet, or it moved
+  }
 }
 
 /** Read and summarize a single session's transcript. */
@@ -568,6 +583,7 @@ async function readOfficialUsage(file = path.join(require('node:os').homedir(), 
 module.exports = {
   parseTranscript,
   modelFromTranscript,
+  modelFromTranscriptFile,
   contextLimitFor,
   contextOf,
   sessionUsage,

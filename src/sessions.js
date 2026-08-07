@@ -252,6 +252,11 @@ class SessionTracker {
     return this.sessions.get(sessionId)?.agent || 'claude';
   }
 
+  /** Whether this session is being tracked at all — no cloning, just a lookup. */
+  has(sessionId) {
+    return this.sessions.has(sessionId);
+  }
+
   /** Model reported directly by SessionStart or another hook payload. */
   modelFor(sessionId) {
     return this.sessions.get(sessionId)?.model || '';

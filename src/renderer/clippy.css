@@ -210,33 +210,9 @@ button.dim {
   transition: opacity 0.15s ease;
 }
 
-#who-copy {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  line-height: 1.15;
-}
-
-#who-name,
-#who-project,
-#who-runtime {
+#who-project {
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-#who-name,
-#who-runtime {
-  margin-top: 2px;
-  color: var(--muted);
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0;
-  white-space: normal;
-}
-
-#who-name {
-  margin-top: 1px;
-  color: #333333;
 }
 
 #stage:hover #who {
@@ -248,30 +224,6 @@ button.dim {
    project and model — the plate would double it, so it goes away entirely. */
 body:not(.compact) #who {
   display: none;
-}
-
-#who-dot,
-#who-name,
-#who-runtime {
-  display: none;
-}
-
-#who-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--clip);
-  flex: none;
-  margin-top: 5px;
-}
-
-#who.busy #who-dot {
-  animation: pulse 1.1s ease-in-out infinite;
-}
-
-@keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.25; }
 }
 
 /* ---------- The buddy ---------- */

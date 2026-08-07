@@ -201,16 +201,23 @@ function installCodexHooks(settings, port = DEFAULT_PORT) {
   return installHooksFor(settings, port, CODEX_SPECS, 'codex');
 }
 
-function listInstalled(settings) {
+/** Every hook entry of ours in a settings object: {event, matcher, command}. */
+function collectOurs(settings) {
   const found = [];
   for (const [event, groups] of Object.entries(settings.hooks || {})) {
     for (const group of groups || []) {
       for (const hook of group.hooks || []) {
-        if (isOurs(hook)) found.push({ event, matcher: group.matcher || '' });
+        if (isOurs(hook)) {
+          found.push({ event, matcher: group.matcher || '', command: String(hook.command) });
+        }
       }
     }
   }
   return found;
+}
+
+function listInstalled(settings) {
+  return collectOurs(settings).map(({ event, matcher }) => ({ event, matcher }));
 }
 
 /**
@@ -222,16 +229,7 @@ function listInstalled(settings) {
  * @returns {{installed: boolean, missing: string[], stale: boolean, wrongPort: boolean, noTerminalInfo: boolean}}
  */
 function checkDriftFor(settings, port, specs) {
-  const installed = [];
-  for (const [event, groups] of Object.entries(settings.hooks || {})) {
-    for (const group of groups || []) {
-      for (const hook of group.hooks || []) {
-        if (isOurs(hook)) {
-          installed.push({ event, matcher: group.matcher || '', command: String(hook.command) });
-        }
-      }
-    }
-  }
+  const installed = collectOurs(settings);
   if (installed.length === 0) {
     return { installed: false, missing: [], stale: false, wrongPort: false, noTerminalInfo: false };
   }

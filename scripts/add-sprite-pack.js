@@ -40,7 +40,9 @@
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { execFileSync } = require('node:child_process');
+const { execFile } = require('node:child_process');
+const { promisify } = require('node:util');
+const execFileAsync = promisify(execFile);
 const { THEMES_DIR, POSES } = require('../src/characters');
 
 const CATALOG_URL = 'https://openpets.dev/pets/catalog.v2.json';
@@ -136,7 +138,9 @@ async function fetchPack(arg) {
   const out = path.join(tmp, 'pack');
   // ditto ships with macOS (the only platform Clippy runs on) and refuses the
   // path-traversal tricks a hand-rolled extractor would have to fend off.
-  execFileSync('ditto', ['-x', '-k', zipFile, out]);
+  // Awaited, not sync: the settings window's "add a pet" runs this on the
+  // Electron main process, which must not freeze while a 50MB zip unpacks.
+  await execFileAsync('ditto', ['-x', '-k', zipFile, out]);
   return out;
 }
 
@@ -167,15 +171,20 @@ async function installPack(src, opts = {}) {
     // no descriptor: the flags carry everything
   }
 
-  const sheetName =
+  // pet.json came out of a downloaded zip — remote input. basename() keeps the
+  // sheet inside the pack folder no matter what path the descriptor claims.
+  const sheetName = path.basename(
     meta.spritesheetPath ||
-    fs.readdirSync(dir).find((f) => /\.(webp|png)$/i.test(f)) ||
-    '';
+      fs.readdirSync(dir).find((f) => /\.(webp|png)$/i.test(f)) ||
+      ''
+  );
   const sheetFile = path.join(dir, sheetName);
   if (!sheetName || !fs.existsSync(sheetFile)) throw new Error(`no sprite sheet in ${dir}`);
 
-  // The id becomes a folder name, and a downloaded pet.json is remote input.
+  // The id becomes a folder name under THEMES_DIR, so it must be a plain name:
+  // no separators (sanitized away) and never just dots.
   const id = String(opts.id || meta.id || path.basename(dir)).replace(/[^\w.-]/g, '-');
+  if (!id || /^\.+$/.test(id)) throw new Error(`"${id}" is not a usable character id`);
   const [columns, rows] = String(opts.grid || '8x9').split('x').map(Number);
   if (!(columns > 0) || !(rows > 0)) throw new Error('--grid wants COLUMNSxROWS, e.g. 8x9');
 

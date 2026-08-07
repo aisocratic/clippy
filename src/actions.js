@@ -99,12 +99,14 @@ const ACTIONS = [
     setting: 'reviewOnStop',
     when: 'The agent finishes a turn. The hook is answered immediately — the chat is never held open.',
     shows: 'A review card with what the agent just said. It waits as long as you do — there is no countdown.',
+    // No `json` on these: the Stop hook is answered before the card is even
+    // shown, so no button hands Claude Code any JSON — feedback arrives as a
+    // typed prompt instead.
     choices: [
-      { label: 'Looks good', effect: 'the card goes away — the agent already stopped', json: json('Stop', 'ok') },
+      { label: 'Looks good', effect: 'the card goes away — the agent already stopped' },
       {
         label: 'Send feedback',
         effect: 'your note is typed into that session’s terminal as the next prompt',
-        json: json('Stop', 'feedback', 'also add a 429 test'),
       },
     ],
   },
