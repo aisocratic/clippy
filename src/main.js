@@ -251,6 +251,19 @@ function openSettingsWindow(section) {
 }
 
 /**
+ * Tray-click behaviour only: the 📎 works like a switch — one click opens
+ * settings, the next closes them. Every other entry point (right-click menu,
+ * deep links into a section) still plainly opens.
+ */
+function toggleSettingsWindow() {
+  if (settingsWin && !settingsWin.isDestroyed() && settingsWin.isVisible()) {
+    settingsWin.close();
+    return;
+  }
+  openSettingsWindow();
+}
+
+/**
  * Where macOS thinks this app lives. Running from source that's Electron's own
  * bundle — which is why the Accessibility list says "Electron" and not
  * "Clippy", and why nobody can find it.
@@ -1344,10 +1357,10 @@ function createTray() {
   tray = new Tray(icon);
   updateTray(); // paints the count (and the fallback clip if needed)
   tray.setToolTip('Clippy for Claude Code + Codex — click for settings');
-  // Click opens the settings window; right-click (or ctrl-click) drops the
+  // Click toggles the settings window; right-click (or ctrl-click) drops the
   // menu. The menu is *not* attached with setContextMenu, because on macOS that
   // makes the icon swallow left-clicks and we'd never see one.
-  tray.on('click', () => openSettingsWindow());
+  tray.on('click', () => toggleSettingsWindow());
   tray.on('right-click', () => tray.popUpContextMenu(trayMenu()));
 }
 
