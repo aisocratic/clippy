@@ -1,11 +1,16 @@
 'use strict';
 
 /**
- * Install a downloaded sprite pack as a Clippy character.
+ * Install a sprite pack as a Clippy character — from a folder, or straight
+ * from openpets.dev.
  *
- *   node scripts/add-sprite-pack.js sprites/miso
+ *   node scripts/add-sprite-pack.js https://openpets.dev/pets/tmuxai-openpets/
+ *   node scripts/add-sprite-pack.js tmuxai                # a pet id works too
+ *   node scripts/add-sprite-pack.js sprites/miso          # or a local folder
  *   node scripts/add-sprite-pack.js sprites/fox --label "🦊 Fox" --excited 3:4
  *
+ * A URL (or bare id) is looked up in the openpets.dev catalog, its zip is
+ * downloaded and unpacked, and the install continues exactly as for a folder.
  * A pack is a folder holding a sprite sheet and, optionally, a `pet.json`
  * (`{ id, displayName, spritesheetPath }`) — the shape desktop-pet packs tend
  * to ship. The sheet is a grid: one row per animation, one column per frame.
@@ -33,8 +38,14 @@
  */
 
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
+const { execFileSync } = require('node:child_process');
 const { THEMES_DIR, POSES } = require('../src/characters');
+
+const CATALOG_URL = 'https://openpets.dev/pets/catalog.v2.json';
+// The catalog's own installer caps downloads at 50MB; same bar here.
+const MAX_ZIP_BYTES = 50 * 1024 * 1024;
 
 const args = process.argv.slice(2);
 const flag = (name, fallback) => {
@@ -81,15 +92,65 @@ function imageSize(file) {
   throw new Error(`${path.basename(file)}: only PNG and WebP sheets are understood`);
 }
 
-function main() {
+/**
+ * Which zip a URL or bare pet id means, given the openpets catalog. Pure so
+ * it can be tested without the network: a direct .zip URL is itself; a pet
+ * page URL carries its slug in /pets/<slug>/; anything else is tried as an id.
+ */
+function zipUrlFor(arg, pets) {
+  if (/^https?:\/\//i.test(arg)) {
+    const url = new URL(arg);
+    if (url.pathname.endsWith('.zip')) return arg;
+    if (!/(^|\.)openpets\.dev$/i.test(url.hostname)) {
+      throw new Error(`only openpets.dev URLs (or direct .zip links) are understood, got ${url.hostname}`);
+    }
+    const slug = (url.pathname.match(/\/pets\/([^/]+)/) || [])[1];
+    const wanted = slug || url.pathname.split('/').filter(Boolean).pop() || '';
+    const pet = pets.find(
+      (p) => p.id === wanted || String(p.zip || '').includes(`/pets/${wanted}/`)
+    );
+    if (!pet || !pet.zip) throw new Error(`no pet matching “${wanted}” in the openpets catalog`);
+    return pet.zip;
+  }
+  const pet = pets.find((p) => p.id === arg || String(p.zip || '').includes(`/pets/${arg}/`));
+  if (!pet || !pet.zip) throw new Error(`no pet named “${arg}” in the openpets catalog`);
+  return pet.zip;
+}
+
+/** Fetch a URL-or-id pack into a temp folder and hand back that folder. */
+async function fetchPack(arg) {
+  const res = await fetch(CATALOG_URL, { headers: { 'User-Agent': 'clippy-for-claude' } });
+  if (!res.ok) throw new Error(`openpets catalog answered ${res.status}`);
+  const zipUrl = zipUrlFor(arg, (await res.json()).pets || []);
+
+  console.log(`downloading ${zipUrl}`);
+  const zipRes = await fetch(zipUrl, { headers: { 'User-Agent': 'clippy-for-claude' } });
+  if (!zipRes.ok) throw new Error(`download answered ${zipRes.status}`);
+  const buf = Buffer.from(await zipRes.arrayBuffer());
+  if (buf.length > MAX_ZIP_BYTES) throw new Error(`zip is ${buf.length} bytes — over the 50MB cap`);
+  if (buf.slice(0, 2).toString('ascii') !== 'PK') throw new Error('that is not a zip file');
+
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'clippy-pack-'));
+  const zipFile = path.join(tmp, 'pack.zip');
+  fs.writeFileSync(zipFile, buf);
+  const out = path.join(tmp, 'pack');
+  // ditto ships with macOS (the only platform Clippy runs on) and refuses the
+  // path-traversal tricks a hand-rolled extractor would have to fend off.
+  execFileSync('ditto', ['-x', '-k', zipFile, out]);
+  return out;
+}
+
+async function main() {
   const src = args[0];
   if (!src || src.startsWith('--')) {
-    console.error('usage: node scripts/add-sprite-pack.js <pack-folder> [flags]');
+    console.error('usage: node scripts/add-sprite-pack.js <pet-url | pet-id | pack-folder> [flags]');
     process.exit(1);
   }
 
+  // A URL or a name that isn't a folder here: fetch it from openpets.dev.
   // Packs zip up either flat or inside a folder of their own name.
-  let dir = path.resolve(src);
+  const fetched = /^https?:\/\//i.test(src) || !fs.existsSync(path.resolve(src));
+  let dir = fetched ? await fetchPack(src) : path.resolve(src);
   if (!fs.existsSync(path.join(dir, 'pet.json'))) {
     const nested = fs
       .readdirSync(dir, { withFileTypes: true })
@@ -155,6 +216,11 @@ function main() {
   console.log('Restart the app (or reload the test bench) to pick it up.');
 }
 
-if (require.main === module) main();
+if (require.main === module) {
+  main().catch((err) => {
+    console.error(`error: ${err.message}`);
+    process.exit(1);
+  });
+}
 
-module.exports = { imageSize };
+module.exports = { imageSize, zipUrlFor };
