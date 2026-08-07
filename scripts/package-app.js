@@ -192,6 +192,50 @@ function plistDelete(plist, key) {
 
 /* ---------------- The build itself ---------------- */
 
+/** Mach-O by magic number — mode bits lie on files cp preserved from a dmg. */
+function isMachO(file) {
+  const buf = Buffer.alloc(4);
+  const fd = fs.openSync(file, 'r');
+  try {
+    if (fs.readSync(fd, buf, 0, 4, 0) !== 4) return false;
+  } finally {
+    fs.closeSync(fd);
+  }
+  const magic = buf.readUInt32BE(0);
+  return (
+    magic === 0xfeedface || magic === 0xcefaedfe || // 32-bit, either endianness
+    magic === 0xfeedfacf || magic === 0xcffaedfe || // 64-bit
+    magic === 0xcafebabe || magic === 0xbebafeca    // fat/universal
+  );
+}
+
+/**
+ * Everything inside the bundle that carries its own code signature, innermost
+ * first, main bundle last — the order codesign needs so each container seals
+ * over already-final contents. Loose Mach-Os (libffmpeg, chrome_crashpad_handler,
+ * Squirrel's ShipIt) are the ones --deep silently leaves ad-hoc signed; bundle
+ * main executables are skipped because signing the bundle signs them.
+ */
+function signableTargets(appBundle) {
+  const targets = [];
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (entry.isSymbolicLink()) continue;
+      const p = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (entry.name === 'MacOS' && dir.endsWith('Contents')) continue;
+        walk(p);
+        if (entry.name.endsWith('.framework') || entry.name.endsWith('.app')) targets.push(p);
+      } else if (entry.isFile() && isMachO(p)) {
+        targets.push(p);
+      }
+    }
+  };
+  walk(path.join(appBundle, 'Contents', 'Frameworks'));
+  targets.push(appBundle);
+  return targets;
+}
+
 function sha256File(file) {
   const hash = crypto.createHash('sha256');
   hash.update(fs.readFileSync(file));
@@ -311,11 +355,52 @@ function packageApp({
   // configured a keychain identity. Local builds retain the ad-hoc fallback,
   // but `npm run package:release` refuses to produce a public artifact without
   // both signing and notarization credentials.
+  //
+  // Hardened runtime (which notarization requires) forbids the JIT'd and
+  // dynamically-written executable pages V8 lives on, so the Developer ID
+  // sign must carry entitlements handing those back — without them the signed
+  // app dies on launch.
+  //
+  // And the signing has to walk the bundle inside-out, one Mach-O at a time.
+  // `codesign --deep` looks like it does this but skips Electron's nested
+  // dylibs (libffmpeg keeps its ad-hoc linker signature, TeamIdentifier not
+  // set) — and under hardened-runtime library validation a dylib whose team
+  // doesn't match the process is fatal at dyld time, before main() ever runs.
   console.log(signIdentity ? 'Developer ID signing…' : 'ad-hoc signing (local build only)…');
-  const appSignArgs = signIdentity
-    ? ['--force', '--deep', '--options', 'runtime', '--timestamp', '--sign', signIdentity, appBundle]
-    : ['--force', '--deep', '--sign', '-', appBundle];
-  execFileSync('codesign', appSignArgs, { stdio: 'ignore' });
+  if (signIdentity) {
+    const entitlementsFile = path.join(dist, '.entitlements.plist');
+    fs.writeFileSync(
+      entitlementsFile,
+      `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <true/>
+</dict>
+</plist>
+`
+    );
+    for (const target of signableTargets(appBundle)) {
+      // Entitlements go on things that become processes (the helper apps and
+      // the main bundle); dylibs and frameworks just need the team's seal.
+      const wantsEntitlements = target === appBundle || target.endsWith('.app');
+      execFileSync(
+        'codesign',
+        [
+          '--force', '--options', 'runtime', '--timestamp',
+          ...(wantsEntitlements ? ['--entitlements', entitlementsFile] : []),
+          '--sign', signIdentity, target,
+        ],
+        { stdio: 'ignore' }
+      );
+    }
+    fs.rmSync(entitlementsFile, { force: true });
+  } else {
+    execFileSync('codesign', ['--force', '--deep', '--sign', '-', appBundle], { stdio: 'ignore' });
+  }
   execFileSync('codesign', ['--verify', '--deep', '--strict', '--verbose=2', appBundle], {
     stdio: 'ignore',
   });
