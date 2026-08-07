@@ -192,13 +192,8 @@ function toHookResponse(event, action, message = '', { toolInput } = {}) {
     return {}; // pass / timeout / cancel -> normal terminal prompt
   }
 
-  if (event === 'Stop') {
-    if (action === 'feedback' && message.trim()) {
-      return { decision: 'block', reason: message.trim() };
-    }
-    return {}; // ok / timeout / cancel -> let Claude stop
-  }
-
+  // Stop is passive: the hook is always answered {} immediately (the chat is
+  // never held), and review feedback goes back as a typed prompt instead.
   return {};
 }
 

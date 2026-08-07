@@ -372,6 +372,53 @@ code {
   text-decoration: underline;
 }
 
+/* The "add a pet" box: paste a gallery link, main installs the pack. */
+.add-pet {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.add-pet input {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 9px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 11.5px;
+}
+
+.add-pet button {
+  flex: none;
+  padding: 5px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.add-pet button:hover {
+  background: #232833;
+}
+
+.add-pet button:disabled {
+  color: var(--muted);
+  cursor: default;
+}
+
+#pet-status {
+  margin-top: 6px;
+}
+
+#pet-status.good { color: var(--ok, #4aa870); }
+#pet-status.bad { color: var(--no, #d76b64); }
+
 /* ---------- Plan & allowances ---------- */
 
 .limits {

@@ -21,9 +21,9 @@ through terminal tabs.
 |---|---|---|
 | ![approval](shots/7-approval-card.png) | ![plan](shots/10-plan-card.png) | ![question](shots/11-question-card.png) |
 
-Each buddy wears a **name plate** with its character name, project, and the harness + model
-running it (`Pixel cat` / `my-app` / `Codex · gpt-5.5`, for example), and its own
-colour. Concurrent agents in the same folder are assigned different available buddy
+Each buddy wears a **name plate** in its own colour: hover and it names just the
+project; click and the open panel's plate adds the pet's name and the harness +
+model running it (`my-app` / `Pixel cat` / `Codex · gpt-5.5`, for example). Concurrent agents in the same folder are assigned different available buddy
 animations, so five parallel agents are distinguishable characters rather than one confused paperclip. A live
 **activity line** under each shows what that session
 is doing — `⚙ my-app — Running: npm test`, `✏ Editing server.js`,
@@ -71,7 +71,7 @@ is swappable from the menu too.
 
 ```
 Claude Code / Codex session(s)
-   │  hooks: PermissionRequest / Stop / Pre+PostToolUse / Notification / Session*
+   │  hooks: PermissionRequest / Stop / Pre+PostToolUse / Notification / SessionEnd
    ▼  curl POST → http://127.0.0.1:43117/hook/<event>   (response = hook decision)
 Clippy app (Electron)
    ├─ session tracker: who's working, waiting, blocked — and what they're doing now
@@ -91,7 +91,7 @@ interactive — their HTTP response is the hook's decision:
 | Hook event | Clippy reaction |
 |---|---|
 | `PermissionRequest` | 🛂 **Approval card** — Allow / Deny (with a reason Claude sees) / send to terminal. For `ExitPlanMode` it becomes a **plan card**: Approve / Revise (your note sends Claude back to planning) |
-| `Stop` | ✅ **Review card** — "Looks good" lets Claude stop; typed feedback sends it back to work |
+| `Stop` | ✅ **Review card** — answered immediately, the chat is never held. "Looks good" puts Clippy away; typed feedback is typed into that session's terminal as your next prompt |
 | `PreToolUse` *(AskUserQuestion)* | ❓ **Question card** — Claude's options as buttons. What you pick is fed straight back, so the terminal picker never appears |
 | `PreToolUse` *(Bash, Edit, Write, Web*, Task, …)* | ⚙ **Activity line** — what Claude is doing now |
 | `PostToolUse` *(same tools)* | ✓ marks the action done |
@@ -99,7 +99,8 @@ interactive — their HTTP response is the hook's decision:
 | `Notification` (`permission_prompt`) | 🔴 Urgent bounce — a prompt is waiting in the terminal |
 | `Notification` (`idle_prompt`) | 🟡 Reminder — Claude has been waiting for your reply |
 | `UserPromptSubmit` | clears alerts & pending cards for that session (you're on it) |
-| `SessionStart` / `SessionEnd` | tracks sessions appearing/disappearing — a fresh session or `/clear` also nudges you to calibrate your plan, once a day, until you do |
+| `SessionEnd` | the session's buddy leaves the screen. (There's deliberately no `SessionStart` hook: a session announces itself with its first real activity) |
+| `statusLine` *(Claude Code only)* | a small 📎 tucked against the right edge of the line under the input box — cmd+click it (iTerm2, Ghostty, kitty, WezTerm) to open this session's buddy. Installed only if you don't already have a statusline of your own |
 
 The activity hooks match **only meaningful tools** (`Bash|Edit|Write|…|mcp__.*`)
 — `Read`, `Grep`, `Glob`, and `TodoWrite` are excluded, so the noisy read-only
@@ -120,9 +121,10 @@ Safety properties of the interactive hooks:
 
 - `PermissionRequest` fires **only when Claude Code would actually show a
   permission prompt** — allowlisted commands run at full speed, untouched.
-- If you don't answer in time (60s for approvals, 30s for reviews — typing
+- If you don't answer in time (60s for approvals, 90s for questions — typing
   extends the hold), Clippy answers "no decision" and the normal terminal
-  prompt takes over. Nothing is ever auto-approved.
+  prompt takes over. Nothing is ever auto-approved. Reviews hold nothing at
+  all: the `Stop` hook is answered the moment it fires.
 - When the app isn't running, the hooks fail instantly
   (`--connect-timeout 1 … || true`) and Claude Code behaves exactly as if
   Clippy didn't exist.
@@ -134,8 +136,8 @@ Safety properties of the interactive hooks:
 Codex uses its native [lifecycle hooks](https://learn.chatgpt.com/docs/hooks) and reports into the
 same local server. Clippy tracks Codex sessions, tool activity, permission requests, completed
 turns, terminal windows, review feedback, and token/context totals from local rollout transcripts.
-The permission and `Stop` decision formats are compatible with the Claude path, so Allow, Deny,
-Looks good, and Send feedback work from the same cards.
+The permission decision format is compatible with the Claude path, so Allow and Deny work from the
+same cards — and reviews behave identically too, since feedback is typed into the terminal for both.
 
 There are three deliberate differences in the current Codex integration:
 
@@ -234,9 +236,10 @@ port first wins.
   what makes one appear.) If answering from Clippy is off — or the question
   arrives malformed — you get a read-only card with the question and a
   **go to terminal ↗** button instead.
-- **Review card**: when Claude finishes, click **Looks good** to let it stop,
-  or type what's missing and **Send feedback** — Claude keeps working with
-  your note, no terminal round-trip.
+- **Review card**: when Claude finishes, the card shows what it just said and
+  waits as long as you like — the chat is already free. **Looks good** puts
+  Clippy away; type what's missing and **Send feedback** and your note is
+  typed into that session's terminal as the next prompt.
 - **Perched on your window**: a buddy pops up on the top-right corner of the
   window its session runs in (its editor or terminal), follows it around, and
   leaves when you've answered. Turn it off under **📎 menu bar → Quick settings →
@@ -467,7 +470,9 @@ and read, and it has five sections:
   configure — click a character here to make it the first choice for projects
   currently on screen, or set that preference per project under **Sessions**.
   There's a link to [openpets.dev/gallery](https://openpets.dev/gallery) for
-  downloading more.
+  more — paste a pet's page link into the **Add a pet** box right there (or into
+  `npm run add-sprite-pack -- <pet url>` in a terminal) and it downloads,
+  installs, and joins the cast on the spot.
 - **Usage & limits** — turns the token panel's spend bars into real allowance
   bars. Pick your plan (**Pro**, **Max 5×**, **Max 20×**) for a rough estimate
   scaled off Anthropic's own 5×/20× steps, or **Custom** to type in your own
@@ -477,16 +482,16 @@ and read, and it has five sections:
   means a ~5M allowance) — type that in under Custom and every bar after that
   is honest instead of a guess. Clippy can't read your plan tier itself —
   Claude Code never persists it anywhere and `/usage` is a live API call that
-  leaves no trace on disk — so until you've set one, a new session or `/clear`
-  nudges you (once a day) to go run `/usage` and come back with the number.
-- **Updates** — which copy you're running (checkout vs packaged app, version,
-  commit), and a button that compares it with the tip of `main` on GitHub. The
-  one deliberate non-localhost request in the app, made only when you press it.
+  leaves no trace on disk — so until you've set one, the bars fall back to
+  plain spend counts.
 - **What Clippy can do** — the full catalogue: what triggers each behaviour,
   which hook it rides on, what you see, and — for anything that answers on your
   behalf — **the exact JSON Claude Code receives** for each button. Those strings
   come from the same `toHookResponse` the app answers with (`src/actions.js`), so
   the page can't drift from the behaviour, and a test asserts it.
+- **Updates** — which copy you're running (checkout vs packaged app, version,
+  commit), and a button that compares it with the tip of `main` on GitHub. The
+  one deliberate non-localhost request in the app, made only when you press it.
 (Clicking a session's name brings its buddy to the front.)
 
 The on/off switches for what Clippy answers aren't in this window at all: they
@@ -542,11 +547,14 @@ sheet, as the ones on [openpets.dev/gallery](https://openpets.dev/gallery) do �
 so there's a script for it:
 
 ```bash
-npm run add-sprite-pack -- ~/Downloads/miso     # a folder from the zip
+npm run add-sprite-pack -- https://openpets.dev/pets/chotu-openpets   # a pet's page link
+npm run add-sprite-pack -- ~/Downloads/miso                           # or a folder from the zip
 npm run add-sprite-pack -- ~/Downloads/fox --walk 1:8 --sleep 5:8 --cheer 2:8
 ```
 
-It reads the sheet's size from the image header, works out the frame size from
+Given a pet's page link (or a direct `.zip` link) it downloads the pack into a
+temp folder first; from there both paths are identical. It reads the sheet's
+size from the image header, works out the frame size from
 `--grid` (default `8x9`), copies the sheet into place and writes the
 `theme.json`. Defaults: `--idle 0:6` and `--excited 3:4`; the other poses take
 `--walk ROW:FRAMES` and friends. Rows differ between packs — the settings window
@@ -565,7 +573,6 @@ default. That's why nothing here is committed for you.
 |---|---|
 | Port (default `43117`) | `CLIPPY_PORT=5005 npm start` and `npm run hooks:install -- --port 5005` |
 | Approval hold time (default 60s) | `CLIPPY_APPROVAL_HOLD_SECS=120 npm start` |
-| Review hold time (default 30s) | `CLIPPY_REVIEW_HOLD_SECS=60 npm start` |
 | Question hold time (default 90s) | `CLIPPY_QUESTION_HOLD_SECS=120 npm start` |
 | Inspect live state | `curl localhost:43117/status` |
 | Open a DevTools inspector per buddy | `CLIPPY_DEVTOOLS=1 npm start` — iterate on the cards/menu/bubble live, no real Claude Code turn needed |

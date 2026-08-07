@@ -224,7 +224,7 @@ button.dim {
   text-overflow: ellipsis;
 }
 
-#who-project,
+#who-name,
 #who-runtime {
   margin-top: 2px;
   color: var(--muted);
@@ -234,14 +234,26 @@ button.dim {
   white-space: normal;
 }
 
-#who-project {
+#who-name {
   margin-top: 1px;
   color: #333333;
 }
 
-#stage:hover #who,
-body:not(.compact) #who {
+#stage:hover #who {
   opacity: 1;
+}
+
+/* The plate is a hover affordance for the compact buddy only, and it names
+   just the project. Once the panel is open, its own header carries the
+   project and model — the plate would double it, so it goes away entirely. */
+body:not(.compact) #who {
+  display: none;
+}
+
+#who-dot,
+#who-name,
+#who-runtime {
+  display: none;
 }
 
 #who-dot {
@@ -1268,19 +1280,6 @@ body.compact #controls {
 
 body.compact #controls button {
   padding: 0 5px;
-}
-
-/* Buttons keep their words at full size and shrink to icons when compact. */
-.narrow {
-  display: none;
-}
-
-body.compact .wide {
-  display: none;
-}
-
-body.compact .narrow {
-  display: inline;
 }
 
 .hidden {

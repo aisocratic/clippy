@@ -111,7 +111,8 @@ app.whenReady().then(async () => {
   await sleep(700);
   await shot('7-approval-card.png');
 
-  // Interactive review card: a held Stop waiting for "looks good" or feedback.
+  // Review card: the turn is over (the Stop hook was answered immediately);
+  // "looks good" puts Clippy away, feedback becomes the next prompt.
   win.webContents.send('clippy-event', {
     kind: 'request-closed',
     requestId: 'demo-req-1',
@@ -126,7 +127,7 @@ app.whenReady().then(async () => {
     message: `Claude finished in “${review.name}”. Looks good, or should it keep going?`,
     counts: tracker.counts(),
     requestId: 'demo-req-2',
-    expiresAt: Date.now() + 30_000,
+    expiresAt: 0, // review cards carry no deadline
   });
   await sleep(700);
   await shot('8-review-card.png');

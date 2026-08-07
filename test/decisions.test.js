@@ -94,12 +94,9 @@ test('PermissionRequest responses match the hook schema', () => {
   assert.deepEqual(toHookResponse('PermissionRequest', 'cancel'), {});
 });
 
-test('Stop responses block only on real feedback', () => {
-  assert.deepEqual(toHookResponse('Stop', 'feedback', 'also add tests'), {
-    decision: 'block',
-    reason: 'also add tests',
-  });
-  assert.deepEqual(toHookResponse('Stop', 'feedback', '   '), {});
+test('Stop is always answered with no opinion — the chat is never held', () => {
+  // Review feedback goes back as a typed prompt, never as a hook decision.
+  assert.deepEqual(toHookResponse('Stop', 'feedback', 'also add tests'), {});
   assert.deepEqual(toHookResponse('Stop', 'ok'), {});
   assert.deepEqual(toHookResponse('Stop', 'timeout'), {});
   assert.deepEqual(toHookResponse('UnknownEvent', 'allow'), {});

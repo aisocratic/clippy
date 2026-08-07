@@ -44,22 +44,24 @@ const QUESTION_TOOL = 'AskUserQuestion';
 // (Pre/PostToolUse, PermissionRequest) `matcher` is a Claude Code tool-name
 // filter only. `mode: 'decide'` marks interactive hooks: their HTTP response
 // body is echoed to stdout, which Claude Code parses as the hook's decision
-// (approve/deny a permission request, or send Claude back to work with review
-// feedback). `reply` keeps a quick response visible too: SessionStart uses it
-// for the one-line buddy identity at the top of the chat. Everything else is
-// fire-and-forget.
+// (approve/deny a permission request, answer a multiple-choice question).
+// Everything else is fire-and-forget. There is deliberately no
+// SessionStart hook: a session announces itself with its first real activity.
+// In the terminal Clippy is only the statusline's small 📎 (see
+// statuslineCommand below), nothing more.
 const SPECS = [
   { event: 'Notification', matcher: 'permission_prompt' },
   { event: 'Notification', matcher: 'idle_prompt' },
   { event: 'PermissionRequest', mode: 'decide' },
   { event: 'PreToolUse', matcher: QUESTION_TOOL, mode: 'decide' },
-  { event: 'Stop', mode: 'decide' },
+  // Stop is deliberately passive: the chat is never held after a turn. The
+  // review card shows anyway — feedback goes back as a typed prompt.
+  { event: 'Stop' },
   { event: 'PreToolUse', matcher: MEANINGFUL_TOOLS },
   { event: 'PostToolUse', matcher: MEANINGFUL_TOOLS },
   // Claude Code reports a failed tool on its own event, not PostToolUse.
   { event: 'PostToolUseFailure', matcher: MEANINGFUL_TOOLS },
   { event: 'UserPromptSubmit' },
-  { event: 'SessionStart', mode: 'reply' },
   { event: 'SessionEnd' },
 ];
 
@@ -73,11 +75,10 @@ const CODEX_MEANINGFUL_TOOLS =
 
 const CODEX_SPECS = [
   { event: 'PermissionRequest', mode: 'decide' },
-  { event: 'Stop', mode: 'decide' },
+  { event: 'Stop' },
   { event: 'PreToolUse', matcher: CODEX_MEANINGFUL_TOOLS },
   { event: 'PostToolUse', matcher: CODEX_MEANINGFUL_TOOLS },
   { event: 'UserPromptSubmit' },
-  { event: 'SessionStart', mode: 'reply' },
   // Codex caps this advisory hook at three seconds.
   { event: 'SessionEnd', timeout: 3 },
 ];
@@ -104,14 +105,6 @@ function hookCommand(spec, port, source = 'claude') {
       `-H 'Content-Type: application/json' ${TERM_HEADERS}--data-binary @- 2>/dev/null || true ${MARKER}`
     );
   }
-  if (spec.mode === 'reply') {
-    // SessionStart's response is a small systemMessage for the terminal UI.
-    // Keep stdout, but retain the same fast, harmless failure as passive hooks.
-    return (
-      `curl -s --connect-timeout 1 -m 2 -X POST '${url}' ` +
-      `-H 'Content-Type: application/json' ${TERM_HEADERS}--data-binary @- 2>/dev/null || true ${MARKER}`
-    );
-  }
   // -m 2: never stall Claude Code; `|| true`: never report an error if the
   // Clippy app isn't running. The trailing marker comment lets us find and
   // remove our own entries later.
@@ -127,8 +120,45 @@ function isOurs(hook) {
     (command.includes(MARKER) || command.includes(LEGACY_MARKER));
 }
 
+/**
+ * Claude Code's statusline: the one line rendered under the input box. Ours is
+ * deliberately tiny — a 📎 tucked against the right edge, and nothing else.
+ * The command ships the session JSON to the app whole, plus the terminal's
+ * width (read from the controlling tty; 0 when unknowable) so the app can pad
+ * the clip to the right edge. The response is the finished ANSI line, with an
+ * OSC 8 hyperlink that opens this session's buddy. App not running -> empty
+ * stdout -> Claude Code shows nothing; -f also swallows HTTP errors so an
+ * older app's 404 never lands under the input box.
+ */
+function statuslineCommand(port) {
+  return (
+    `cols=$(stty size </dev/tty 2>/dev/null | awk '{print $2}'); ` +
+    `curl -sf --connect-timeout 1 -m 2 -X POST "http://127.0.0.1:${port}/statusline?cols=\${cols:-0}" ` +
+    `-H 'Content-Type: application/json' --data-binary @- 2>/dev/null || true ${MARKER}`
+  );
+}
+
+/**
+ * Builds up to 2026-08 also installed a /clippy slash command at this path;
+ * uninstall (and every re-install) clears it if the marker says it's ours.
+ */
+function commandPath() {
+  return path.join(os.homedir(), '.claude', 'commands', 'clippy.md');
+}
+
+function removeCommandFile(file = commandPath()) {
+  try {
+    if (fs.readFileSync(file, 'utf8').includes(MARKER)) fs.unlinkSync(file);
+  } catch {
+    // already absent, or unreadable — either way not ours to delete
+  }
+}
+
 /** Remove all clippy hooks from a settings object (mutates + returns it). */
 function uninstallHooks(settings) {
+  // A statusline we claimed goes back to being free; one the user wrote
+  // themselves is never touched.
+  if (isOurs(settings.statusLine)) delete settings.statusLine;
   if (!settings.hooks) return settings;
   for (const event of Object.keys(settings.hooks)) {
     const groups = settings.hooks[event];
@@ -168,7 +198,14 @@ function installHooksFor(settings, port, specs, source) {
 
 /** Add Claude Code hooks to ~/.claude/settings.json. */
 function installHooks(settings, port = DEFAULT_PORT) {
-  return installHooksFor(settings, port, SPECS, 'claude');
+  installHooksFor(settings, port, SPECS, 'claude');
+  // Claude Code renders exactly one statusline, so a user's own stays theirs:
+  // we only claim the slot when it's empty (uninstallHooks above already
+  // cleared a previous install of ours).
+  if (!settings.statusLine) {
+    settings.statusLine = { type: 'command', command: statuslineCommand(port) };
+  }
+  return settings;
 }
 
 /** Add Codex hooks to ~/.codex/hooks.json. */
@@ -194,7 +231,7 @@ function listInstalled(settings) {
  * an explicit `hooks:install`, so upgrading Clippy otherwise leaves new events
  * (a newly answerable question, tool failures) silently unsubscribed.
  *
- * @returns {{installed: boolean, missing: string[], wrongPort: boolean, noTerminalInfo: boolean}}
+ * @returns {{installed: boolean, missing: string[], stale: boolean, wrongPort: boolean, noTerminalInfo: boolean}}
  */
 function checkDriftFor(settings, port, specs) {
   const installed = [];
@@ -208,22 +245,24 @@ function checkDriftFor(settings, port, specs) {
     }
   }
   if (installed.length === 0) {
-    return { installed: false, missing: [], wrongPort: false, noTerminalInfo: false };
+    return { installed: false, missing: [], stale: false, wrongPort: false, noTerminalInfo: false };
   }
 
-  const missing = specs.filter((spec) => {
-    const found = installed.find(
-      (h) => h.event === spec.event && h.matcher === (spec.matcher || '')
-    );
-    if (!found) return true;
-    // A pre-banner SessionStart hook discards the response body, so it has the
-    // right event name but cannot show which buddy owns the chat.
-    return spec.mode === 'reply' && found.command.includes('>/dev/null 2>&1');
-  }).map((spec) => `${spec.event}${spec.matcher ? ` (${spec.matcher})` : ''}`);
+  const missing = specs
+    .filter(
+      (spec) =>
+        !installed.find((h) => h.event === spec.event && h.matcher === (spec.matcher || ''))
+    )
+    .map((spec) => `${spec.event}${spec.matcher ? ` (${spec.matcher})` : ''}`);
 
   return {
     installed: true,
     missing,
+    // Hooks this build no longer subscribes to (SessionStart, say) keep firing
+    // from an old install until a re-install clears them.
+    stale: installed.some(
+      (h) => !specs.find((spec) => spec.event === h.event && (spec.matcher || '') === h.matcher)
+    ),
     wrongPort: installed.some((h) => !h.command.includes(`127.0.0.1:${port}/`)),
     // Older installs don't report which terminal they ran in, so "open the
     // session's window" has nothing to aim at.
@@ -232,7 +271,20 @@ function checkDriftFor(settings, port, specs) {
 }
 
 function checkDrift(settings, port = DEFAULT_PORT) {
-  return checkDriftFor(settings, port, SPECS);
+  const drift = checkDriftFor(settings, port, SPECS);
+  if (!drift.installed) return drift;
+  // No statusline at all means an install older than this build; one the user
+  // wrote themselves is respected, so it never counts as drift.
+  if (!settings.statusLine) {
+    drift.missing.push('statusLine (the 📎 under the input box)');
+  } else if (isOurs(settings.statusLine)) {
+    const command = String(settings.statusLine.command);
+    if (!command.includes(`127.0.0.1:${port}/`)) drift.wrongPort = true;
+    // Builds before this one put the buddy's whole name there; those commands
+    // never probed the terminal width, which is how we can tell them apart.
+    if (!command.includes('cols=')) drift.stale = true;
+  }
+  return drift;
 }
 
 function checkCodexDrift(settings, port = DEFAULT_PORT) {
@@ -251,13 +303,20 @@ function settingsPathFor(agent) {
  * longer parses) is reported rather than thrown, so one broken config doesn't
  * stop the other agent's install — and the broken file is left untouched.
  */
-function installToFiles({ port = DEFAULT_PORT, agents = ['claude', 'codex'], pathFor = settingsPathFor } = {}) {
+function installToFiles({
+  port = DEFAULT_PORT,
+  agents = ['claude', 'codex'],
+  pathFor = settingsPathFor,
+  commandFile = commandPath(),
+} = {}) {
   return agents.map((agent) => {
     const settingsPath = pathFor(agent);
     try {
       const settings = readSettings(settingsPath);
       (agent === 'codex' ? installCodexHooks : installHooks)(settings, port);
       writeSettings(settingsPath, settings);
+      // Clear the /clippy command earlier builds installed alongside the hooks.
+      if (agent === 'claude') removeCommandFile(commandFile);
       return { agent, settingsPath, ok: true };
     } catch (err) {
       return { agent, settingsPath, ok: false, error: err.message };
@@ -333,12 +392,16 @@ function main() {
       target.install(settings, args.port);
       writeSettings(target.settingsPath, settings);
       console.log(`Installed Clippy ${target.agent} hooks into ${target.settingsPath}`);
+      // --settings redirects everything into one file for tests; only a real
+      // install touches the retired command file.
+      if (target.agent === 'claude' && !args.settings) removeCommandFile();
       continue;
     }
     if (args.cmd === 'uninstall') {
       uninstallHooks(settings);
       writeSettings(target.settingsPath, settings);
       console.log(`Removed Clippy hooks from ${target.settingsPath}`);
+      if (target.agent === 'claude' && !args.settings) removeCommandFile();
       continue;
     }
 
@@ -350,9 +413,10 @@ function main() {
     console.log(`Clippy ${target.agent} hooks in ${target.settingsPath}:`);
     for (const f of found) console.log(`  - ${f.event}${f.matcher ? ` (${f.matcher})` : ''}`);
     const drift = target.drift(settings, args.port);
-    if (drift.missing.length || drift.wrongPort || drift.noTerminalInfo) {
+    if (drift.missing.length || drift.stale || drift.wrongPort || drift.noTerminalInfo) {
       console.log('⚠ These hooks are out of date — re-run `npm run hooks:install`:');
       for (const m of drift.missing) console.log(`  - missing: ${m}`);
+      if (drift.stale) console.log('  - leftovers from an older build (they go away on re-install)');
       if (drift.wrongPort) console.log(`  - some hooks don't point at port ${args.port}`);
       if (drift.noTerminalInfo) console.log("  - they don't report the session's terminal window");
     }
@@ -376,6 +440,9 @@ module.exports = {
   checkDrift,
   checkCodexDrift,
   hookCommand,
+  statuslineCommand,
+  commandPath,
+  removeCommandFile,
   SPECS,
   CODEX_SPECS,
   MARKER,

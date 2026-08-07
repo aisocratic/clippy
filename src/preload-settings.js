@@ -18,6 +18,8 @@ contextBridge.exposeInMainWorld('clippySettings', {
   fix: (what) => ipcRenderer.send('clippy-settings-fix', what),
   // Compare this build with the tip of main on GitHub.
   checkUpdates: () => ipcRenderer.invoke('clippy-settings-check-updates'),
+  // Paste a pet's page link and main downloads and installs the pack.
+  installPet: (url) => ipcRenderer.invoke('clippy-settings-install-pet', url),
   // Links open in the user's browser, never inside this window.
   openExternal: (url) => ipcRenderer.send('clippy-open-external', url),
 });

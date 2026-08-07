@@ -99,11 +99,14 @@
       <button id="menu-hide" class="menu-item dim"><span class="mi">×</span>Hide Clippy</button>
     </div>
 
+    <!-- Hovering the compact buddy names just the project; the open panel's
+         own header shows project + model, so this plate hides entirely then.
+         The name/runtime/dot spans stay populated for the tooltip. -->
     <div id="who" title="Which coding-agent session this buddy is watching">
       <span id="who-dot"></span>
       <span id="who-copy">
-        <span id="who-name">…</span>
         <span id="who-project">…</span>
+        <span id="who-name">…</span>
         <span id="who-runtime">…</span>
       </span>
     </div>
@@ -131,11 +134,7 @@
     <div id="activity" class="hidden"></div>
     <div id="statusline">waiting for sessions…</div>
     <div id="controls">
-      <button id="btn-open" class="hidden"
-              title="Open this session's terminal window — brings it to the front and perches Clippy on it"><span
-              class="wide">open session </span>↗</button>
-      <button id="btn-hide" title="Hide (Clippy keeps running in the menu bar)"><span
-              class="wide">hide</span><span class="narrow">×</span></button>
+      <button id="btn-hide" title="Hide (Clippy keeps running in the menu bar)">×</button>
     </div>
   </div>
   <script src="vector-buddies.js"></script>

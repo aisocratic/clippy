@@ -1,10 +1,14 @@
 'use strict';
 
 /**
- * Install a downloaded sprite pack as a Clippy character.
+ * Install a sprite pack as a Clippy character.
  *
+ *   node scripts/add-sprite-pack.js https://openpets.dev/pets/chotu-openpets
  *   node scripts/add-sprite-pack.js sprites/miso
  *   node scripts/add-sprite-pack.js sprites/fox --label "🦊 Fox" --excited 3:4
+ *
+ * Given a pet's page link from openpets.dev (or a direct .zip link), the pack
+ * is downloaded into a temp folder first; from there both paths are the same.
  *
  * A pack is a folder holding a sprite sheet and, optionally, a `pet.json`
  * (`{ id, displayName, spritesheetPath }`) — the shape desktop-pet packs tend
@@ -33,8 +37,14 @@
  */
 
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 const { THEMES_DIR, POSES } = require('../src/characters');
+
+// installId + zipPath for every pet in the gallery — the same file the site's
+// own install flow reads.
+const OPENPETS_INSTALL = 'https://openpets.dev/pets/install.json';
 
 const args = process.argv.slice(2);
 const flag = (name, fallback) => {
@@ -81,15 +91,46 @@ function imageSize(file) {
   throw new Error(`${path.basename(file)}: only PNG and WebP sheets are understood`);
 }
 
-function main() {
-  const src = args[0];
-  if (!src || src.startsWith('--')) {
-    console.error('usage: node scripts/add-sprite-pack.js <pack-folder> [flags]');
-    process.exit(1);
+async function download(url, file) {
+  const res = await fetch(url, { redirect: 'follow' });
+  if (!res.ok) throw new Error(`${url}: HTTP ${res.status}`);
+  fs.writeFileSync(file, Buffer.from(await res.arrayBuffer()));
+}
+
+/** A pasted pet-page link (or a direct .zip link) -> a local pack folder. */
+async function fetchPack(url) {
+  let zip = url;
+  if (!/\.zip$/i.test(new URL(url).pathname)) {
+    // A gallery page: openpets.dev/pets/<slug>, maybe behind a locale prefix.
+    const slug = new URL(url).pathname.match(/\/pets\/([^/]+?)\/?$/)?.[1];
+    if (!slug) throw new Error(`${url} doesn't look like a pet page or a .zip`);
+    const { pets } = await (await fetch(OPENPETS_INSTALL)).json();
+    const entry = pets.find(
+      (p) => p.installId === slug || (p.zipPath || '').includes(`/pets/${slug}/`)
+    );
+    if (!entry) throw new Error(`no pet called “${slug}” in the openpets gallery`);
+    zip = entry.zipPath;
   }
 
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clippy-pack-'));
+  const file = path.join(dir, 'pack.zip');
+  await download(zip, file);
+  const out = spawnSync('unzip', ['-o', '-q', '-d', dir, file]);
+  if (out.status !== 0) {
+    throw new Error(`could not unzip ${zip}: ${out.stderr || out.error?.message || ''}`);
+  }
+  fs.rmSync(file);
+  return dir;
+}
+
+/**
+ * The whole install, callable from anywhere (the CLI below, the settings
+ * window's "add a pet" box). `src` is a folder, a pet-page link, or a .zip
+ * link; `opts` carries the same values the CLI flags do, keyed by flag name.
+ */
+async function installPack(src, opts = {}) {
   // Packs zip up either flat or inside a folder of their own name.
-  let dir = path.resolve(src);
+  let dir = /^https?:\/\//i.test(src) ? await fetchPack(src) : path.resolve(src);
   if (!fs.existsSync(path.join(dir, 'pet.json'))) {
     const nested = fs
       .readdirSync(dir, { withFileTypes: true })
@@ -113,8 +154,9 @@ function main() {
   const sheetFile = path.join(dir, sheetName);
   if (!sheetName || !fs.existsSync(sheetFile)) throw new Error(`no sprite sheet in ${dir}`);
 
-  const id = flag('id', meta.id || path.basename(dir));
-  const [columns, rows] = flag('grid', '8x9').split('x').map(Number);
+  // The id becomes a folder name, and a downloaded pet.json is remote input.
+  const id = String(opts.id || meta.id || path.basename(dir)).replace(/[^\w.-]/g, '-');
+  const [columns, rows] = String(opts.grid || '8x9').split('x').map(Number);
   if (!(columns > 0) || !(rows > 0)) throw new Error('--grid wants COLUMNSxROWS, e.g. 8x9');
 
   const { width, height } = imageSize(sheetFile);
@@ -127,17 +169,17 @@ function main() {
 
   const poses = {};
   for (const name of POSES) {
-    const spec = flag(name, name === 'idle' ? '0:6' : name === 'excited' ? '3:4' : null);
+    const spec = opts[name] || (name === 'idle' ? '0:6' : name === 'excited' ? '3:4' : null);
     if (spec) poses[name] = { file: sheetName, ...pose(spec, name) };
   }
 
   const theme = {
-    label: flag('label', meta.displayName || id),
+    label: opts.label || meta.displayName || id,
     frameWidth: Math.floor(width / columns),
     frameHeight: Math.floor(height / rows),
     columns,
     rows,
-    fps: Number(flag('fps', 6)),
+    fps: Number(opts.fps || 6),
     poses,
   };
 
@@ -145,6 +187,24 @@ function main() {
   fs.mkdirSync(out, { recursive: true });
   fs.copyFileSync(sheetFile, path.join(out, sheetName));
   fs.writeFileSync(path.join(out, 'theme.json'), `${JSON.stringify(theme, null, 2)}\n`);
+
+  return { id, theme, out, width, height };
+}
+
+async function main() {
+  const src = args[0];
+  if (!src || src.startsWith('--')) {
+    console.error('usage: node scripts/add-sprite-pack.js <pet-url | pack-folder> [flags]');
+    process.exit(1);
+  }
+
+  const opts = {};
+  for (const name of ['id', 'label', 'grid', 'fps', ...POSES]) {
+    const value = flag(name);
+    if (value != null) opts[name] = value;
+  }
+
+  const { id, theme, out, width, height } = await installPack(src, opts);
 
   console.log(`installed “${theme.label}” as ${id}`);
   console.log(`  ${width}x${height} sheet -> ${theme.frameWidth}x${theme.frameHeight} frames`);
@@ -155,6 +215,11 @@ function main() {
   console.log('Restart the app (or reload the test bench) to pick it up.');
 }
 
-if (require.main === module) main();
+if (require.main === module) {
+  main().catch((err) => {
+    console.error(err.message);
+    process.exit(1);
+  });
+}
 
-module.exports = { imageSize };
+module.exports = { imageSize, installPack };

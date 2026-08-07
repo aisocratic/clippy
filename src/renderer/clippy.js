@@ -42,6 +42,7 @@ const cardDetail = document.getElementById('card-detail');
 const cardOptions = document.getElementById('card-options');
 const cardInput = document.getElementById('card-input');
 const countdownFill = document.getElementById('card-countdown-fill');
+const countdownBar = document.getElementById('card-countdown');
 const btnAllow = document.getElementById('btn-allow');
 const btnDeny = document.getElementById('btn-deny');
 const btnPass = document.getElementById('btn-pass');
@@ -58,7 +59,6 @@ const driveActivity = document.getElementById('drive-activity');
 const driveInput = document.getElementById('drive-input');
 const buddyEl = document.getElementById('buddy');
 
-const btnOpen = document.getElementById('btn-open');
 const usageEl = document.getElementById('usage');
 const usageName = document.getElementById('usage-name');
 const usageModel = document.getElementById('usage-model');
@@ -445,7 +445,6 @@ function render() {
   whoEl.classList.toggle('busy', myStatus === 'working');
 
   // Every route to the terminal window needs to know we can find it.
-  btnOpen.classList.toggle('hidden', !canOpen);
   btnGoto.classList.toggle('hidden', !canOpen);
   btnQgoto.classList.toggle('hidden', !canOpen);
 
@@ -1033,7 +1032,8 @@ setInterval(() => {
   const now = Date.now();
   let dropped = false;
   for (const [id, req] of requests) {
-    if (now - req.expiresAt > GHOST_GRACE_MS) {
+    // Deadline-less cards (reviews) sit for as long as the user does.
+    if (req.expiresAt && now - req.expiresAt > GHOST_GRACE_MS) {
       requests.delete(id);
       dropped = true;
     }
@@ -1046,6 +1046,8 @@ setInterval(() => {
   if (!activeRequestId) return;
   const req = requests.get(activeRequestId);
   if (!req) return;
+  countdownBar.classList.toggle('hidden', !req.expiresAt);
+  if (!req.expiresAt) return;
   const left = Math.max(0, req.expiresAt - now);
   countdownFill.style.width = `${Math.min(100, (left / req.holdMs) * 100)}%`;
 }, 200);
@@ -1081,6 +1083,8 @@ function handleEvent(evt) {
   switch (evt.kind) {
     case 'approval':
     case 'review': {
+      // A review card carries no deadline (expiresAt 0): the hook was already
+      // answered, so the card can wait for as long as the user does.
       requests.set(evt.requestId, {
         id: evt.requestId,
         type: evt.kind,
@@ -1089,8 +1093,8 @@ function handleEvent(evt) {
         name: evt.name,
         title: evt.kind === 'approval' ? evt.title : evt.message,
         detail: evt.detail || '',
-        expiresAt: evt.expiresAt,
-        holdMs: Math.max(1, evt.expiresAt - Date.now()),
+        expiresAt: evt.expiresAt || 0,
+        holdMs: evt.expiresAt ? Math.max(1, evt.expiresAt - Date.now()) : 1,
       });
       if (!activeRequestId) showNextRequest();
       else showQueueDepth(); // another one queued behind the open card
@@ -1396,10 +1400,8 @@ document.getElementById('btn-hide').addEventListener('click', () => {
   window.clippyAPI.hide();
 });
 
-// Raise this session's terminal window; Clippy rides along on its top-right
-// corner until you hide it or send it back to its own corner.
-btnOpen.addEventListener('click', () => window.clippyAPI.openWindow());
-// Same thing from a card: "this needs you — take me to that terminal".
+// Raise this session's terminal window from a card: "this needs you — take me
+// to that terminal". Clippy rides along on its top-right corner.
 btnGoto.addEventListener('click', () => window.clippyAPI.openWindow());
 
 document.getElementById('btn-usage-close').addEventListener('click', hideUsage);
