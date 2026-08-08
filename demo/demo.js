@@ -428,7 +428,14 @@ function reloadFrame() {
   openRequests.clear();
   const name = document.getElementById('opt-name').value.trim() || 'session';
   const color = document.getElementById('opt-color').value;
-  const params = new URLSearchParams({ session: 'demo-session', name, color });
+  // A path, not just a name: the plate shows the folder and the one above it,
+  // and a bench that only passed a basename would never exercise that.
+  const params = new URLSearchParams({
+    session: 'demo-session',
+    name,
+    color,
+    cwd: `/Users/you/projects/${name}`,
+  });
   frame.style.width = `${FULL_W}px`;
   frame.style.height = `${FALLBACK_H}px`;
   frame.src = `/renderer/?${params}`;
