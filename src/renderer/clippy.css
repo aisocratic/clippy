@@ -182,12 +182,12 @@ button.dim {
 
 /* ---------- The RPG name plate ---------- */
 
-/* The buddy's party-member plate, under its feet. No card, no border: the
-   name is bare text, and a drop shadow does the work a background used to —
-   it has to stay readable over whatever wallpaper the buddy is standing on,
-   pale or dark. Compact + hover: the pet's name and its project. Any panel
-   open: the name, the small print of which quest this is (project · model),
-   and the energy bar. Reserves its space always so hovering never resizes the
+/* The buddy's party-member plate, under its feet: its name over the folder it
+   is watching. No card, no border — bare text, and a drop shadow does the work
+   a background used to, since it has to stay readable over whatever wallpaper
+   the buddy is standing on, pale or dark. Shown while the pointer is over the
+   buddy, or for as long as a panel is open; a buddy nobody is looking at is
+   just the sprite. Reserves its space always, so appearing never resizes the
    window. */
 #who {
   display: flex;
@@ -207,6 +207,13 @@ button.dim {
     0 1px 2px rgba(0, 0, 0, 0.9),
     0 0 6px rgba(0, 0, 0, 0.55);
   -webkit-app-region: drag; /* the name plate is a drag handle too */
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+#stage:hover #who,
+body:not(.compact) #who {
+  opacity: 1;
 }
 
 #who-pet,
@@ -1202,9 +1209,9 @@ body.docked #stage {
 
 /* Compact: the buddy and nothing else — the default until there's something to
    read. He stays exactly the same size; only the panels around him go. The
-   name plate is NOT in this list: the name stays on under the buddy's feet so
-   a bare buddy still tells you who it is — the compact window heights in
-   src/characters.js reserve the room for it. */
+   name plate is NOT in this list: it stays rendered (opacity 0, revealed on
+   hover) so a bare buddy can still tell you who it is the moment you look at
+   it — the compact window heights in src/characters.js reserve the room. */
 body.compact #activity,
 body.compact #statusline,
 body.compact #bubble,

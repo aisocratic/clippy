@@ -208,8 +208,9 @@ function applyIdentity() {
   const buddyName = character?.label || 'Buddy';
   const harness = HARNESS_NAMES[me.agent] || HARNESS_NAMES.claude;
   const model = shortModel(me.model);
-  // The pet's own name leads, the folder it is watching sits under it. Both
-  // stay put — there is nothing here that waits for a hover or a click.
+  // The pet's own name leads, the folder it is watching sits under it. The
+  // pair appears together, while you are looking at the buddy or reading a
+  // panel it opened.
   whoPet.textContent = me.pet;
   whoSub.textContent = projectPath();
   whoEl.title = `${me.pet} the ${buddyName}, on “${me.name}” — running ${harness} with ${model}`;
@@ -1481,7 +1482,15 @@ function primaryAction() {
     nudge(next);
     return;
   }
-  showUsage();
+  // A panel that stepped aside when you left comes back the way you left it —
+  // on this click, never on a hover. Reopening it under a passing pointer
+  // resizes the window out from under the cursor, and that resize fires the
+  // very enter/leave pair that would park and unpark it again, and again.
+  clearTimeout(parkTimer);
+  parkTimer = null;
+  const restore = parkedPanel === 'usage';
+  parkedPanel = null;
+  showUsage(restore ? { restore: true } : undefined);
 }
 
 /* ---------- Dragging the buddy, by hand ----------
@@ -1565,8 +1574,10 @@ document.addEventListener('click', (e) => {
 // happens here at all. Losing focus is the one signal that covers that case.
 /* ---------- Parking: the panel steps aside when you do ----------
    Move the mouse away (or click into another window) and whatever's open over
-   the buddy's head — the info panel or the menu — hides; come back and it
-   returns as it was. Held cards are exempt: they're waiting on a decision and
+   the buddy's head — the info panel or the menu — hides. Clicking the buddy
+   brings it back as it was; hovering deliberately does not, because opening a
+   panel resizes the window under the pointer and the resize fires its own
+   enter/leave events. Held cards are exempt: they're waiting on a decision and
    have countdowns, so they stay put no matter where the mouse goes. */
 let parkedPanel = null; // 'usage' | 'menu' — what to bring back on re-enter
 let parkTimer = null;
@@ -1585,25 +1596,13 @@ function parkPanels() {
   }
 }
 
-function unparkPanels() {
-  clearTimeout(parkTimer);
-  parkTimer = null;
-  if (!parkedPanel) return;
-  const which = parkedPanel;
-  parkedPanel = null;
-  // Something louder took the stage while we were away — let it keep it.
-  if (activeRequestId) return;
-  if (!bubbleEl.classList.contains('hidden') || !qcardEl.classList.contains('hidden')) return;
-  if (which === 'usage') showUsage({ restore: true }); // as you left it
-  else openMenu();
-}
-
-// A short fuse on leave, so skimming the window's edge doesn't flicker.
+// A short fuse on leave, so skimming the window's edge doesn't flicker. There
+// is no matching handler on enter: see primaryAction, which is where a parked
+// panel comes back.
 document.documentElement.addEventListener('mouseleave', () => {
   clearTimeout(parkTimer);
   parkTimer = setTimeout(parkPanels, 250);
 });
-document.documentElement.addEventListener('mouseenter', unparkPanels);
 window.addEventListener('blur', parkPanels);
 
 document.addEventListener('keydown', (e) => {
