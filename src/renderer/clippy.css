@@ -110,7 +110,7 @@ body {
 
 /* Whose session the menu belongs to is carried by a dot in the session's own
    colour — the one place left that names the session inside a panel, since
-   every other one now leans on the name plate above the buddy instead. */
+   every other one now leans on the name plate under the buddy instead. */
 #menu-name::before {
   content: '';
   display: inline-block;
@@ -182,10 +182,12 @@ button.dim {
 
 /* ---------- The RPG name plate ---------- */
 
-/* The buddy's party-member plate. Compact + hover: one line naming the
-   project. Any panel open: the full plate — energy bar (context left in this
-   session) on top, the pet's name, and the small print of which quest this is
-   (project · model). Reserves its space always so hovering never resizes the
+/* The buddy's party-member plate, under its feet. No card, no border: the
+   name is bare text, and a drop shadow does the work a background used to —
+   it has to stay readable over whatever wallpaper the buddy is standing on,
+   pale or dark. Compact + hover: the pet's name and its project. Any panel
+   open: the name, the small print of which quest this is (project · model),
+   and the energy bar. Reserves its space always so hovering never resizes the
    window. */
 #who {
   display: flex;
@@ -193,20 +195,18 @@ button.dim {
   align-items: center;
   min-width: 132px;
   max-width: 100%;
-  margin-bottom: 8px;
-  padding: 4px 12px 5px;
-  border-radius: 10px;
-  background: rgba(244, 244, 240, 0.95);
-  border: 1px solid var(--clip);
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.25);
-  color: #111111;
+  margin-top: 4px;
+  color: #ffffff;
   font-family: var(--sans);
   font-size: 14px;
   font-weight: 700;
   letter-spacing: -0.1px;
+  /* Two shadows, not one: the tight dark pass draws an edge so the glyphs
+     survive a light background, the soft one lifts them off a busy photo. */
+  text-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.9),
+    0 0 6px rgba(0, 0, 0, 0.55);
   -webkit-app-region: drag; /* the name plate is a drag handle too */
-  opacity: 0;
-  transition: opacity 0.15s ease;
 }
 
 #who-project,
@@ -228,20 +228,23 @@ button.dim {
   font-size: 9.5px;
   font-weight: 600;
   letter-spacing: 0;
-  color: var(--muted);
+  color: rgba(255, 255, 255, 0.82);
   margin-top: 1px;
 }
 
 /* The energy bar: tokens left in this session's context, drained like HP.
-   Chunky, segmented, and colour-coded — full is calm, low is trouble. */
+   Chunky, segmented, and colour-coded — full is calm, low is trouble. Now the
+   bottom of the plate, and the only part still drawn as a solid object, so it
+   carries its own shadow instead of borrowing the card's. */
 #who-bar {
   position: relative;
   width: 100%;
   height: 10px;
-  margin: 1px 0 4px;
+  margin: 3px 0 0;
   border-radius: 5px;
-  border: 1px solid rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(0, 0, 0, 0.35);
   background: var(--surface-2);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
   overflow: hidden;
 }
 
@@ -291,15 +294,23 @@ button.dim {
   text-shadow: 0 1px 0 rgba(255, 255, 255, 0.5);
 }
 
-#stage:hover #who,
-body:not(.compact) #who {
+/* The name itself never hides — it is the buddy's label, and bare shadowed
+   text is light enough to leave on the desktop. The project line is the part
+   that waits for a hover, so a resting buddy reads as a name and nothing more. */
+#who-project {
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+#stage:hover #who-project {
   opacity: 1;
 }
 
-/* Compact (hover) shows only the project line; the full plate belongs to an
-   open panel, where the project moves into the small print under the name. */
+/* The name is always the plate; what joins it depends. Compact (hover) adds
+   the project on its own line. The energy bar is deliberately not in that
+   set — it only appears once a panel is open, which is to say once you have
+   clicked the buddy and asked. */
 body.compact #who-bar,
-body.compact #who-pet,
 body.compact #who-sub,
 body:not(.compact) #who-project {
   display: none;
@@ -1273,9 +1284,9 @@ body.docked #stage {
 
 /* Compact: the buddy and nothing else — the default until there's something to
    read. He stays exactly the same size; only the panels around him go. The
-   name plate is NOT in this list: it stays rendered (opacity 0, revealed on
-   hover) so a bare buddy can still tell you who it is — the compact window
-   heights in src/characters.js reserve the room for it. */
+   name plate is NOT in this list: the name stays on under the buddy's feet so
+   a bare buddy still tells you who it is — the compact window heights in
+   src/characters.js reserve the room for it. */
 body.compact #activity,
 body.compact #statusline,
 body.compact #bubble,

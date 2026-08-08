@@ -199,8 +199,8 @@ function applyIdentity() {
   const buddyName = character?.label || 'Buddy';
   const harness = HARNESS_NAMES[me.agent] || HARNESS_NAMES.claude;
   const model = shortModel(me.model);
-  // Hover names the project; the full plate leads with the pet's own name and
-  // keeps the quest details (project · model) as small print under it.
+  // The pet's own name always leads. Hover adds the project on its own line;
+  // an open panel swaps that for the quest details (project · model) instead.
   whoProject.textContent = me.name;
   whoPet.textContent = me.pet;
   whoSub.textContent = model ? `${me.name} · ${model}` : me.name;
