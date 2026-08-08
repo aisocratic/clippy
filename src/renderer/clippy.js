@@ -208,11 +208,12 @@ function applyIdentity() {
   const buddyName = character?.label || 'Buddy';
   const harness = HARNESS_NAMES[me.agent] || HARNESS_NAMES.claude;
   const model = shortModel(me.model);
-  // The pet's own name leads, the folder it is watching sits under it. The
-  // pair appears together, while you are looking at the buddy or reading a
-  // panel it opened.
+  // The pet's own name leads; under it, the folder and the model spending in
+  // it. The model goes on in full — `gpt-5.6-sol`, not the `claude-` stripped
+  // label the panels use — because on the plate it is the only thing that says
+  // which model this session is actually costing you.
   whoPet.textContent = me.pet;
-  whoSub.textContent = projectPath();
+  whoSub.textContent = me.model ? `${projectPath()} · ${me.model}` : projectPath();
   whoEl.title = `${me.pet} the ${buddyName}, on “${me.name}” — running ${harness} with ${model}`;
 }
 
