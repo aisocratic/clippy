@@ -27,6 +27,7 @@ const me = {
   color: params.get('color') || '#9aa3ad',
   agent: HARNESS_NAMES[params.get('agent')] ? params.get('agent') : 'claude',
   pet: params.get('pet') || 'Buddy', // the RPG party-member name main dealt us
+  cwd: params.get('cwd') || '', // the folder this session is working in
   model: '',
 };
 
@@ -94,11 +95,8 @@ const pointerEl = document.getElementById('pointer');
 let walkTimer = null;
 
 const whoEl = document.getElementById('who');
-const whoProject = document.getElementById('who-project');
 const whoPet = document.getElementById('who-pet');
 const whoSub = document.getElementById('who-sub');
-const whoBarFill = document.getElementById('who-bar-fill');
-const whoBarLabel = document.getElementById('who-bar-label');
 const activityEl = document.getElementById('activity');
 const qcardEl = document.getElementById('qcard');
 const qcardTitle = document.getElementById('qcard-title');
@@ -194,36 +192,27 @@ function syncMode() {
 
 /* ---------- UI helpers ---------- */
 
+/**
+ * The folder this session is in, with the one above it: `aisocratic/clippy`.
+ * A bare basename is ambiguous the moment two checkouts are called `web` or
+ * `api`, and the parent is the cheapest thing that tells them apart. Falls
+ * back to the plain name when main has not told us the path yet.
+ */
+function projectPath() {
+  const parts = me.cwd.split('/').filter(Boolean);
+  return parts.length > 1 ? parts.slice(-2).join('/') : parts[0] || me.name;
+}
+
 function applyIdentity() {
   const character = settings.characters.find((candidate) => candidate.id === settings.character);
   const buddyName = character?.label || 'Buddy';
   const harness = HARNESS_NAMES[me.agent] || HARNESS_NAMES.claude;
   const model = shortModel(me.model);
-  // The pet's own name always leads. Hover adds the project on its own line;
-  // an open panel swaps that for the quest details (project · model) instead.
-  whoProject.textContent = me.name;
+  // The pet's own name leads, the folder it is watching sits under it. Both
+  // stay put — there is nothing here that waits for a hover or a click.
   whoPet.textContent = me.pet;
-  whoSub.textContent = model ? `${me.name} · ${model}` : me.name;
+  whoSub.textContent = projectPath();
   whoEl.title = `${me.pet} the ${buddyName}, on “${me.name}” — running ${harness} with ${model}`;
-}
-
-/**
- * The plate's energy bar: how much of this session's context is LEFT, drained
- * like HP. Fed by the context poll and by the usage panel's own reads.
- */
-function updateEnergy(session) {
-  if (session && session.turns > 0 && session.contextLimit > 0) {
-    const left = Math.max(0, session.contextLimit - session.context);
-    const frac = Math.max(0, Math.min(1, left / session.contextLimit));
-    whoBarFill.className = frac < 0.15 ? 'hot' : frac < 0.4 ? 'warn' : '';
-    whoBarFill.style.width = `${Math.max(2, Math.round(frac * 100))}%`;
-    whoBarLabel.textContent = `${fmtTokens(left)} left`;
-  } else {
-    // No transcript yet: a full but visibly "uncharged" bar, not a fake 100%.
-    whoBarFill.className = 'unknown';
-    whoBarFill.style.width = '100%';
-    whoBarLabel.textContent = '';
-  }
 }
 
 // Hook payloads identify the harness, while its transcript is the reliable
@@ -250,6 +239,7 @@ async function refreshIdentity({ force = false } = {}) {
   if (!identity) return;
   if (identity.name) me.name = identity.name;
   if (identity.agent) me.agent = identity.agent;
+  if (identity.cwd) me.cwd = identity.cwd; // a session can be told its path late
   me.model = identity.model || '';
   applyIdentity();
 }
@@ -752,7 +742,6 @@ async function showUsage({ restore = false } = {}) {
   applyUsageExpansion();
 
   latestRecap = data.recap || '';
-  updateEnergy(session); // the plate's bar rides on the freshest read we have
   if (session?.model && session.model !== me.model) {
     me.model = session.model;
     applyIdentity();
@@ -1329,7 +1318,6 @@ async function checkContext() {
     contextCheckInFlight = false;
   }
   const session = data && data.session;
-  updateEnergy(session);
   const tight = Boolean(
     session && session.turns > 0 && session.context / session.contextLimit > CONTEXT_STRESS
   );
