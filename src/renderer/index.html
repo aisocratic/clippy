@@ -58,7 +58,7 @@
          context is. Expand grows the same window into the fuller panel (the
          allowance bars, the plan note, and a box to keep talking to it). -->
     <div id="usage" class="hidden collapsed">
-      <!-- No name row here: the RPG plate above the buddy already carries the
+      <!-- No name row here: the RPG plate under the buddy already carries the
            pet's name, the project · model line, and the energy bar. -->
       <div id="usage-status"></div>
       <div id="usage-recap" class="hidden"></div>
@@ -106,17 +106,6 @@
       <button id="menu-hide" class="menu-item dim"><span class="mi">×</span>Hide Clippy</button>
     </div>
 
-    <!-- The buddy's RPG name plate. Hovering the compact buddy names just the
-         project; whenever a panel is open the plate goes full: an energy bar
-         (tokens left in this session's context) on top, the buddy's own pet
-         name, and the small print of which quest this is (project · model). -->
-    <div id="who" title="Which coding-agent session this buddy is watching">
-      <div id="who-bar"><div id="who-bar-fill"></div><span id="who-bar-label"></span></div>
-      <span id="who-pet">…</span>
-      <span id="who-project">…</span>
-      <span id="who-sub">…</span>
-    </div>
-
     <div id="clippy" title="Drag me around. Click for this session's status — expand it for usage and a box to talk to this agent; right-click for more; double-click to say hi.">
       <!-- Generated characters animate inside GIFs built by `npm run make-buddies`;
            the paperclip has one set per session colour. -->
@@ -135,6 +124,19 @@
     <div id="pointer" class="hidden">
       <span id="pointer-hint">answer here</span>
       <span id="pointer-arrow">▼</span>
+    </div>
+
+    <!-- The buddy's name plate — under its feet, no card around it, just text
+         the drop shadow keeps legible over whatever wallpaper it lands on.
+         Hovering a compact buddy names it and its project; the energy bar
+         (tokens left in this session's context) is the reward for clicking,
+         so a resting buddy is a name and nothing more.
+         After #pointer, so the arrow stays directly under his feet. -->
+    <div id="who" title="Which coding-agent session this buddy is watching">
+      <span id="who-pet">…</span>
+      <span id="who-project">…</span>
+      <span id="who-sub">…</span>
+      <div id="who-bar"><div id="who-bar-fill"></div><span id="who-bar-label"></span></div>
     </div>
 
     <div id="activity" class="hidden"></div>
