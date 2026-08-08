@@ -27,7 +27,6 @@ const me = {
   color: params.get('color') || '#9aa3ad',
   agent: HARNESS_NAMES[params.get('agent')] ? params.get('agent') : 'claude',
   pet: params.get('pet') || 'Buddy', // the RPG party-member name main dealt us
-  cwd: params.get('cwd') || '', // the folder this session is working in
   model: '',
 };
 
@@ -192,28 +191,17 @@ function syncMode() {
 
 /* ---------- UI helpers ---------- */
 
-/**
- * The folder this session is in, with the one above it: `aisocratic/clippy`.
- * A bare basename is ambiguous the moment two checkouts are called `web` or
- * `api`, and the parent is the cheapest thing that tells them apart. Falls
- * back to the plain name when main has not told us the path yet.
- */
-function projectPath() {
-  const parts = me.cwd.split('/').filter(Boolean);
-  return parts.length > 1 ? parts.slice(-2).join('/') : parts[0] || me.name;
-}
-
 function applyIdentity() {
   const character = settings.characters.find((candidate) => candidate.id === settings.character);
   const buddyName = character?.label || 'Buddy';
   const harness = HARNESS_NAMES[me.agent] || HARNESS_NAMES.claude;
   const model = shortModel(me.model);
-  // The pet's own name leads; under it, the folder and the model spending in
-  // it. The model goes on in full — `gpt-5.6-sol`, not the `claude-` stripped
-  // label the panels use — because on the plate it is the only thing that says
-  // which model this session is actually costing you.
+  // The pet's own name leads; under it, the folder this session is in and the
+  // model spending in it. The model goes on in full — `gpt-5.6-sol`, not the
+  // `claude-` stripped label the panels use — because on the plate it is the
+  // only thing that says which model this session is actually costing you.
   whoPet.textContent = me.pet;
-  whoSub.textContent = me.model ? `${projectPath()} · ${me.model}` : projectPath();
+  whoSub.textContent = me.model ? `${me.name} · ${me.model}` : me.name;
   whoEl.title = `${me.pet} the ${buddyName}, on “${me.name}” — running ${harness} with ${model}`;
 }
 
@@ -241,7 +229,6 @@ async function refreshIdentity({ force = false } = {}) {
   if (!identity) return;
   if (identity.name) me.name = identity.name;
   if (identity.agent) me.agent = identity.agent;
-  if (identity.cwd) me.cwd = identity.cwd; // a session can be told its path late
   me.model = identity.model || '';
   applyIdentity();
 }

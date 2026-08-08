@@ -469,7 +469,6 @@ function buddyFor(key, name = '', agent = '') {
       color: identity.color,
       agent: agent || 'claude',
       pet: petNameFor(key),
-      cwd: tracker.cwdFor(key) || '', // the plate names the folder, not just its basename
     },
   });
   // CLIPPY_SANDBOXTOOLS=1 npm start opens an inspector per buddy, detached so it
@@ -2062,7 +2061,7 @@ app.whenReady().then(async () => {
         ? sandboxUsage(buddy.name).session?.model || ''
         : await modelFromTranscriptFile(tracker.transcriptFor(buddy.sessionId));
     }
-    return { name: buddy.name, agent: buddy.agent, model, cwd: tracker.cwdFor(buddy.sessionId) };
+    return { name: buddy.name, agent: buddy.agent, model };
   });
   ipcMain.on('clippy-mode', (e, payload) => {
     // The renderer knows whether it has anything on screen, and how tall that
