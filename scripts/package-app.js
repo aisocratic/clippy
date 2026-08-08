@@ -29,13 +29,18 @@
  *      flashing up). CFBundleExecutable stays "Electron" because that key
  *      must name the actual file in Contents/MacOS, and renaming the binary
  *      buys nothing — macOS shows users CFBundleDisplayName, not the file.
- *   5. Ad-hoc re-sign. Editing Info.plist broke the seal on Electron's own
- *      ad-hoc signature, and an Apple Silicon Mac won't launch a binary
- *      whose signature doesn't verify. `codesign --sign -` needs no
- *      certificate; Gatekeeper still calls the result unsigned, which the
- *      README's install section deals with.
- *   6. Wrap it in a compressed .dmg with an /Applications shortcut — the
- *      drag-to-install disk image everyone already knows how to use.
+ *   5. Re-sign. Editing Info.plist broke the seal on Electron's own ad-hoc
+ *      signature, and an Apple Silicon Mac won't launch a binary whose
+ *      signature doesn't verify. `codesign --sign -` needs no certificate but
+ *      Gatekeeper still calls the result unsigned, which the README's install
+ *      section deals with; a release instead signs every nested Mach-O with a
+ *      Developer ID, innermost first, under the hardened runtime.
+ *   6. Notarize the app and staple its ticket in, so the copy dragged to
+ *      /Applications proves itself without asking Apple over the network.
+ *   7. Wrap it in a compressed .dmg with an /Applications shortcut — the
+ *      drag-to-install disk image everyone already knows how to use — then
+ *      notarize and staple that too, since Gatekeeper judges the download
+ *      before it ever judges the app inside.
  *
  * The icon is drawn, not stored, like every other piece of art here: the same
  * `drawClip` grid the GIFs come from, scaled up onto square canvases, encoded
@@ -405,7 +410,29 @@ function packageApp({
     stdio: 'ignore',
   });
 
-  // 6. The disk image: the app plus an /Applications shortcut to drag it onto.
+  // 6. Notarize the app itself and staple the ticket into the bundle, before
+  // the disk image is built around it. Notarizing only the .dmg is enough for
+  // Gatekeeper to admit the app *while the Mac can reach Apple* — but the app
+  // dragged out to /Applications carries no ticket of its own, so a first
+  // launch offline is refused. Stapling here means the copy the user keeps
+  // proves its own notarization, no network needed.
+  if (notaryProfile) {
+    console.log('submitting the app for Apple notarization…');
+    const appZip = path.join(dist, '.app-notarize.zip');
+    // ditto, not zip: the bundle's symlinks and resource forks have to survive
+    // the round trip or the notary service sees a different app than we signed.
+    execFileSync('ditto', ['-c', '-k', '--keepParent', appBundle, appZip]);
+    execFileSync(
+      'xcrun',
+      ['notarytool', 'submit', appZip, '--keychain-profile', notaryProfile, '--wait'],
+      { stdio: 'inherit' }
+    );
+    fs.rmSync(appZip, { force: true });
+    execFileSync('xcrun', ['stapler', 'staple', appBundle], { stdio: 'inherit' });
+    execFileSync('xcrun', ['stapler', 'validate', appBundle], { stdio: 'inherit' });
+  }
+
+  // 7. The disk image: the app plus an /Applications shortcut to drag it onto.
   let dmgFile = null;
   if (dmg) {
     console.log('building the disk image…');
@@ -429,7 +456,9 @@ function packageApp({
       );
     }
     if (notaryProfile) {
-      console.log('submitting for Apple notarization…');
+      // The image needs its own ticket too: Gatekeeper judges the .dmg the
+      // user downloads before it ever judges the app inside.
+      console.log('submitting the disk image for Apple notarization…');
       execFileSync(
         'xcrun',
         ['notarytool', 'submit', dmgFile, '--keychain-profile', notaryProfile, '--wait'],
