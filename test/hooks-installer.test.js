@@ -26,6 +26,7 @@ const {
   MARKER,
   MEANINGFUL_TOOLS,
   CODEX_MEANINGFUL_TOOLS,
+  CODEX_QUESTION_TOOL,
   QUESTION_TOOL,
 } = require('../bin/clippy-hooks');
 
@@ -63,7 +64,12 @@ test('Codex install uses its supported hook subset and tags the source', () => {
   assert.ok(activity);
   assert.match(activity.hooks[0].command, /\?source=codex/);
   assert.match(CODEX_MEANINGFUL_TOOLS, /apply_patch/);
-  assert.match(CODEX_MEANINGFUL_TOOLS, /request_user_input/);
+  assert.doesNotMatch(CODEX_MEANINGFUL_TOOLS, /request_user_input/);
+
+  const question = groupFor(settings, 'PreToolUse', CODEX_QUESTION_TOOL);
+  assert.ok(question, 'request_user_input needs its own interactive hook');
+  assert.doesNotMatch(question.hooks[0].command, />\/dev\/null 2>&1/);
+  assert.ok(question.hooks[0].timeout > 100);
 
   assert.deepEqual(checkCodexDrift(settings, 43117), {
     installed: true,

@@ -262,6 +262,11 @@ class SessionTracker {
     return this.sessions.get(sessionId)?.model || '';
   }
 
+  /** What this session is doing right now — idle if we've never heard of it. */
+  statusFor(sessionId) {
+    return this.sessions.get(sessionId)?.status || 'idle';
+  }
+
   /** Where Claude Code is writing this session's transcript (for token usage). */
   setTranscript(sessionId, transcriptPath) {
     if (sessionId && transcriptPath) this.transcripts.set(sessionId, transcriptPath);

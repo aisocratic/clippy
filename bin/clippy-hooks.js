@@ -70,16 +70,20 @@ const SPECS = [
 ];
 
 // Codex implements the same core lifecycle hook protocol, but currently has
-// no Notification or PostToolUseFailure events and no AskUserQuestion tool.
+// no Notification or PostToolUseFailure events. Its question tool is named
+// request_user_input and, like Claude's AskUserQuestion, needs a dedicated
+// interactive hook so Clippy can hold it while the user picks an answer.
 // Its PostToolUse event also fires for non-zero shell exits, which the session
 // tracker detects from tool_response instead. Edit/Write are documented aliases
 // for apply_patch, and Agent is the matcher alias for spawn_agent.
 const CODEX_MEANINGFUL_TOOLS =
-  'Bash|apply_patch|Edit|Write|update_plan|Agent|request_user_input|image_gen__.*|mcp__.*';
+  'Bash|apply_patch|Edit|Write|update_plan|Agent|image_gen__.*|mcp__.*';
+const CODEX_QUESTION_TOOL = 'request_user_input';
 
 const CODEX_SPECS = [
   { event: 'PermissionRequest', mode: 'decide' },
   { event: 'Stop' },
+  { event: 'PreToolUse', matcher: CODEX_QUESTION_TOOL, mode: 'decide' },
   { event: 'PreToolUse', matcher: CODEX_MEANINGFUL_TOOLS },
   { event: 'PostToolUse', matcher: CODEX_MEANINGFUL_TOOLS },
   { event: 'UserPromptSubmit' },
@@ -549,6 +553,7 @@ module.exports = {
   MARKER,
   MEANINGFUL_TOOLS,
   CODEX_MEANINGFUL_TOOLS,
+  CODEX_QUESTION_TOOL,
   QUESTION_TOOL,
   DEFAULT_PORT,
 };

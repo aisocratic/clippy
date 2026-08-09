@@ -28,11 +28,23 @@
       push();
     },
     showBuddy: (sessionId) => console.log('would show the buddy for', sessionId),
-    assign: (name, character) => {
-      const byProject = { ...(state.characterByProject || {}) };
-      if (character) byProject[name] = character;
-      else delete byProject[name];
-      state = { ...state, characterByProject: byProject };
+    // Main writes both levels (see assignCharacter there); the bench keeps the
+    // session one, which is what the pickers read back.
+    assign: (sessionId, character) => {
+      const bySession = { ...(state.characterBySession || {}) };
+      if (character) bySession[sessionId] = character;
+      else delete bySession[sessionId];
+      const sessions = (state.sessions || []).map((s) =>
+        s.sessionId === sessionId && character ? { ...s, character } : s
+      );
+      state = { ...state, characterBySession: bySession, sessions };
+      push();
+    },
+    assignSize: (sessionId, size) => {
+      const bySession = { ...(state.sizeBySession || {}) };
+      if (size) bySession[sessionId] = size;
+      else delete bySession[sessionId];
+      state = { ...state, sizeBySession: bySession };
       push();
     },
     openExternal: (url) => window.open(url, '_blank', 'noopener'),

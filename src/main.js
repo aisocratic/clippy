@@ -21,9 +21,10 @@ const { createHookServer } = require('./server');
 const { SessionTracker, AGENTS, agentDisplayName, WORKING, WAITING } = require('./sessions');
 const { DecisionBroker, toHookResponse, describeToolCall } = require('./decisions');
 const { DriveSession } = require('./sdk-session');
+const { PetChat } = require('./pet-chat');
 const { checkDrift, checkCodexDrift, checkOpenclawDrift, installToFiles } = require('../bin/clippy-hooks');
 const { identityFor, petNameFor } = require('./identity');
-const { SIZES, sizeList, allCharacters, characterFor } = require('./characters');
+const { SIZES, sizeList, allCharacters, characterFor, sizeFor } = require('./characters');
 const { ACTIONS } = require('./actions');
 const { windowActionFor } = require('./visibility');
 const { EDGE_OPTIONS, EDGE_IDS, edgeLineup, edgeHome } = require('./arrange');
@@ -89,10 +90,16 @@ let hooksAbsent = false; // no agent has any Clippy hooks — a fresh (DMG) inst
 const settings = {
   approvals: true, // answer permission requests from the Clippy UI
   reviewOnStop: true, // offer a review box when Claude finishes a turn
-  answerQuestions: true, // answer AskUserQuestion from the Clippy UI
+  answerQuestions: true, // answer Claude/Codex multiple-choice questions in Clippy
   autoPerch: true, // appear on the session's own window, not the screen corner
   characterByProject: {}, // project name -> character id, when you've picked one
-  size: 'medium', // how big that buddy is drawn, and stays
+  sizeByProject: {}, // project name -> size id, likewise
+  // …and the same two against one live session, so picking a pet for one row of
+  // the settings window leaves the folder's other agents alone. Keyed by
+  // session id, and capped, because sessions are many and short-lived.
+  characterBySession: {},
+  sizeBySession: {},
+  size: 'medium', // the size a project gets when it hasn't picked one
   arrangeEdge: '', // screen edge new buddies line up on; '' = the classic corner
 };
 
@@ -122,14 +129,91 @@ function loadSettings() {
 }
 
 /** Give one project a buddy of its own (or '' to go back to the automatic one). */
-function assignCharacter(name, character) {
+// How many per-session choices to remember. Trimmed oldest-first rather than
+// grown forever; for string keys, insertion order is age order.
+const SESSION_ASSIGN_CAP = 60;
+
+function rememberForSession(map, sessionId, value) {
+  const next = { ...map };
+  delete next[sessionId]; // re-setting means "most recent", not "keeps its spot"
+  if (value) next[sessionId] = value;
+  const keys = Object.keys(next);
+  for (const stale of keys.slice(0, Math.max(0, keys.length - SESSION_ASSIGN_CAP))) {
+    delete next[stale];
+  }
+  return next;
+}
+
+/**
+ * Pin every *other* live buddy in this folder to what it is wearing now.
+ *
+ * A choice is written against the session and against the project: the session
+ * half is what makes it this buddy's and not its twin's, the project half is
+ * what makes the folder look the same tomorrow, when this session id is long
+ * gone. But the project half would drag the neighbours along, since a buddy
+ * with no choice of its own follows the project — so they are given their
+ * current look explicitly, first. Nobody moves except the one you picked.
+ */
+function pinSiblings(sessionId, name, { size = false } = {}) {
+  for (const other of buddies.values()) {
+    if (other.sessionId === sessionId || other.name !== name) continue;
+    if (size) {
+      if ((settings.sizeBySession || {})[other.sessionId]) continue;
+      settings.sizeBySession = rememberForSession(
+        settings.sizeBySession,
+        other.sessionId,
+        sizeFor(settings, other.name, other.sessionId)
+      );
+    } else {
+      if ((settings.characterBySession || {})[other.sessionId]) continue;
+      settings.characterBySession = rememberForSession(
+        settings.characterBySession,
+        other.sessionId,
+        other.character
+      );
+    }
+  }
+}
+
+/** Give one session's buddy a character (or '' to go back to the automatic one). */
+function assignCharacter(sessionId, character) {
+  if (!sessionId) return;
+  const name = buddies.get(sessionId)?.name || tracker.cwdFor(sessionId).split('/').pop() || '';
   if (!name) return;
-  const next = { ...settings.characterByProject };
-  if (character && characterIds().includes(character)) next[name] = character;
-  else delete next[name];
-  settings.characterByProject = next;
+  const wanted = character && characterIds().includes(character) ? character : '';
+
+  pinSiblings(sessionId, name);
+  settings.characterBySession = rememberForSession(settings.characterBySession, sessionId, wanted);
+
+  const byProject = { ...settings.characterByProject };
+  if (wanted) byProject[name] = wanted;
+  else delete byProject[name];
+  settings.characterByProject = byProject;
+
   saveSettings();
   recast();
+  pushSettingsState();
+  sendSettings();
+}
+
+/** Give one project a size of its own (or '' to fall back to the default). */
+function assignSize(sessionId, size) {
+  if (!sessionId) return;
+  const name = buddies.get(sessionId)?.name || tracker.cwdFor(sessionId).split('/').pop() || '';
+  if (!name) return;
+  const wanted = size && SIZES[size] ? size : '';
+
+  pinSiblings(sessionId, name, { size: true });
+  settings.sizeBySession = rememberForSession(settings.sizeBySession, sessionId, wanted);
+
+  const byProject = { ...settings.sizeByProject };
+  if (wanted) byProject[name] = wanted;
+  else delete byProject[name];
+  settings.sizeByProject = byProject;
+
+  saveSettings();
+  // The window that buddy lives in just changed shape.
+  replaceAll();
   pushSettingsState();
   sendSettings();
 }
@@ -143,7 +227,10 @@ function saveSettings() {
 }
 
 function setSetting(key, value) {
-  if (!(key in settings) || key === 'characterByProject') return;
+  if (!(key in settings)) return;
+  // The assignment maps have their own setters — they are not one value.
+  const maps = ['characterByProject', 'sizeByProject', 'characterBySession', 'sizeBySession'];
+  if (maps.includes(key)) return;
   if (CHOICES[key]) {
     if (!CHOICES[key]().includes(value)) return;
     settings[key] = value;
@@ -170,7 +257,11 @@ function setSetting(key, value) {
 function settingsPayload(buddy) {
   return {
     ...settings,
-    ...(buddy ? { character: buddy.character } : null),
+    // A buddy is told its own casting and its own size; the settings window
+    // gets the defaults, and reads the per-project maps for the rest.
+    ...(buddy
+      ? { character: buddy.character, size: sizeFor(settings, buddy.name, buddy.sessionId) }
+      : null),
     characters: allCharacters(),
     sizes: sizeList(),
   };
@@ -193,9 +284,14 @@ function recast() {
   }
 }
 
-/** The window that holds nothing but the buddy, at the size you picked. */
-function compactSize() {
-  return (SIZES[settings.size] || SIZES.medium).win;
+/**
+ * The window that holds nothing but the buddy, at the size that project picked.
+ *
+ * Takes a buddy rather than reading the one global setting, because size is per
+ * project now: two sessions side by side can be XS and large at once.
+ */
+function compactSize(buddy) {
+  return SIZES[sizeFor(settings, buddy?.name || '', buddy?.sessionId || '')].win;
 }
 
 /** Re-lay every buddy — the size setting changed under them. */
@@ -348,6 +444,8 @@ function homeBounds(slot, width, height) {
   // Slots step by the full panel width along horizontal edges (so an open card
   // never lands on the neighbour) and by the compact height along vertical
   // ones — the same pitches cornerBounds uses for its columns and rows.
+  // The pitch is the default size's, not any one buddy's: a lineup has to be
+  // evenly spaced, and sizes now vary from project to project.
   const [, compactH] = compactSize();
   const step = edge === 'top' || edge === 'bottom' ? WIN_W + WIN_GAP : compactH + WIN_GAP;
   return edgeHome(workArea, edge, slot, { width, height }, WIN_GAP, step);
@@ -365,6 +463,8 @@ function organizeBuddies(edge) {
   settings.arrangeEdge = edge;
   saveSettings();
   const free = [...buddies.values()].filter((b) => !b.dock && !b.win.isDestroyed());
+  // Spots are laid out on the default footprint so the row stays evenly
+  // spaced; each buddy is then parked on its spot at its *own* size.
   const [width, height] = compactSize();
   const { workArea } = screen.getPrimaryDisplay();
   const spots = edgeLineup(workArea, edge, free.length, { width, height }, WIN_GAP);
@@ -373,9 +473,10 @@ function organizeBuddies(edge) {
     // From here the lineup spot outranks the corner, exactly like a hand move:
     // cards and menus grow around it instead of snapping back.
     buddy.dragged = true;
+    const [ownW, ownH] = compactSize(buddy);
     // Park the compact footprint on the spot, then let placeBuddy re-grow any
     // open card around it — same as a card opening over a hand-placed buddy.
-    setBuddyBounds(buddy, { ...spots[i], width, height });
+    setBuddyBounds(buddy, { ...spots[i], width: ownW, height: ownH });
     placeBuddy(buddy, buddy.mode || 'compact');
   });
 }
@@ -389,6 +490,33 @@ function organizeBuddies(edge) {
 function setBuddyBounds(buddy, bounds) {
   buddy.win.setBounds(bounds);
   buddy.lastPlaced = { x: bounds.x, y: bounds.y };
+  sendSide(buddy);
+}
+
+/**
+ * Which half of its display a buddy is standing on.
+ *
+ * A buddy at rest turns to face inward — one standing on the left edge looking
+ * further left has his back to everything you care about — and only main can
+ * see where the window actually is, so it does the looking and the renderer
+ * does the turning.
+ */
+function sideOfScreen(buddy) {
+  const bounds = buddy.win.getBounds();
+  const { workArea } = screen.getDisplayMatching(bounds);
+  return bounds.x + bounds.width / 2 < workArea.x + workArea.width / 2 ? 'left' : 'right';
+}
+
+/**
+ * Tell a buddy which side it is on — but only when the answer changes, because
+ * this rides along with every frame of a stroll and every pixel of a drag.
+ */
+function sendSide(buddy) {
+  if (!buddy || buddy.win.isDestroyed()) return;
+  const side = sideOfScreen(buddy);
+  if (side === buddy.side) return;
+  buddy.side = side;
+  send(buddy, { kind: 'side', side });
 }
 
 /**
@@ -437,7 +565,9 @@ function buddyFor(key, name = '', agent = '') {
   }
 
   const slot = nextFreeSlot();
-  const [compactW, compactH] = compactSize();
+  // No buddy object yet, but its name and session id are what a size is kept
+  // against, and this window is created at that size.
+  const [compactW, compactH] = compactSize({ name, sessionId: key });
   const { x, y } = homeBounds(slot, compactW, compactH);
   const identity = identityFor(key, name);
   const win = new BrowserWindow({
@@ -482,6 +612,12 @@ function buddyFor(key, name = '', agent = '') {
       kind: 'can-open',
       value: Boolean(tracker.terminalFor(key)),
     });
+    // Which way to face when there is nothing else to say.
+    const buddy = buddies.get(key);
+    if (buddy) {
+      buddy.side = null;
+      sendSide(buddy);
+    }
   });
   win.on('closed', () => {
     buddies.get(key)?.dock?.poll?.cancel();
@@ -625,7 +761,7 @@ function placeBuddy(buddy, mode, wantHeight, wantWidth) {
   // to the plan card and goes away with it.
   if (Number.isFinite(wantWidth)) buddy.wantWidth = wantWidth > 0 ? wantWidth : 0;
   const compact = mode === 'compact';
-  const [compactW, compactH] = compactSize();
+  const [compactW, compactH] = compactSize(buddy);
   const workArea = buddy.dock
     ? screen.getDisplayMatching(buddy.dock.bounds).workArea
     : screen.getPrimaryDisplay().workArea;
@@ -771,10 +907,72 @@ async function perchOn(key, { raise = false, auto = false, mode = null } = {}) {
  * the walk to the prompt — used when the reason you're going there is that
  * something is waiting to be answered on that line.
  */
+/**
+ * Bring this session's terminal to the front, and leave the buddy exactly where
+ * he is.
+ *
+ * "Go to terminal" is a request about the *terminal*: the thing you want is
+ * that window, in front of you. It used to be served by perching, which raised
+ * the window and then moved Clippy onto its corner — undoing whatever spot you
+ * had dragged him to, every single time you followed a card back to its
+ * session. Raising is the whole job. A buddy already perched still rides along,
+ * because riding along is what a perch is.
+ */
+async function raiseTerminal(key) {
+  const buddy = buddies.get(key);
+  if (!buddy || buddy.win.isDestroyed()) return false;
+
+  if (!tracker.terminalFor(key)) {
+    tellBuddy(
+      key,
+      "I don't know which window this session is in. Re-run `npm run hooks:install`, " +
+        'then restart that Claude Code session so its hooks report the terminal.',
+      { sticky: true }
+    );
+    return false;
+  }
+  if (!canDriveWindows()) {
+    askForWindowAccess(key);
+    return false;
+  }
+
+  try {
+    const bounds = await revealTarget(buddy, key);
+    if (!bounds) {
+      tellBuddy(key, "I couldn't find that session's window — is the terminal still open?", {
+        sticky: true,
+      });
+      return false;
+    }
+    // A perched buddy follows his window, so tell the perch where it ended up
+    // rather than making the follow-poll notice a beat later. Anyone standing
+    // somewhere of his own is not touched at all.
+    if (buddy.dock) buddy.dock.bounds = bounds;
+    return true;
+  } catch (err) {
+    console.warn('clippy: could not reach the terminal window:', err.message);
+    if (!canDriveWindows()) askForWindowAccess(key);
+    else {
+      tellBuddy(
+        key,
+        `I couldn't reach “${buddy.name}”'s window — it may have closed, or its app ` +
+          'is busy. Try again in a moment.',
+        { sticky: true }
+      );
+    }
+    return false;
+  }
+}
+
+/**
+ * Raise the session's window — and, when the answer has to be typed on its
+ * prompt line, put Clippy on that window first so he can walk down and point at
+ * it. That walk is the one reason this ever moves him.
+ */
 const openSessionWindow = (key, { point = false } = {}) =>
-  perchOn(key, { raise: true }).then((perched) => {
-    if (perched && point) hintAtTerminal(key);
-    return perched;
+  (point ? perchOn(key, { raise: true }) : raiseTerminal(key)).then((ok) => {
+    if (ok && point) hintAtTerminal(key);
+    return ok;
   });
 
 // How long to let macOS settle focus on the freshly-raised terminal before
@@ -1039,7 +1237,7 @@ function pointAtPrompt(key) {
   if (buddy.mode !== 'compact') return; // a card is up; that's the louder hint
   stopWalking(buddy);
 
-  const [w, h] = compactSize();
+  const [w, h] = compactSize(buddy);
   const tall = h + POINT_EXTRA_H;
   const area = screen.getDisplayMatching(buddy.dock.bounds).workArea;
   // Home is wherever he actually is — the perch anchor, or a spot you dragged
@@ -1055,7 +1253,9 @@ function pointAtPrompt(key) {
     send(buddy, { kind: 'point', on: true });
     buddy.walk.hold = setTimeout(() => {
       send(buddy, { kind: 'point', on: false });
-      send(buddy, { kind: 'walk', facing: 'right' });
+      // The way back is the way out, reversed — hardcoding "right" here had him
+      // moonwalking home whenever the prompt sat to the right of his perch.
+      send(buddy, { kind: 'walk', facing: perch.x < spot.x ? 'left' : 'right' });
       strollTo(buddy, spot, perch, () => {
         stopWalking(buddy);
         placeBuddy(buddy, buddy.mode || 'compact');
@@ -1093,7 +1293,8 @@ function stopWalking(buddy) {
   clearInterval(buddy.walk.timer);
   clearTimeout(buddy.walk.hold);
   buddy.walk = null;
-  send(buddy, { kind: 'walk', facing: 'right' });
+  // No heading: the stroll is over, so he stands the way his art is drawn.
+  send(buddy, { kind: 'walk', facing: null });
   send(buddy, { kind: 'point', on: false });
 }
 
@@ -1734,15 +1935,17 @@ function closeReviewsFor(sessionId) {
 }
 
 /**
- * Claude called AskUserQuestion. Hold the PreToolUse hook open and show the
- * options as buttons: the chosen labels go back as `updatedInput.answers`, so
- * the tool runs already-answered and the terminal picker never appears.
+ * Claude or Codex asked a multiple-choice question. Hold the PreToolUse hook
+ * open and show the options as buttons. Claude receives updatedInput.answers;
+ * Codex receives the selected values as the blocked tool result, because its
+ * request_user_input arguments have no pre-filled-answer field.
  * Anything else (dismiss, timeout, Clippy not running) returns {} and the
  * terminal picker takes over exactly as before.
  */
 async function handleQuestion(payload, ctx) {
   const reaction = tracker.handle('PreToolUse', null, payload);
-  const { title, detail } = describeToolCall('AskUserQuestion', payload.tool_input);
+  const toolName = payload.tool_name;
+  const { title, detail } = describeToolCall(toolName, payload.tool_input);
   const questions = Array.isArray(payload.tool_input?.questions)
     ? payload.tool_input.questions
     : [];
@@ -1775,7 +1978,7 @@ async function handleQuestion(payload, ctx) {
     expiresAt,
   });
   showBuddy(reaction.sessionId);
-  notify('📎 Claude is asking you', `${reaction.name}: ${title}`, {
+  notify(`📎 ${reaction.agentName} is asking you`, `${reaction.name}: ${title}`, {
     silent: false,
     sessionId: reaction.sessionId,
   });
@@ -1793,11 +1996,13 @@ async function handleQuestion(payload, ctx) {
 
   const reply = toHookResponse('PreToolUse', action, message, {
     toolInput: payload.tool_input,
+    source: payload.agent,
+    toolName,
   });
   if (reply.hookSpecificOutput) {
     tracker.setStatus(reaction.sessionId, WORKING);
     updateTray();
-    hideBuddy(reaction.sessionId); // answered here — Claude carries on
+    hideBuddy(reaction.sessionId); // answered here — the agent carries on
   } else if (action === 'dismiss' || action === 'cancel') {
     // Waved away, or the terminal went out from under us — nothing to show.
     hideBuddy(reaction.sessionId);
@@ -1860,24 +2065,12 @@ function handleHookEvent(eventName, kind, payload, ctx) {
   if (eventName === 'PermissionRequest') return handlePermissionRequest(payload, ctx);
   if (eventName === 'Stop') return handleStop(payload);
 
-  if (eventName === 'PreToolUse' && payload.tool_name === 'AskUserQuestion') {
-    return handleQuestion(payload, ctx);
-  }
-
-  // Codex's question tool is observable but its result is not answerable by a
-  // PreToolUse rewrite. Surface a read-only card while Codex's own picker stays
-  // authoritative; the hook itself remains fire-and-forget.
   if (
     eventName === 'PreToolUse' &&
-    payload.agent === 'codex' &&
-    payload.tool_name === 'request_user_input'
+    (payload.tool_name === 'AskUserQuestion' ||
+      (payload.agent === 'codex' && payload.tool_name === 'request_user_input'))
   ) {
-    const reaction = tracker.handle(eventName, kind, payload);
-    const { title, detail } = describeToolCall(payload.tool_name, payload.tool_input);
-    tracker.setStatus(reaction.sessionId, WAITING);
-    updateTray();
-    surfaceQuestion(reaction, title, detail);
-    return undefined;
+    return handleQuestion(payload, ctx);
   }
 
   if (eventName === 'UserPromptSubmit' || eventName === 'SessionEnd') {
@@ -2113,8 +2306,12 @@ app.whenReady().then(async () => {
     pushSettingsState();
   });
   ipcMain.on('clippy-settings-assign', (_e, payload) => {
-    const { name, character } = payload || {};
-    assignCharacter(String(name || ''), String(character || ''));
+    const { sessionId, character } = payload || {};
+    assignCharacter(String(sessionId || ''), String(character || ''));
+  });
+  ipcMain.on('clippy-settings-assign-size', (_e, payload) => {
+    const { sessionId, size } = payload || {};
+    assignSize(String(sessionId || ''), String(size || ''));
   });
   ipcMain.handle('clippy-settings-check-updates', () => {
     // The repo root: from a checkout that's this file's parent; inside the
@@ -2139,6 +2336,8 @@ app.whenReady().then(async () => {
     if (!buddy || buddy.win.isDestroyed()) return;
     const [x, y] = buddy.win.getPosition();
     buddy.win.setPosition(x + Math.round(Number(dx) || 0), y + Math.round(Number(dy) || 0));
+    // Carried across the middle of the screen: where he'll settle has changed.
+    sendSide(buddy);
   });
   ipcMain.on('clippy-hide', (e) => {
     // Hiding by hand also drops the pin, so ambient rules take over again.
@@ -2170,6 +2369,28 @@ app.whenReady().then(async () => {
     if (drive && typeof text === 'string' && text.trim()) drive.prompt(text.trim());
   });
   ipcMain.on('clippy-drive-stop', stopDriveSession);
+  ipcMain.handle('clippy-pet-say', async (e, text) => {
+    // The 💬 button under the buddy: a word with the pet itself. Nothing here
+    // touches the watched session — see src/pet-chat.js for why it can't.
+    const buddy = buddyForSender(e.sender);
+    if (!buddy) return { error: 'no session for this window' };
+    if (!buddy.chat) {
+      buddy.chat = new PetChat({
+        // Read fresh every turn: the model and the status move under the pet
+        // while you're talking to it.
+        context: () => ({
+          pet: petNameFor(buddy.sessionId),
+          character: allCharacters().find((c) => c.id === buddy.character)?.label || 'desk buddy',
+          project: buddy.name,
+          cwd: tracker.cwdFor(buddy.sessionId),
+          agent: agentDisplayName(buddy.agent),
+          model: tracker.modelFor(buddy.sessionId),
+          status: tracker.statusFor(buddy.sessionId),
+        }),
+      });
+    }
+    return buddy.chat.say(typeof text === 'string' ? text : '');
+  });
   ipcMain.on('clippy-sandbox-fire', (_e, id) => {
     if (!SANDBOX) return;
     // Two ids are the sandbox's own controls rather than stories: the

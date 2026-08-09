@@ -210,7 +210,7 @@ Reddit is not a broadcast channel. Reddit's own small-business guidance says to 
 |---|---|---|---|
 | r/ClaudeCode | Highest priority. Use the weekly showcase, or a substantive standalone post with the current “Built with Claude Code” flair if allowed. | Hook architecture, the ten-minute waiting problem, and what was built with Claude Code/Codex | Recheck pinned thread/rules; include what it is, problem, how Claude Code was used, repo/demo, and creator disclosure |
 | r/ClaudeAI | Post only if it adds a different technical lesson or use the designated showcase route. | Why explicit permission prompts beat auto-approval and how the fail-safe works | Current automated rule examples require creator disclosure, how Claude helped, what it does, free access, and minimal marketing |
-| r/codex | A Codex-specific compatibility post, not a cross-post. | What Codex lifecycle hooks can and cannot support; request test cases from multi-session users | Verify rules/modmail; disclose current question-card limitation |
+| r/codex | A Codex-specific compatibility post, not a cross-post. | How lifecycle hooks power permission, question, and review cards; request test cases from multi-session users | Verify rules/modmail; disclose that question answers arrive as a blocked-tool result |
 | r/MacApps | Mac utility story with real product screenshots. | `[OS] Clippy — a free local buddy for Claude Code + Codex sessions` | Current rules require 10 community karma, `[OS]` prefix for open source, correct pricing flair, and roughly 30 days between promotions ([rule update](https://www.reddit.com/r/macapps/comments/1qghsc5/new_post_guidelines_and_updates_on_rmacapps/)) |
 | r/SideProject | Optional and lower intent. Use only after the specialist communities. | What launching into a suddenly crowded category changed about the positioning | Value-first retrospective, not “please support my launch” |
 
@@ -232,7 +232,7 @@ Do not post in r/macOS: its current self-promotion policy permits only Mac App S
 
 **Title:** I added Codex to an open-source Mac overlay for multi-agent approvals—looking for hook edge cases
 
-Lead with the exact Codex implementation: permission and Stop decisions work in the same cards as Claude Code, local rollout transcripts provide context/token totals, non-zero shell exits are inferred from `PostToolUse`, and `request_user_input` remains a read-only card that jumps to Codex's native picker. Ask users which missing native hook matters most. This honesty is more useful than pretending the integrations are identical.
+Lead with the exact Codex implementation: permission and Stop decisions work in the same cards as Claude Code, local rollout transcripts provide context/token totals, non-zero shell exits are inferred from `PostToolUse`, and `request_user_input` options are selectable through an interactive `PreToolUse` hook. The answer is returned as the blocked tool's model-visible reason because the tool has no pre-filled-answer input; pass and timeout still open Codex's native picker. Ask users which remaining native-hook gap matters most.
 
 ## Show HN
 

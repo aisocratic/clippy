@@ -10,7 +10,7 @@
  * the 📎 menu bar's Quick settings, where they're one click away from anywhere.
  */
 
-const SIZE_LABEL = { small: 'Small', medium: 'Medium', large: 'Large' };
+const SIZE_LABEL = { xs: 'XS', small: 'Small', medium: 'Medium', large: 'Large' };
 const STATUS_TEXT = {
   idle: 'idle',
   working: 'working…',
@@ -126,15 +126,14 @@ function renderCast() {
   const host = document.getElementById('cast');
   host.replaceChildren();
   const sessions = state.sessions || [];
-  const assignedTo = (name) => (state.characterByProject || {})[name] || '';
   const projects = [...new Set(sessions.map((s) => s.name))];
   // Highlight whoever is actually on duty: the closest thing left to a selection.
-  const onDuty = new Set(sessions.map((s) => assignedTo(s.name) || s.character));
+  const onDuty = new Set(sessions.map((s) => s.character));
 
-  document.getElementById('cast-note').textContent = projects.length
-    ? `Clicking one gives it to every project reporting in right now (${projects.join(', ')}). ` +
-      'For one project at a time, use the picker beside it under Sessions.'
-    : 'Nothing is reporting in, so there is no project to give a buddy to yet — start ' +
+  document.getElementById('cast-note').textContent = sessions.length
+    ? `Clicking one gives it to every session reporting in right now (${projects.join(', ')}). ` +
+      'For one session at a time, use the picker beside it under Sessions.'
+    : 'Nothing is reporting in, so there is no session to give a buddy to yet — start ' +
       'Claude Code or Codex and it gets one from this cast automatically.';
 
   for (const character of state.characters) {
@@ -143,10 +142,10 @@ function renderCast() {
 
     const who = document.createElement('button');
     who.className = 'cast-who';
-    who.disabled = !projects.length;
-    who.title = projects.length
+    who.disabled = !sessions.length;
+    who.title = sessions.length
       ? `Give ${projects.join(', ')} ${character.label}`
-      : 'No projects yet — start Claude Code or Codex somewhere and it gets a buddy of its own';
+      : 'No sessions yet — start Claude Code or Codex somewhere and it gets a buddy of its own';
     const name = document.createElement('span');
     name.className = 'cast-name';
     name.textContent = character.label;
@@ -161,7 +160,7 @@ function renderCast() {
       : 'drawn in code';
     who.append(name, origin);
     who.addEventListener('click', () => {
-      for (const project of projects) window.clippySettings.assign(project, character.id);
+      for (const session of sessions) window.clippySettings.assign(session.sessionId, character.id);
     });
 
     const poses = document.createElement('div');
@@ -372,12 +371,16 @@ function renderSessions() {
     const agentName = { claude: 'Claude', codex: 'Codex', openclaw: 'OpenClaw' }[session.agent] || 'Claude';
     status.textContent = `${agentName} · ${STATUS_TEXT[session.status] || session.status || ''}`;
 
-    // A buddy of its own, kept against the project name so the same repo looks
-    // the same tomorrow.
-    const assigned = (state.characterByProject || {})[session.name] || '';
+    // This one buddy's own. The choice is kept against the session (so the
+    // folder's other agents keep theirs) and against the project (so the repo
+    // still looks the same tomorrow) — see assignCharacter in src/main.js.
+    const assigned =
+      (state.characterBySession || {})[session.sessionId] ||
+      (state.characterByProject || {})[session.name] ||
+      '';
     const pick = document.createElement('select');
     pick.className = 'session-pick';
-    pick.title = 'Which buddy this project gets';
+    pick.title = 'Which buddy this session gets';
     const auto = document.createElement('option');
     auto.value = '';
     auto.textContent = `Auto (${labelFor(session.character)})`;
@@ -390,7 +393,31 @@ function renderSessions() {
     }
     pick.value = assigned;
     pick.addEventListener('change', () =>
-      window.clippySettings.assign(session.name, pick.value)
+      window.clippySettings.assign(session.sessionId, pick.value)
+    );
+
+    // …and how big it is drawn, kept the same way. A repo you watch out of the
+    // corner of your eye can be XS while the one you're in is large.
+    const assignedSize =
+      (state.sizeBySession || {})[session.sessionId] ||
+      (state.sizeByProject || {})[session.name] ||
+      '';
+    const sizePick = document.createElement('select');
+    sizePick.className = 'session-pick session-size';
+    sizePick.title = 'How big this session’s buddy is drawn';
+    const autoSize = document.createElement('option');
+    autoSize.value = '';
+    autoSize.textContent = `Default (${SIZE_LABEL[state.size] || state.size})`;
+    sizePick.appendChild(autoSize);
+    for (const size of state.sizes) {
+      const option = document.createElement('option');
+      option.value = size.id;
+      option.textContent = SIZE_LABEL[size.id] || size.id;
+      sizePick.appendChild(option);
+    }
+    sizePick.value = assignedSize;
+    sizePick.addEventListener('change', () =>
+      window.clippySettings.assignSize(session.sessionId, sizePick.value)
     );
 
     const art = document.createElement('span');
@@ -398,7 +425,7 @@ function renderSessions() {
     const character = state.characters.find((c) => c.id === (assigned || session.character));
     if (character) art.appendChild(poseArt(character, posesOf(character)[0], 28));
 
-    row.append(dot, show, status, art, pick);
+    row.append(dot, show, status, art, pick, sizePick);
     host.appendChild(row);
   }
 }

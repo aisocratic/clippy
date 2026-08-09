@@ -890,6 +890,9 @@ const server = http.createServer(async (req, res) => {
       answerQuestions: true,
       autoPerch: true,
       characterByProject: {},
+      sizeByProject: {},
+      characterBySession: {},
+      sizeBySession: {},
       size: 'medium',
       characters: allCharacters(),
       sizes: sizeList(),
@@ -900,6 +903,9 @@ const server = http.createServer(async (req, res) => {
       appPath: '/path/to/clippy/node_modules/electron/dist/Electron.app',
       sessions: [
         { sessionId: 'demo-1', name: NAME, color: '#4fa3d1', status: 'working', character: 'clip' },
+        // A second agent in the *same* folder as demo-1: the case where picking
+        // a pet for one row must leave the other row alone.
+        { sessionId: 'demo-1b', name: NAME, color: '#d18f4f', status: 'idle', character: 'clod' },
         { sessionId: 'demo-2', name: 'clippy', color: '#6cbf6c', status: 'waiting', character: 'cat' },
       ],
     });

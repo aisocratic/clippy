@@ -649,6 +649,12 @@ code {
   image-rendering: pixelated;
 }
 
+/* The size picker beside it holds four short words, so it never needs the
+   room the character list does. */
+.session-size {
+  max-width: 104px;
+}
+
 .session-pick {
   flex: none;
   max-width: 190px;

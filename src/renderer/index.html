@@ -55,11 +55,12 @@
 
     <!-- One left click opens this, collapsed: a glance at the session — its
          state, what the agent is doing right now, the model, and how full the
-         context is. Expand grows the same window into the fuller panel (the
-         allowance bars, the plan note, and a box to keep talking to it). -->
+         context is. ▾ grows the same window into the fuller panel (the
+         allowance bars, the plan note, and a box to keep talking to it), and
+         ▴ folds it back. Never a second window. -->
     <div id="usage" class="hidden collapsed">
       <!-- No name row here: the RPG plate under the buddy already carries the
-           pet's name, the project · model line, and the energy bar. -->
+           pet's name and the folder · model line under it. -->
       <div id="usage-status"></div>
       <div id="usage-recap" class="hidden"></div>
       <div id="usage-bar"><div id="usage-bar-fill"></div></div>
@@ -67,15 +68,34 @@
       <div id="usage-detail">
         <div id="usage-bars"></div>
         <div id="usage-note"></div>
-        <textarea id="usage-input" rows="2" spellcheck="false"
-                  placeholder="continue chatting — Enter sends it to the terminal"></textarea>
+        <!-- The placeholder has one line to live on now, so the hint that used
+             to ride along with it moved to the tooltip. -->
+        <textarea id="usage-input" rows="1" spellcheck="false"
+                  title="Typed into this session's terminal — Enter sends it"
+                  placeholder="Chat here"></textarea>
       </div>
       <div id="usage-actions">
         <button id="btn-usage-close" class="dim">Close</button>
-        <button id="btn-usage-expand" class="good"
-                title="The full panel: allowance bars, and a box to talk to this agent">Expand ▾</button>
+        <!-- One button, two directions: it grows this same panel into the full
+             view and shrinks it back again. Never a second window. -->
+        <button id="btn-usage-size" class="good"
+                title="Show more: the allowance bars, and a box to talk to this agent">▾</button>
+        <!-- Only once there is something to send — see #usage.composing. -->
         <button id="btn-usage-send" class="good">Send ↵</button>
       </div>
+    </div>
+
+    <!-- The 💬 button under the buddy opens this: a word with the *pet*, which
+         never reaches the session it is sitting on. -->
+    <div id="pet" class="hidden">
+      <div id="pet-head">
+        <span id="pet-who">your pet</span>
+        <button id="pet-close" class="dim">close</button>
+      </div>
+      <div id="pet-log"></div>
+      <textarea id="pet-input" rows="1" spellcheck="false"
+                title="Goes to your pet, never to the coding session — Enter sends it"
+                placeholder="Say hi"></textarea>
     </div>
 
     <div id="bubble" class="hidden">
@@ -106,15 +126,20 @@
       <button id="menu-hide" class="menu-item dim"><span class="mi">×</span>Hide Clippy</button>
     </div>
 
-    <!-- Above the buddy's head, and only while the pointer is over him: the one
-         control that does not need the menu. Left of everything the click
-         opens, so dismissing a buddy is never a hunt to the far end of the
-         window. -->
+    <!-- The two things that don't need the menu — put this buddy away, or say
+         something to it. Words rather than glyphs, because a × and a speech
+         bubble at 10px are a guess and "hide" and "chat" are not.
+
+         This row does not stay here. With nothing open it floats above the
+         buddy's head and only while the pointer is on him; the moment a panel
+         opens, that panel owns the space and placeControls (clippy.js) moves
+         this node inside it, where it becomes the panel's own footer. -->
     <div id="controls">
-      <button id="btn-hide" title="Hide (Clippy keeps running in the menu bar)">×</button>
+      <button id="btn-hide" title="Hide (Clippy keeps running in the menu bar)">hide</button>
+      <button id="btn-chat" title="Chat with your pet — this never reaches the coding session">chat</button>
     </div>
 
-    <div id="clippy" title="Drag me around. Click for this session's status — expand it for usage and a box to talk to this agent; right-click for more; double-click to say hi.">
+    <div id="clippy">
       <!-- Generated characters animate inside GIFs built by `npm run make-buddies`;
            the paperclip has one set per session colour. -->
       <img id="buddy" width="96" height="120" alt="" />
@@ -136,9 +161,8 @@
 
     <!-- The buddy's name plate — under its feet, no card around it, just text
          the drop shadow keeps legible over whatever wallpaper it lands on: the
-         pet's name, and under it the folder it is watching with the folder
-         above that, which is what tells two similarly-named checkouts apart.
-         After #pointer, so the arrow stays directly under his feet. -->
+         pet's name, and under it the folder it is watching and the model that
+         folder is spending. -->
     <div id="who" title="Which coding-agent session this buddy is watching">
       <span id="who-pet">…</span>
       <span id="who-sub">…</span>

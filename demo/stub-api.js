@@ -53,6 +53,13 @@
     drivePrompt: (text) => post('drive-prompt', { text }),
     driveStop: () => post('drive-stop'),
     sendPrompt: (text) => post('send-prompt', { text }),
+    // In the app the pet's reply comes back from main over IPC invoke. The
+    // bench has no model to ask, so it logs the question in the panel and
+    // answers in character itself — enough to lay out the panel against.
+    petSay: async (text) => {
+      post('pet-say', { text });
+      return { text: `(bench) “${String(text || '').slice(0, 48)}” — you say the nicest things.` };
+    },
     openWindow: (opts) => post('open-window', opts || {}),
     pointAtPrompt: () => post('point'),
     openSettings: () => post('open-settings'),

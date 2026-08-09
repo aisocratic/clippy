@@ -25,9 +25,9 @@ Claude Code and Codex do not expose identical hook events.
 
 - Claude permission requests, plan approval, `AskUserQuestion`, and end-of-turn
   review can be answered from Clippy.
-- Codex permission and end-of-turn decisions use the same cards.
-- Codex `request_user_input` is currently read-only in Clippy and opens the
-  native picker.
+- Codex permission, `request_user_input`, and end-of-turn decisions use the
+  same cards. Question selections are returned as a model-visible blocked-tool
+  result because Codex's question arguments do not expose a pre-filled answer.
 - Codex has no separate notification or post-tool-failure hook. Clippy infers
   non-zero shell exits from `PostToolUse` where possible.
 - Drive mode and Claude allowance calibration are Claude-specific. Codex

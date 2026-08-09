@@ -365,12 +365,22 @@ window.addEventListener('message', async (e) => {
       setDocked(true);
       break;
 
+    case 'pet-say':
+      // Note where this does *not* go: the pet chat never reaches the session.
+      log('in', 'petSay', `to the pet, not the session: ${p.text}`);
+      break;
+
     case 'open-window':
-      log('in', 'openWindow', 'raise the terminal window and perch on it');
-      setDocked(true);
-      // `point: true` means the answer has to be typed on that prompt — main
-      // walks over once it has landed, so the bench does too.
-      if (p.point) setTimeout(walkToPrompt, 500);
+      // Raising the window is the whole job: the buddy keeps his spot. Only
+      // `point: true` — the answer has to be typed on that prompt — puts him on
+      // the window first, because he has to stand on it to walk down it.
+      if (p.point) {
+        log('in', 'openWindow', 'raise the terminal window, perch, and walk to the prompt');
+        setDocked(true);
+        setTimeout(walkToPrompt, 500);
+      } else {
+        log('in', 'openWindow', 'raise the terminal window — the buddy stays put');
+      }
       break;
 
     case 'point':

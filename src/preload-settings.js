@@ -13,7 +13,12 @@ contextBridge.exposeInMainWorld('clippySettings', {
   setSetting: (key, value) => ipcRenderer.send('clippy-set-setting', { key, value }),
   showBuddy: (sessionId) => ipcRenderer.send('clippy-settings-show', sessionId),
   // Give one project a buddy of its own; '' hands it back to the mode.
-  assign: (name, character) => ipcRenderer.send('clippy-settings-assign', { name, character }),
+  // Both are keyed by session, not by project: two agents in one folder are two
+  // buddies, and dressing one must not dress the other.
+  assign: (sessionId, character) =>
+    ipcRenderer.send('clippy-settings-assign', { sessionId, character }),
+  assignSize: (sessionId, size) =>
+    ipcRenderer.send('clippy-settings-assign-size', { sessionId, size }),
   // 'accessibility' opens the macOS pane; 'copy-path' copies this app's path.
   fix: (what) => ipcRenderer.send('clippy-settings-fix', what),
   // Compare this build with the tip of main on GitHub.

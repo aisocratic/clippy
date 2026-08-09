@@ -145,8 +145,10 @@ There are three deliberate differences in the current Codex integration:
 
 - Codex has no `Notification` or `PostToolUseFailure` hook. Clippy detects non-zero shell exits
   from `PostToolUse`, while idle reminders rely on the turn/question/permission hooks it does have.
-- A Codex `request_user_input` call is surfaced as a read-only question card that takes you to the
-  native picker. Claude's `AskUserQuestion` hook can still be answered directly inside Clippy.
+- A Codex `request_user_input` call is held by its own interactive `PreToolUse` hook and rendered
+  with the same option buttons as Claude. Submitting consumes the tool call and gives Codex the
+  selected values as its model-visible result; moving to the terminal, dismissing, or timing out
+  returns no decision and leaves Codex's native picker in charge.
 - Drive mode and Claude plan/allowance calibration remain Claude-specific. Codex context and token
   totals are shown from its rollout files without pretending they are account-limit percentages.
 
@@ -244,12 +246,12 @@ port first wins.
 - **Plan card**: when Claude presents a plan (plan mode), the card shows the
   plan. **Approve plan** lets it start; type a change and **Revise** to send it
   back to planning with your note.
-- **Question card**: when Claude asks a multiple-choice question, its options
+- **Question card**: when Claude or Codex asks a multiple-choice question, its options
   become buttons. Pick one per question (multi-select takes several), hit
-  **Submit answer**, and Claude carries on with your choice — no terminal
+  **Submit answer**, and the agent carries on with your choice — no terminal
   round-trip. **Move to terminal ↗** hands the question back to the normal
   picker *and* brings that terminal to the front. (A held question can't be in
-  both places at once: while Clippy holds the hook, Claude Code hasn't run the
+  both places at once: while Clippy holds the hook, the agent hasn't run the
   tool yet, so there is no picker in the terminal to look at. Releasing it is
   what makes one appear.) If answering from Clippy is off — or the question
   arrives malformed — you get a read-only card with the question and a
@@ -313,8 +315,18 @@ port first wins.
   it can read, so this points at the line rather than at the character.
 - **One size, always**: the buddy is drawn at the size you picked in every mode
   — a card appearing never shrinks or grows him. Small/Medium/Large are 2×, 3×
-  and 4× the 32×40 sprite (pixel art only looks right at whole multiples), and
-  the choice sticks across restarts.
+  and 4× the 32×40 sprite (pixel art only looks right at whole multiples); XS is
+  1.5×, which is still whole on a Retina screen at 3 device pixels a sprite
+  pixel. **Size is per project**, like the character: the repo you're working in
+  can be Large while the two you're keeping half an eye on sit at XS. The choice
+  sticks across restarts.
+- **Which way he looks**: toward the middle of the screen when he's idle — a
+  buddy parked on the left edge looking further left has his back to everything
+  you care about — the way he's walking while he crosses a window, and the way
+  you're carrying him while you drag him, changing direction mid-drag if you do.
+  Turning around is a mirror, so each pack says which way its art is drawn (and
+  each animation may disagree with its pack: sheets often run left but sit
+  facing the viewer, and art drawn facing the viewer is never mirrored at all).
 - **The menu bar**: click 📎 for the settings window (above); right-click for the
   quick menu — per-session actions (show, perch, open window), Drive mode, every
   on/off switch under *Quick settings* (permission requests, questions, review on
@@ -476,11 +488,16 @@ the quick menu — sessions, Drive mode, quit). It's the one part of Clippy you 
 and read, and it has five sections:
 
 - **Sessions** — everything reporting in right now, each with the buddy it's
-  wearing and a picker to **give that project a buddy of its own**. That choice
-  is kept against the project name and becomes the first preference; concurrent
-  sessions use the other available characters instead of becoming twins.
+  wearing and pickers to **give that session a buddy and a size of its own**.
+  A pick lands on that one row: two agents in the same folder are two buddies,
+  and dressing one never dresses the other. It is also remembered against the
+  folder, so the repo still looks the same tomorrow when that session id is
+  gone — the folder's other agents are pinned to what they were wearing at that
+  moment so they don't come along for the ride. A session with no size of its
+  own follows the default under **Buddies**.
 - **Buddies** — every character with all nine of its animations playing side by
-  side (the same layout as the test bench's workbench), and a size picker.
+  side (the same layout as the test bench's workbench), and the default size
+  picker (per-project sizes live beside each session above).
   **Every live session gets its own available buddy**, chosen from the cast by
   session id, so parallel agents in the same repo do not match. Nothing to
   configure — click a character here to make it the first choice for projects
@@ -533,6 +550,23 @@ strip is stepped frame by frame at `fps`. Frames must sit in one horizontal row,
 all the same size. Only `idle` is required — anything missing falls back to
 `excited`, then `idle`. Restart the app (or reload the bench) and the theme
 appears in the settings window and in the buddy's own **🎨 Buddy & size** menu.
+
+Add `"facing"` if the art isn't drawn facing right: `"left"`, or `"center"` for
+art that looks straight out of the screen. Clippy turns a buddy around by
+mirroring the sprite, so a left-drawn pack that doesn't say so walks backwards,
+and a `"center"` one is never mirrored at all. Any single animation can override
+it — sheets are often inconsistent with themselves, running to the left but
+sitting facing the viewer:
+
+```json
+"poses": {
+  "idle": { "file": "sheet.webp", "row": 0, "frames": 6, "facing": "center" },
+  "walk": { "file": "sheet.webp", "row": 1, "frames": 8, "facing": "left" }
+}
+```
+
+`add-sprite-pack` takes the same thing as `--facing left` and a third field on
+any pose flag: `--walk 1:8:left --idle 0:6:center`.
 
 A pack can name any of the poses Clippy knows — `idle`, `excited`, `walk`,
 `point`, `sleep`, `cheer`, and the rest of the nine-pose vocabulary — under a
@@ -733,8 +767,8 @@ Two things worth knowing before changing the UI:
   settings, and the hook handlers (approvals, plans, reviews, questions,
   activity)
 - `src/identity.js` — per-session name and colour, hashed from the project name
-- `src/characters.js` — the cast and the three buddy sizes, shared by the main
-  process, the renderer's menu and the web test bench
+- `src/characters.js` — the cast, the four buddy sizes, and which way each is
+  drawn; shared by the main process, the renderer's menu and the web test bench
 - `src/actions.js` — what Clippy does with a session, as data, with the real
   hook JSON for every button; the settings window is rendered from it
 - `src/sandbox-scenarios.js` — the sandbox's states, as data, in the event
