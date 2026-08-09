@@ -31,10 +31,17 @@
  *   --sleep R:F      …nothing happening for a while
  *   --cheer R:F      …a turn finished cleanly
  *   --fps N          frames per second (default 6)
+ *   --facing DIR     which way the art is drawn: left, right (default), or
+ *                    center for art that looks straight out of the screen
  *
  * Only idle and excited have defaults; name the others if the pack has rows
  * that suit them. Rows you never name still show up in the settings window, so
  * you can look through a sheet and come back for them.
+ *
+ * Any pose flag takes a third field to override the pack's facing for that one
+ * animation, because sheets are not consistent with themselves:
+ *
+ *   --walk 1:8:left --idle 0:6:center
  */
 
 const fs = require('node:fs');
@@ -45,7 +52,12 @@ const { promisify } = require('node:util');
 const execFileAsync = promisify(execFile);
 const { THEMES_DIR, POSES } = require('../src/characters');
 
-const CATALOG_URL = 'https://openpets.dev/pets/catalog.v2.json';
+// v3, and paged: the catalog outgrew one file (300 pets in the frozen v2
+// snapshot, 1200+ now), so the URL below is a manifest listing page files and
+// the pets live in those. Staying on v2 meant every pet published since it was
+// generated — Raichu among them — came back as "no pet matching … in the
+// openpets catalog" even though its page and its zip were both live.
+const CATALOG_URL = 'https://openpets.dev/pets/catalog.v3.json';
 // The catalog's own installer caps downloads at 50MB; same bar here.
 const MAX_ZIP_BYTES = 50 * 1024 * 1024;
 
@@ -55,11 +67,24 @@ const flag = (name, fallback) => {
   return i >= 0 && args[i + 1] ? args[i + 1] : fallback;
 };
 
-/** "3:4" -> { row: 3, frames: 4 } */
+/**
+ * "3:4" -> { row: 3, frames: 4 }, and "1:8:left" -> the same plus a facing.
+ *
+ * The third field is per-animation because sheets are not consistent with
+ * themselves: the walk row runs to the left while the idle row sits facing the
+ * viewer, and mirroring that idle to "turn him around" would say nothing.
+ */
 function pose(spec, label) {
-  const [row, frames] = String(spec).split(':').map(Number);
-  if (!(row >= 0) || !(frames > 0)) throw new Error(`--${label} wants ROW:FRAMES, got "${spec}"`);
-  return { row, frames };
+  const [rowText, framesText, facing] = String(spec).split(':');
+  const row = Number(rowText);
+  const frames = Number(framesText);
+  if (!(row >= 0) || !(frames > 0)) {
+    throw new Error(`--${label} wants ROW:FRAMES[:left|right|center], got "${spec}"`);
+  }
+  if (facing && !['left', 'right', 'center'].includes(facing)) {
+    throw new Error(`--${label}: "${facing}" is not left, right or center`);
+  }
+  return { row, frames, ...(facing ? { facing } : null) };
 }
 
 /**
@@ -119,11 +144,34 @@ function zipUrlFor(arg, pets) {
   return pet.zip;
 }
 
+/**
+ * Every pet the catalog knows, from whichever shape it is in today.
+ *
+ * One file that carries `pets` is read as-is; a manifest that carries `pages`
+ * is followed and the pages concatenated. Both are handled because the catalog
+ * has already changed shape once under us, and a version bump should cost a
+ * URL, not a rewrite.
+ *
+ * @param {object} manifest  the parsed catalog
+ * @param {(url: string) => Promise<object>} getJson  how to fetch a page
+ */
+async function catalogPets(manifest, getJson) {
+  if (Array.isArray(manifest?.pets)) return manifest.pets;
+  const pages = Array.isArray(manifest?.pages) ? manifest.pages : [];
+  if (!pages.length) return [];
+  // Concurrently: thirteen small files, and the user is waiting on a click.
+  const loaded = await Promise.all(pages.map((url) => getJson(url)));
+  return loaded.flatMap((page) => (Array.isArray(page?.pets) ? page.pets : []));
+}
+
 /** Fetch a URL-or-id pack into a temp folder and hand back that folder. */
 async function fetchPack(arg) {
-  const res = await fetch(CATALOG_URL, { headers: { 'User-Agent': 'clippy-for-claude' } });
-  if (!res.ok) throw new Error(`openpets catalog answered ${res.status}`);
-  const zipUrl = zipUrlFor(arg, (await res.json()).pets || []);
+  const getJson = async (url) => {
+    const res = await fetch(url, { headers: { 'User-Agent': 'clippy-for-claude' } });
+    if (!res.ok) throw new Error(`openpets catalog answered ${res.status}`);
+    return res.json();
+  };
+  const zipUrl = zipUrlFor(arg, await catalogPets(await getJson(CATALOG_URL), getJson));
 
   console.log(`downloading ${zipUrl}`);
   const zipRes = await fetch(zipUrl, { headers: { 'User-Agent': 'clippy-for-claude' } });
@@ -209,6 +257,9 @@ async function installPack(src, opts = {}) {
     columns,
     rows,
     fps: Number(opts.fps || 6),
+    // Clippy turns a buddy around by mirroring it, so it has to be told which
+    // way "not mirrored" already points.
+    facing: ['left', 'right', 'center'].includes(opts.facing) ? opts.facing : 'right',
     poses,
   };
 
@@ -228,7 +279,7 @@ async function main() {
   }
 
   const opts = {};
-  for (const name of ['id', 'label', 'grid', 'fps', ...POSES]) {
+  for (const name of ['id', 'label', 'grid', 'fps', 'facing', ...POSES]) {
     const value = flag(name);
     if (value != null) opts[name] = value;
   }
@@ -251,4 +302,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { imageSize, zipUrlFor, installPack };
+module.exports = { imageSize, zipUrlFor, catalogPets, installPack };

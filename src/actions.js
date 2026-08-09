@@ -69,16 +69,16 @@ const ACTIONS = [
     pose: 'excited',
     scenario: 'answer-one',
     icon: '❓',
-    title: "Answer Claude's question",
-    appliesTo: 'Claude · Codex uses its native picker',
-    hook: 'PreToolUse (AskUserQuestion)',
+    title: "Answer the agent's question",
+    appliesTo: 'Claude + Codex',
+    hook: 'PreToolUse (AskUserQuestion / request_user_input)',
     setting: 'answerQuestions',
-    when: 'Claude asks a multiple-choice question.',
+    when: 'Claude or Codex asks a multiple-choice question.',
     shows: "Each option as a button — multi-select where Claude allows it.",
     choices: [
       {
         label: 'Submit answer',
-        effect: 'fed back as the tool’s input, so the terminal picker never appears',
+        effect: 'fed back to the agent, so the terminal picker never appears',
         json: json('PreToolUse', 'answer', '{"Which store?":"Redis"}', ASK),
       },
       {

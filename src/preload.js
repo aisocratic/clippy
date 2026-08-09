@@ -13,6 +13,8 @@ contextBridge.exposeInMainWorld('clippyAPI', {
   driveStop: () => ipcRenderer.send('clippy-drive-stop'),
   // The prompt composer: raise this session's terminal and type this into it.
   sendPrompt: (text) => ipcRenderer.send('clippy-send-prompt', text),
+  // A word with the buddy itself, which goes nowhere near that terminal.
+  petSay: (text) => ipcRenderer.invoke('clippy-pet-say', text),
   // Raise this session's terminal window and perch on it. `point: true` also
   // walks Clippy down to that session's prompt when he gets there — for when
   // the answer has to be typed on that line.

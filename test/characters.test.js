@@ -12,6 +12,7 @@ const {
   customThemes,
   allCharacters,
   characterFor,
+  sizeFor,
 } = require('../src/characters');
 
 const tmpThemes = (themes) => {
@@ -34,8 +35,13 @@ test('the drawn cast and the sizes line up with what the menus need', () => {
     sizeList().map((s) => s.id),
     Object.keys(SIZES)
   );
-  // Whole-number scaling only: pixel art at 1.5x is mush.
-  for (const s of sizeList()) assert.equal(s.buddy % 32, 0, `${s.id} is not a whole multiple`);
+  // Whole-number scaling only, or pixel art turns to mush — but the number
+  // that has to come out whole is the *device* pixel, and the buddy is drawn on
+  // a Retina screen. XS at 48 is 1.5 CSS pixels per drawn pixel and exactly 3
+  // device pixels; the other steps are whole either way.
+  for (const s of sizeList()) {
+    assert.equal((s.buddy * 2) % 32, 0, `${s.id} does not land on whole device pixels`);
+  }
 });
 
 test('every character in the menus has art drawn for it', () => {
@@ -107,6 +113,105 @@ test('a dropped-in sprite sheet becomes a character', () => {
   // Paths are handed to the renderer, so they're relative to the renderer.
   assert.equal(theme.sheet.poses.idle.file, 'assets/themes/my-cat/idle.png');
   assert.equal(theme.sheet.poses.excited.frames, 6);
+});
+
+test('a pack says which way its art is drawn, and right is the default', () => {
+  const pose = { idle: { file: 'idle.png', frames: 4 } };
+  const dir = tmpThemes({
+    lefty: {
+      'theme.json': JSON.stringify({ frameWidth: 32, frameHeight: 32, facing: 'left', ...pose }),
+    },
+    righty: {
+      'theme.json': JSON.stringify({ frameWidth: 32, frameHeight: 32, facing: 'right', ...pose }),
+    },
+    quiet: { 'theme.json': JSON.stringify({ frameWidth: 32, frameHeight: 32, ...pose }) },
+    nonsense: {
+      'theme.json': JSON.stringify({ frameWidth: 32, frameHeight: 32, facing: 'up', ...pose }),
+    },
+  });
+
+  const facing = Object.fromEntries(customThemes(dir).map((t) => [t.id, t.facing]));
+  assert.equal(facing.lefty, 'left');
+  assert.equal(facing.righty, 'right');
+  // The renderer mirrors the sprite to turn a buddy around, so an unspoken or
+  // unreadable facing has to land on something — the way most packs are drawn.
+  assert.equal(facing.quiet, 'right');
+  assert.equal(facing.nonsense, 'right');
+});
+
+test('center art is never turned around, and a pose can disagree with its pack', () => {
+  const dir = tmpThemes({
+    mixed: {
+      'theme.json': JSON.stringify({
+        frameWidth: 192,
+        frameHeight: 208,
+        columns: 8,
+        rows: 9,
+        facing: 'left',
+        poses: {
+          // Sheets are not consistent with themselves: this one runs to the
+          // left but sits facing the viewer.
+          idle: { file: 'sheet.webp', row: 0, frames: 6, facing: 'center' },
+          walk: { file: 'sheet.webp', row: 1, frames: 8 },
+          excited: { file: 'sheet.webp', row: 3, frames: 4, facing: 'up' },
+        },
+      }),
+    },
+  });
+
+  const [pack] = customThemes(dir);
+  assert.equal(pack.facing, 'left', 'the pack sets the default');
+  assert.equal(pack.sheet.poses.idle.facing, 'center', 'one animation may override it');
+  assert.equal(pack.sheet.poses.walk.facing, undefined, 'silence means inherit the pack');
+  assert.equal(pack.sheet.poses.excited.facing, undefined, 'and so does nonsense');
+});
+
+test('a choice made for one session does not dress its twin', () => {
+  // Two agents in the same folder. The settings window shows a row each, and
+  // picking in one row used to be written against the *project*, which is what
+  // made both buddies change at once.
+  const settings = {
+    characterByProject: { 'billing-api': 'cat' },
+    characterBySession: { 'session-a': 'clod' },
+  };
+  assert.equal(characterFor(settings, 'billing-api', 'session-a'), 'clod', 'the one you picked');
+  assert.equal(
+    characterFor(settings, 'billing-api', 'session-b'),
+    'cat',
+    'its twin keeps what the folder says'
+  );
+  // A session choice outranks the folder even when the folder wants it too, and
+  // even when a twin is already wearing it — you pointed at this buddy.
+  assert.equal(
+    characterFor({ characterByProject: { p: 'cat' }, characterBySession: { s: 'cat' } }, 'p', 's', ['cat']),
+    'cat'
+  );
+  // …but a character that no longer exists falls through rather than sticking.
+  assert.notEqual(characterFor({ characterBySession: { s: 'gone' } }, 'p', 's'), 'gone');
+});
+
+test('sizes work the same way — one session, not the whole folder', () => {
+  const settings = {
+    size: 'medium',
+    sizeByProject: { 'billing-api': 'large' },
+    sizeBySession: { 'session-a': 'xs' },
+  };
+  assert.equal(sizeFor(settings, 'billing-api', 'session-a'), 'xs');
+  assert.equal(sizeFor(settings, 'billing-api', 'session-b'), 'large');
+  assert.equal(sizeFor(settings, 'other', 'session-c'), 'medium');
+  // A size that no longer exists falls through to the folder, then the default.
+  assert.equal(sizeFor({ ...settings, sizeBySession: { 'session-a': 'huge' } }, 'billing-api', 'session-a'), 'large');
+});
+
+test('a project can be given a size, and everyone else keeps the default', () => {
+  const settings = { size: 'large', sizeByProject: { 'billing-api': 'xs' } };
+  assert.equal(sizeFor(settings, 'billing-api'), 'xs');
+  assert.equal(sizeFor(settings, 'my-app'), 'large', 'unassigned projects take the default');
+  // A size that no longer exists — a setting written by a build that had it —
+  // must not leave a buddy with no window size at all.
+  assert.equal(sizeFor({ size: 'large', sizeByProject: { x: 'huge' } }, 'x'), 'large');
+  assert.equal(sizeFor({ size: 'huge' }, 'x'), 'medium');
+  assert.equal(sizeFor({}, ''), 'medium');
 });
 
 test('half-written themes are skipped rather than crashing the menus', () => {

@@ -142,15 +142,16 @@ function normalizeAnswers(raw) {
 }
 
 /**
- * Translate a user decision into the JSON Claude Code expects on the hook's
- * stdout. `{}` means "no opinion" — Claude Code falls through to its normal
- * permission flow (allowlist, then terminal prompt), so it is always safe.
+ * Translate a user decision into the JSON Claude Code or Codex expects on the
+ * hook's stdout. `{}` means "no opinion" — the agent falls through to its
+ * normal permission/question flow, so it is always safe.
  *
  * @param {object} [opts]
- * @param {object} [opts.toolInput]  original tool_input, needed to answer a
- *                                   PreToolUse AskUserQuestion in place.
+ * @param {object} [opts.toolInput] original tool_input, needed to answer a question.
+ * @param {string} [opts.source]    hook source (`claude` or `codex`).
+ * @param {string} [opts.toolName]  canonical tool name.
  */
-function toHookResponse(event, action, message = '', { toolInput } = {}) {
+function toHookResponse(event, action, message = '', { toolInput, source, toolName } = {}) {
   // PreToolUse on AskUserQuestion: `updatedInput` replaces the tool's arguments
   // before it runs, and an AskUserQuestion that already carries `answers` has
   // nothing left to ask — so the terminal picker never appears and Claude reads
@@ -158,6 +159,34 @@ function toHookResponse(event, action, message = '', { toolInput } = {}) {
   // canUseTool allow+updatedInput, and it's what makes questions answerable
   // from Clippy in watch mode.
   if (event === 'PreToolUse') {
+    // Codex's request_user_input arguments do not have a pre-filled answer
+    // field. Instead, consume the tool call and return the selected values in
+    // the blocking reason: Codex receives that reason as the tool result and
+    // can continue without ever opening its terminal picker.
+    if (source === 'codex' || toolName === 'request_user_input') {
+      const answers = action === 'answer' ? normalizeAnswers(message) : null;
+      if (!answers) return {}; // pass / dismiss / timeout -> native Codex picker
+
+      const byId = {};
+      for (const q of Array.isArray(toolInput?.questions) ? toolInput.questions : []) {
+        const selected = answers[q.question];
+        if (!selected || !q.id) continue;
+        byId[q.id] = { answers: [selected] };
+      }
+      if (Object.keys(byId).length === 0) return {};
+
+      const response = JSON.stringify({ answers: byId });
+      return {
+        hookSpecificOutput: {
+          hookEventName: 'PreToolUse',
+          permissionDecision: 'deny',
+          permissionDecisionReason:
+            `The user answered this request through Clippy. ` +
+            `Treat this as the request_user_input response and continue: ${response}`,
+        },
+      };
+    }
+
     const answers = action === 'answer' ? normalizeAnswers(message) : null;
     if (!answers) return {}; // pass / dismiss / timeout / cancel -> terminal picker
     return {

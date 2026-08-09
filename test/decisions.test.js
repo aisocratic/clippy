@@ -152,6 +152,44 @@ test('an answered AskUserQuestion comes back as updatedInput.answers', () => {
   assert.deepEqual(toHookResponse('PreToolUse', 'answer', '{}'), {});
 });
 
+test('an answered Codex request_user_input skips the native picker with a tool result', () => {
+  const toolInput = {
+    questions: [
+      {
+        id: 'store',
+        header: 'Store',
+        question: 'Which store?',
+        options: [{ label: 'Redis', description: 'Shared state' }],
+      },
+    ],
+  };
+
+  const reply = toHookResponse(
+    'PreToolUse',
+    'answer',
+    '{"Which store?":"Redis"}',
+    { toolInput, source: 'codex', toolName: 'request_user_input' }
+  );
+  assert.equal(reply.hookSpecificOutput.hookEventName, 'PreToolUse');
+  assert.equal(reply.hookSpecificOutput.permissionDecision, 'deny');
+  assert.match(reply.hookSpecificOutput.permissionDecisionReason, /answered this request through Clippy/);
+  assert.match(
+    reply.hookSpecificOutput.permissionDecisionReason,
+    /"answers":\{"store":\{"answers":\["Redis"\]\}\}/
+  );
+
+  for (const action of ['pass', 'dismiss', 'timeout', 'cancel']) {
+    assert.deepEqual(
+      toHookResponse('PreToolUse', action, '', {
+        toolInput,
+        source: 'codex',
+        toolName: 'request_user_input',
+      }),
+      {}
+    );
+  }
+});
+
 test('describeToolCall summarizes common tools', () => {
   const bash = describeToolCall('Bash', { command: 'rm -rf /tmp/build', description: 'Clean build dir' });
   assert.match(bash.title, /Clean build dir/);

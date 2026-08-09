@@ -74,6 +74,7 @@ body {
 #bubble,
 #usage,
 #drive,
+#pet,
 #menu {
   -webkit-app-region: no-drag;
   width: var(--panel-w);
@@ -349,10 +350,13 @@ body.walking #clippy {
   50% { transform: translateY(-5px) rotate(4deg); }
 }
 
-/* Face where you're going. */
-body.facing-left #buddy,
-body.facing-left #buddy-sheet,
-body.facing-left #buddy-vector {
+/* Face where you're going. Turning around is a mirror, so the class says
+   "mirrored", not "facing left" — which of the two headings needs the mirror
+   depends on the way the character's art is drawn (see facing() in clippy.js).
+   No class at all is the character at rest, in its own drawn direction. */
+body.flipped #buddy,
+body.flipped #buddy-sheet,
+body.flipped #buddy-vector {
   transform: scaleX(-1);
 }
 
@@ -983,11 +987,12 @@ body:not(.compact) #statusline {
   text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
 }
 
-/* Above the buddy's head now, so the margin hangs below it instead of above.
-   Still hover-only: a resting buddy is a sprite and its name, nothing to
-   click by accident. */
+/* Floating above the buddy's head, and only while the pointer is on him: a
+   resting buddy is a sprite and its name, nothing to click by accident. The
+   room is reserved either way (see SIZES in src/characters.js), so revealing
+   them never resizes the window. */
 #controls {
-  margin-bottom: 4px;
+  margin-bottom: 5px;
   display: flex;
   gap: 6px;
   opacity: 0;
@@ -1005,6 +1010,23 @@ body:not(.compact) #statusline {
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
 }
 
+/* Moved inside an open panel (placeControls in clippy.js): the panel owns the
+   space over the buddy now, so these stop floating and become its last row —
+   plain buttons, no lift, ruled off from whatever the panel came to say. And
+   always visible: you are already looking straight at it. */
+#controls.inside {
+  margin: 10px 0 0;
+  padding-top: 9px;
+  border-top: 1px solid var(--line-soft);
+  justify-content: flex-end;
+  opacity: 1;
+}
+
+#controls.inside button {
+  background: #ffffff;
+  box-shadow: none;
+}
+
 /* ---------- The combined panel: status, token usage, and the composer ---------- */
 
 #usage {
@@ -1015,14 +1037,21 @@ body:not(.compact) #statusline {
 
 /* The panel opens collapsed: a status summary — state, recap, model, context.
    Everything heavier (the allowance bars, the plan note, the composer) waits
-   behind the Expand button, which swaps in for Send while it's away. */
-#usage.collapsed #usage-detail,
-#usage.collapsed #btn-usage-send {
+   behind the size button, which grows this same panel rather than opening
+   another one. */
+#usage.collapsed #usage-detail {
   display: none;
 }
 
-#usage:not(.collapsed) #btn-usage-expand {
+/* Send is for something to send: it stays out of the way until the composer
+   has words in it, so the collapsed summary and an untouched box both read as
+   "nothing to do here". */
+#btn-usage-send {
   display: none;
+}
+
+#usage:not(.collapsed).composing #btn-usage-send {
+  display: inline-block;
 }
 
 /* The session's state, in plain words — the first thing you came to find out,
@@ -1161,19 +1190,31 @@ body:not(.compact) #statusline {
 }
 
 /* Keep talking to the agent without leaving the panel: what you type here is
-   typed into that session's terminal, exactly as the old composer did. */
+   typed into that session's terminal, exactly as the old composer did.
+
+   It sits there as a single line — an invitation, not a form — and grows to
+   three the moment you start writing. The height is explicit rather than a
+   `rows` count so the growth can be measured and animated. */
 #usage-input {
   width: 100%;
   margin-top: 9px;
   font-family: inherit;
   font-size: 11.5px;
+  line-height: 16px;
+  height: 32px; /* 1 line + padding + border */
   padding: 7px 9px;
   border: 1px solid var(--line);
   border-radius: var(--radius-s);
   background: #ffffff;
   color: var(--text);
   resize: none;
+  /* No transition on the height: the window is resized to fit whatever this
+     measures, and an animating box measures its old size. */
   -webkit-app-region: no-drag;
+}
+
+#usage.composing #usage-input {
+  height: 64px; /* 3 lines */
 }
 
 #usage-input::placeholder {
@@ -1197,6 +1238,96 @@ body:not(.compact) #statusline {
   padding: 2px 8px;
 }
 
+/* ---------- Talking to the pet ---------- */
+
+/* Deliberately not the usage panel: nothing you say here goes to the coding
+   session, so it gets its own window rather than another box inside the one
+   whose composer types into a terminal. */
+#pet {
+  padding: 11px 13px 12px;
+  margin-bottom: 8px;
+  font-size: 11px;
+}
+
+#pet-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 7px;
+}
+
+#pet-who {
+  font-weight: 700;
+  font-size: 11px;
+  color: #444444;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#pet-log {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 210px;
+  overflow-y: auto;
+}
+
+/* The pet speaks in full width; you are quoted back narrower and to the right,
+   so a glance tells the two apart without labels. */
+.pet-line {
+  font-size: 11px;
+  line-height: 1.4;
+  color: #3d3d3d;
+}
+
+.pet-line.mine {
+  align-self: flex-end;
+  max-width: 85%;
+  color: var(--muted);
+  font-style: italic;
+}
+
+.pet-line.failed {
+  color: #b23b30;
+}
+
+.pet-line.waiting {
+  color: #8a8a86;
+}
+
+#pet-input {
+  width: 100%;
+  margin-top: 9px;
+  font-family: inherit;
+  font-size: 11.5px;
+  line-height: 16px;
+  height: 32px;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-s);
+  background: #ffffff;
+  color: var(--text);
+  resize: none;
+  /* No transition on the height: the window is resized to fit whatever this
+     measures, and an animating box measures its old size. */
+  -webkit-app-region: no-drag;
+}
+
+#pet.composing #pet-input {
+  height: 64px;
+}
+
+#pet-input::placeholder {
+  color: #9a9a96;
+}
+
+#pet-input:focus {
+  outline: none;
+  border-color: var(--clip);
+}
+
 /* ---------- Perched on a session's terminal window ---------- */
 
 /* Docked windows hang off the top-right corner of the terminal, so the stage
@@ -1205,6 +1336,54 @@ body.docked #stage {
   justify-content: flex-start;
   padding-top: 2px;
   padding-bottom: 0;
+}
+
+/* Perched, the window hangs off the terminal's own top-right corner and can
+   only grow downwards, so the buddy is the thing that has to stay still and the
+   panels have to open *under* him. Left in their normal order they stacked
+   above him against the top of the window and shoved him ~84px down the screen
+   every time one opened — which is the buddy jumping when you click him. */
+body.docked #card,
+body.docked #drive,
+body.docked #qcard,
+body.docked #usage,
+body.docked #pet,
+body.docked #bubble,
+body.docked #menu {
+  order: 1;
+  margin-top: 8px;
+  margin-bottom: 0;
+}
+
+/* The hide/chat row goes under him too while he's perched. It has to: it moves
+   *into* whichever panel opens, and anything above his head that comes and goes
+   takes his feet with it — the same 20px jump the panels were causing, just
+   smaller. Everything hangs below a perched buddy, because down is the only
+   way this window can grow. */
+body.docked #controls {
+  order: 1;
+  margin-top: 5px;
+  margin-bottom: 0;
+}
+
+body.docked.compact #controls {
+  margin-top: 3px;
+}
+
+body.docked #card,
+body.docked #qcard,
+body.docked #bubble,
+body.docked #menu {
+  margin-top: 16px;
+}
+
+/* …and the tail points back up at him, since he is above them now. */
+body.docked #card::after,
+body.docked #qcard::after,
+body.docked #bubble::after,
+body.docked #menu::after {
+  bottom: auto;
+  top: -8px;
 }
 
 /* Compact: the buddy and nothing else — the default until there's something to
@@ -1217,18 +1396,19 @@ body.compact #statusline,
 body.compact #bubble,
 body.compact #qcard,
 body.compact #usage,
+body.compact #pet,
 body.compact #menu,
 body.compact #card {
   display: none;
 }
 
 body.compact #controls {
-  margin-bottom: 2px;
+  margin-bottom: 3px;
   gap: 3px;
 }
 
 body.compact #controls button {
-  padding: 0 5px;
+  padding: 1px 7px;
 }
 
 .hidden {

@@ -48,9 +48,12 @@ const CHARACTERS = [
 ];
 
 /**
- * The buddy is one size all the time — this is that size, and the window that
- * holds nothing but him. Pixel art only looks right at whole multiples, so the
- * steps are 2x, 3x and 4x the 32x40 sprite.
+ * How big a buddy is drawn, and the window that holds nothing but him. Pixel
+ * art only looks right at whole multiples, so the main steps are 2x, 3x and 4x
+ * the 32x40 sprite; XS is the deliberate exception (see below).
+ *
+ * The size is per project, like the character: a repo you watch out of the
+ * corner of your eye can be XS while the one you're working in is large.
  */
 // The compact window is the buddy plus headroom for everything hover reveals
 // around him: the three-line identity plate above and the small controls below
@@ -61,6 +64,12 @@ const CHARACTERS = [
 // same size at every buddy size, and the longest one ("Claude Code · " plus a
 // model id) needs ~190px to sit on one line instead of wrapping or ellipsizing.
 const SIZES = {
+  // XS is for a screen with six sessions on it, where fitting is the point.
+  // 1.5x the 32px drawn sprite looks like it breaks the whole-multiple rule,
+  // but the pixel that has to come out whole is the device one: at 2x that is
+  // exactly 3 device pixels per drawn pixel, so it stays crisp on the Retina
+  // screen this runs on. (On a 1x external monitor it is the one soft step.)
+  xs: { buddy: 48, win: [190, 186] },
   small: { buddy: 64, win: [190, 206] },
   medium: { buddy: 96, win: [190, 234] },
   large: { buddy: 128, win: [210, 262] },
@@ -84,9 +93,17 @@ const THEMES_DIR = path.join(__dirname, 'renderer', 'assets', 'themes');
  *   {
  *     "label": "🐈 My cat",
  *     "frameWidth": 32, "frameHeight": 32, "fps": 6,
+ *     "facing": "right",
  *     "idle":    { "file": "idle.png",    "frames": 4 },
  *     "excited": { "file": "excited.png", "frames": 6 }
  *   }
+ *
+ * `facing` says which way the art is drawn — "right" (the default), "left", or
+ * "center" for art that looks straight out of the screen. Clippy turns a buddy
+ * around by mirroring the sprite, so a pack drawn facing left needs to say so
+ * or it will walk backwards, and a "center" pack is never mirrored at all.
+ * Any single animation can override it (see `poses` below), because a sheet
+ * that walks to the left often sits facing the viewer.
  *
  * Packs that put every animation in one grid — a row per animation, which is
  * how most pet sprite sheets ship — say so instead, and can name as many of the
@@ -94,9 +111,11 @@ const THEMES_DIR = path.join(__dirname, 'renderer', 'assets', 'themes');
  *
  *   { "frameWidth": 192, "frameHeight": 208, "columns": 8, "rows": 9,
  *     "poses": {
- *       "idle":    { "file": "spritesheet.webp", "row": 0, "frames": 6 },
+ *       "idle":    { "file": "spritesheet.webp", "row": 0, "frames": 6,
+ *                    "facing": "center" },
  *       "excited": { "file": "spritesheet.webp", "row": 3, "frames": 4 },
- *       "walk":    { "file": "spritesheet.webp", "row": 1, "frames": 8 }
+ *       "walk":    { "file": "spritesheet.webp", "row": 1, "frames": 8,
+ *                    "facing": "left" }
  *     } }
  *
  * Sprite packs stay *out* of this repo — that folder is gitignored, so whatever
@@ -121,11 +140,31 @@ function customThemes(dir = THEMES_DIR) {
       continue; // a generated character, or a theme.json we can't read
     }
     const sheet = readSheet(raw, entry.name);
-    if (sheet) themes.push({ id: entry.name, label: raw.label || entry.name, sheet });
-    else console.warn(`clippy: ignoring themes/${entry.name} — theme.json is incomplete`);
+    if (sheet) {
+      themes.push({
+        id: entry.name,
+        label: raw.label || entry.name,
+        sheet,
+        // Which way the art is drawn. Packs disagree — one fox faces right, the
+        // next faces left — and the renderer mirrors the sprite to turn it
+        // around, so it has to know which way "not mirrored" already points.
+        // 'center' is art drawn facing the viewer: mirroring it says nothing,
+        // so it is left alone whichever way the buddy is headed.
+        facing: facing(raw.facing) || 'right',
+      });
+    } else {
+      console.warn(`clippy: ignoring themes/${entry.name} — theme.json is incomplete`);
+    }
   }
   return themes;
 }
+
+/**
+ * Which way art is drawn, if it says: 'left', 'right', or 'center' for art that
+ * looks straight out of the screen and must never be mirrored. Anything else —
+ * including nothing at all — is null, meaning "inherit".
+ */
+const facing = (value) => (['left', 'right', 'center'].includes(value) ? value : null);
 
 /** Validate the bits the renderer has to have, or return null. */
 function readSheet(raw, id) {
@@ -135,6 +174,10 @@ function readSheet(raw, id) {
           file: `assets/themes/${id}/${p.file}`,
           frames: Math.floor(Number(p.frames)),
           row: Math.max(0, Math.floor(Number(p.row) || 0)),
+          // Per animation, because packs are not consistent with themselves:
+          // a sheet can walk to the left and sit facing the viewer. Unset here
+          // means "whichever way the pack as a whole is drawn".
+          ...(facing(p.facing) ? { facing: facing(p.facing) } : null),
         }
       : null;
 
@@ -174,20 +217,50 @@ function allCharacters() {
 }
 
 /**
+ * How big a buddy is drawn.
+ *
+ * Same two levels as the character: a size picked for one session is that
+ * buddy's own, a size picked for a project is the folder's standing preference,
+ * and everything else falls back to the one global default. Kept here beside
+ * the cast so main, the settings window and the test bench all agree.
+ */
+function sizeFor(settings, name, sessionId = '') {
+  // This one session first: two agents in the same folder are two buddies, and
+  // resizing one of them must not resize its twin.
+  const own = (settings.sizeBySession || {})[sessionId];
+  if (own && SIZES[own]) return own;
+  const assigned = (settings.sizeByProject || {})[name];
+  if (assigned && SIZES[assigned]) return assigned;
+  return SIZES[settings.size] ? settings.size : 'medium';
+}
+
+/**
  * Which character this session's buddy should be.
  *
  * A session id picks the starting point in the cast. `used` lets main avoid
  * giving two live sessions in the same project the same animation; once the
  * whole cast is on screen, reuse is unavoidable and the stable pick wins.
  *
- * @param {object} settings  the app's settings (any per-project assignments)
- * @param {string} name      the project name — what manual assignments use
- * @param {string} sessionId the live session — what the automatic pick hashes
+ * Assignments come in two levels. One made against a *session* is that buddy's
+ * alone, so changing the pet in one row of the settings window never disturbs
+ * the other agents running in the same folder. One made against the *project*
+ * is the folder's standing preference, and outlives any particular session.
+ *
+ * @param {object} settings  the app's settings (the assignments live here)
+ * @param {string} name      the project name — what project assignments use
+ * @param {string} sessionId the live session — its own assignment, else what
+ *                           the automatic pick hashes
  * @param {string[]} used    character ids already active in this project
  */
 function characterFor(settings, name, sessionId = '', used = []) {
   const cast = allCharacters();
   const unavailable = new Set(used);
+
+  // Picked for this one session, it wins outright — including over its twin's
+  // claim on the same character. That is the whole point of a per-session
+  // choice: you pointed at one buddy in the list and said "you, be the fox".
+  const own = (settings.characterBySession || {})[sessionId];
+  if (own && cast.some((c) => c.id === own)) return own;
 
   // A buddy assigned to this project by hand still wins — but only while it's
   // free. Everyone else picks from their own session id, so parallel sessions
@@ -213,5 +286,6 @@ module.exports = {
   customThemes,
   allCharacters,
   characterFor,
+  sizeFor,
   THEMES_DIR,
 };

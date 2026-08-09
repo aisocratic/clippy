@@ -72,7 +72,15 @@ const usageContext = document.getElementById('usage-context');
 const usageBars = document.getElementById('usage-bars');
 const usageNote = document.getElementById('usage-note');
 const usageInput = document.getElementById('usage-input');
-const btnUsageExpand = document.getElementById('btn-usage-expand');
+const btnUsageSize = document.getElementById('btn-usage-size');
+
+const petEl = document.getElementById('pet');
+const petWho = document.getElementById('pet-who');
+const petLog = document.getElementById('pet-log');
+const petInput = document.getElementById('pet-input');
+
+const stageEl = document.getElementById('stage');
+const controlsEl = document.getElementById('controls');
 
 const menuEl = document.getElementById('menu');
 const menuName = document.getElementById('menu-name');
@@ -150,7 +158,12 @@ let widthSent = 0;
 // the normal panel. Every other card leaves the width alone (0 = default).
 const PLAN_WIN_W = 510;
 
-const PANELS = ['card', 'bubble', 'qcard', 'usage', 'drive', 'menu'];
+const PANELS = ['card', 'bubble', 'qcard', 'usage', 'pet', 'drive', 'menu'];
+
+// When we last asked main for a different window, and how long afterwards a
+// mouseleave is treated as the layout moving rather than the pointer.
+let resizedAt = 0;
+const RESIZE_SETTLE_MS = 400;
 
 /**
  * How tall the window has to be for everything on the stage to fit. Measured
@@ -158,10 +171,9 @@ const PANELS = ['card', 'bubble', 'qcard', 'usage', 'drive', 'menu'];
  * different windows, and the fixed size used to cut the taller one off.
  */
 function contentHeight() {
-  const stage = document.getElementById('stage');
-  const style = getComputedStyle(stage);
+  const style = getComputedStyle(stageEl);
   let h = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
-  for (const el of stage.children) {
+  for (const el of stageEl.children) {
     if (el.classList.contains('hidden')) continue;
     const cs = getComputedStyle(el);
     if (cs.display === 'none') continue;
@@ -175,9 +187,50 @@ function contentHeight() {
  * the renderer just says which of the two sizes its current contents want, and
  * how tall the full one has to be.
  */
+/* Panels that take the hide/chat row in when they open. The three left out —
+   a held card, a question card, and the menu — are each already a set of
+   actions waiting on you, so a second row underneath would be one more thing
+   to read at the moment you can least afford it. While one of those is up the
+   row simply steps aside. */
+const CONTROL_HOSTS = ['usage', 'pet', 'bubble', 'drive'];
+
+/**
+ * Where hide/chat live right now.
+ *
+ * With nothing open they float above the buddy's head. A panel takes that space
+ * the moment it opens, so the row moves *into* the panel and becomes its last
+ * row rather than a pair of buttons hovering over the top of it.
+ *
+ * Called from syncMode before it measures, so the height main is given already
+ * accounts for wherever the row ended up.
+ */
+function placeControls() {
+  const open = (id) => !document.getElementById(id).classList.contains('hidden');
+  const hostId = CONTROL_HOSTS.find(open);
+  const host = hostId ? document.getElementById(hostId) : null;
+  controlsEl.classList.toggle('inside', Boolean(host));
+  // No host, but something else has the stage: stand down rather than float
+  // over the top of a card.
+  controlsEl.classList.toggle('hidden', !host && PANELS.some(open));
+  const parent = host || stageEl;
+  if (controlsEl.parentElement === parent) return;
+  if (host) host.append(controlsEl);
+  else stageEl.insertBefore(controlsEl, clippyEl);
+}
+
 function syncMode() {
   const showing = PANELS.some((id) => !document.getElementById(id).classList.contains('hidden'));
   const want = showing ? 'full' : 'compact';
+  // Switch to the mode we're about to ask for *before* measuring. `compact`
+  // decides what is on the stage at all — it hides every panel and shows the
+  // ambient lines — so measuring while it still says "compact" reports the
+  // height of the window we're leaving, not the one we want. Main sized to
+  // that, echoed `dock` back, the class flipped, and the next render measured
+  // properly and resized again: one click, two resizes, and a buddy that
+  // visibly jumped. Main sends the same value straight back, so this only ever
+  // moves the flip earlier.
+  document.body.classList.toggle('compact', want === 'compact');
+  placeControls();
   // Measure after layout has settled, so a card that just appeared is included.
   const height = want === 'full' ? contentHeight() : 0;
   // Only the plan card asks for extra width; 0 means "the usual".
@@ -186,6 +239,7 @@ function syncMode() {
   modeSent = want;
   heightSent = height;
   widthSent = width;
+  resizedAt = Date.now();
   window.clippyAPI.setMode(want, height, width);
 }
 
@@ -270,9 +324,56 @@ function currentVector() {
   return who && who.vector ? who.vector : null;
 }
 
+/* ---------- Which way the buddy is looking ----------
+
+   Two halves. *Heading* is where he wants to look: the way he's being carried
+   while you drag him, the way he's walking, and — with nothing else going on —
+   inward, away from the edge he's parked against, because a buddy on the left
+   of the screen looking further left has his back to everything you care about.
+   Main watches the window and sends `side`; the rest is here.
+
+   *Drawn* is which way the art already points, and turning a buddy around is
+   only a mirror, so the two have to be compared before flipping anything. It is
+   per character AND per animation: packs disagree with each other (one fox
+   faces right, the next left) and with themselves (a sheet that runs to the
+   left often sits facing the viewer). Art drawn 'center' looks straight out of
+   the screen and is never mirrored — there is nothing to turn. */
+
+let heading = null; // 'left' | 'right' — where he's actively looking, if anywhere
+let side = 'right'; // which half of the screen he's parked on, per main
+
+/** Which way the current character's current pose is drawn. */
+function drawnFacing() {
+  const who = (settings.characters || []).find((c) => c.id === settings.character);
+  const perPose = who?.sheet?.poses?.[pose]?.facing;
+  return perPose || who?.facing || 'right';
+}
+
+/** Where he looks when nothing is pulling him: inward, off the nearest edge. */
+const restHeading = () => (side === 'left' ? 'right' : 'left');
+
+/** Mirror the art, or don't, from the heading and the way the pose is drawn. */
+function applyFacing() {
+  const want = heading || restHeading();
+  const drawn = drawnFacing();
+  document.body.classList.toggle('flipped', drawn !== 'center' && want !== drawn);
+}
+
+/**
+ * Point the buddy somewhere — 'left', 'right', or null to let him settle back
+ * to facing into the screen.
+ */
+function face(want) {
+  heading = want === 'left' || want === 'right' ? want : null;
+  applyFacing();
+}
+
 /** Show a pose by name — `walk`, `point`, `excited`, `idle`… */
 function setPose(name) {
   pose = poseFor(name);
+  // A different animation can be drawn facing a different way, so the mirror is
+  // reconsidered every time the pose changes, not only when he turns.
+  applyFacing();
   const vector = currentVector();
   if (vector) {
     const art = window.ClippyVectors.create(vector, pose, me.color);
@@ -392,6 +493,7 @@ function showBubble(text, { fix = null } = {}) {
   bubbleFix = fix;
   btnFix.classList.toggle('hidden', !fix);
   usageEl.classList.add('hidden'); // news wins over the token panel
+  petEl.classList.add('hidden');
   menuEl.classList.add('hidden');
   bubbleEl.classList.remove('hidden');
   syncMode();
@@ -421,6 +523,7 @@ function openMenu() {
   // One thing above the buddy's head at a time: the menu replaces whatever
   // panel was up, instead of stacking under it and shoving it around.
   usageEl.classList.add('hidden');
+  petEl.classList.add('hidden');
   bubbleEl.classList.add('hidden');
   syncMenuItems();
   menuEl.classList.remove('hidden');
@@ -699,35 +802,43 @@ function windowBar(row, win, weekTotal, now, agent = 'claude') {
 }
 
 // Whether the panel is grown into the full view. A fresh open always starts
-// at the collapsed summary; Expand is a choice you make each visit — but a
+// at the collapsed summary; growing it is a choice you make each visit — but a
 // parked panel comes back as you left it.
 let usageExpanded = false;
 
 function applyUsageExpansion() {
   usageEl.classList.toggle('collapsed', !usageExpanded);
+  // The same button both ways, pointing the way the panel will move: the
+  // ordinary disclosure chevron, down to open it and up to fold it back.
+  btnUsageSize.textContent = usageExpanded ? '▴' : '▾';
+  btnUsageSize.title = usageExpanded
+    ? 'Back to the summary'
+    : 'Show more: the allowance bars, and a box to talk to this agent';
 }
 
 /**
  * The one panel a left click opens — collapsed to a status summary first: the
  * session's state, what the agent is doing right now, the model, and how full
- * the context is. Expand grows the same window into the full view (the
- * allowance bars and a box to say the next thing) for whoever wants more.
+ * the context is. The ▾ button grows the same window into the full view (the
+ * allowance bars and a box to say the next thing) and ▴ folds it back — one
+ * panel either way.
  *
- * `restore: true` is the parking path bringing the panel back as it was;
- * everything else opens the collapsed summary.
+ * Every open starts at the collapsed summary, including one coming back from
+ * having stepped aside — see parkPanels.
  */
-async function showUsage({ restore = false } = {}) {
+async function showUsage() {
   const data = await window.clippyAPI.usage();
   if (!data) return;
   const { session, windows } = data;
   const now = data.now || Date.now();
 
-  // The panel and a speech bubble both want the space above Clippy's head.
+  // The panel, the pet and a speech bubble all want the space above his head.
   bubbleEl.classList.add('hidden');
+  petEl.classList.add('hidden');
   qcardEl.classList.add('hidden');
   menuEl.classList.add('hidden');
 
-  if (!restore) usageExpanded = false;
+  usageExpanded = false;
   applyUsageExpansion();
 
   latestRecap = data.recap || '';
@@ -772,7 +883,10 @@ async function showUsage({ restore = false } = {}) {
   syncMode();
   // The full view is also where you type the next prompt, so the caret starts
   // there — but only once it's on screen; the collapsed summary has no box.
-  if (usageExpanded) usageInput.focus();
+  // preventScroll, always: a window clamped shorter than its contents will
+  // happily scroll the composer into view and take the buddy off the top of
+  // his own window with it.
+  if (usageExpanded) usageInput.focus({ preventScroll: true });
 }
 
 /**
@@ -847,13 +961,99 @@ function hideUsage() {
   syncMode();
 }
 
-// Expand: same window, grown — the bars and the composer were rendered on
-// open, so this only has to reveal them and ask main for the taller window.
-btnUsageExpand.addEventListener('click', () => {
-  usageExpanded = true;
+// Same window, grown or shrunk — the bars and the composer were rendered when
+// the panel opened, so this only reveals or hides them and asks main for the
+// window that fits. Never a second panel.
+btnUsageSize.addEventListener('click', () => {
+  usageExpanded = !usageExpanded;
   applyUsageExpansion();
   syncMode();
-  usageInput.focus();
+  if (usageExpanded) usageInput.focus({ preventScroll: true });
+});
+
+/* ---------- Talking to the pet ----------
+   The 💬 button under the buddy. Everything else in this window talks to the
+   coding session; this talks to the animal sitting on top of it, and main
+   keeps the two apart (src/pet-chat.js). */
+
+let petThinking = false;
+
+function petLine(text, cls = '') {
+  const el = document.createElement('div');
+  el.className = `pet-line${cls ? ` ${cls}` : ''}`;
+  el.textContent = text;
+  petLog.append(el);
+  petLog.scrollTop = petLog.scrollHeight;
+  return el;
+}
+
+function showPet() {
+  // The panel and everything else want the same space above the buddy's head.
+  usageEl.classList.add('hidden');
+  bubbleEl.classList.add('hidden');
+  qcardEl.classList.add('hidden');
+  menuEl.classList.add('hidden');
+  petWho.textContent = `${me.pet} · ${me.name}`;
+  if (!petLog.children.length) {
+    petLine(`${me.pet} is listening. (This never reaches the session.)`, 'waiting');
+  }
+  petEl.classList.remove('hidden');
+  syncMode();
+  petInput.focus({ preventScroll: true });
+}
+
+function hidePet() {
+  parkedPanel = null;
+  petEl.classList.add('hidden');
+  syncMode();
+}
+
+function togglePet() {
+  if (petEl.classList.contains('hidden')) showPet();
+  else hidePet();
+}
+
+async function sayToPet() {
+  const text = petInput.value.trim();
+  if (!text || petThinking) return;
+  petThinking = true;
+  petInput.value = '';
+  petEl.classList.remove('composing');
+  petLine(text, 'mine');
+  const thinking = petLine('…', 'waiting');
+  syncMode();
+  // He perks up while he's thinking of something to say back.
+  pettedUntil = Date.now() + 1200;
+  refreshPose();
+  setTimeout(refreshPose, 1300);
+
+  let reply = null;
+  try {
+    reply = await window.clippyAPI.petSay(text);
+  } catch (err) {
+    reply = { error: String((err && err.message) || err) };
+  }
+  thinking.remove();
+  if (reply && reply.text) petLine(reply.text);
+  else petLine((reply && reply.error) || 'no answer', 'failed');
+  syncMode();
+  petThinking = false;
+}
+
+petInput.addEventListener('input', () => syncComposing(petInput, petEl));
+
+petInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sayToPet();
+  }
+  if (e.key === 'Escape') hidePet();
+});
+
+document.getElementById('pet-close').addEventListener('click', hidePet);
+document.getElementById('btn-chat').addEventListener('click', (e) => {
+  e.stopPropagation(); // the buddy's own click would open the status panel
+  togglePet();
 });
 
 /* ---------- Drive mode panel (Clippy-driven Agent SDK session) ---------- */
@@ -914,6 +1114,7 @@ function showNextRequest() {
   activeRequestId = next.id;
   hideBubble();
   qcardEl.classList.add('hidden'); // a held card takes the stage
+  petEl.classList.add('hidden');
   menuEl.classList.add('hidden');
 
   const isApproval = next.type === 'approval';
@@ -926,8 +1127,8 @@ function showNextRequest() {
   cardTitle.textContent = next.title;
 
   // Answerable multiple-choice question — option buttons. The answer is fed
-  // straight back to Claude (hook: updatedInput.answers, Drive: canUseTool),
-  // so the terminal picker never has to appear.
+  // straight back to the agent (Claude: updatedInput.answers; Codex: the
+  // consumed request_user_input result), so the terminal picker never appears.
   if (isAnswer) {
     cardDetail.classList.add('hidden');
     cardInput.classList.add('hidden');
@@ -1120,14 +1321,14 @@ function handleEvent(evt) {
     }
     case 'answer': {
       // An answerable multiple-choice question (option buttons). Comes from
-      // the AskUserQuestion hook in watch mode, or canUseTool in Drive mode.
+      // Claude's AskUserQuestion, Codex's request_user_input, or Drive mode.
       const expiresAt = evt.expiresAt || Date.now() + 300000;
       requests.set(evt.requestId, {
         id: evt.requestId,
         type: 'answer',
         noPass: !!evt.noPass,
         name: evt.name,
-        title: evt.title || 'Claude is asking you',
+        title: evt.title || `${evt.agentName || 'The agent'} is asking you`,
         questions: evt.questions || [],
         expiresAt,
         holdMs: Math.max(1, expiresAt - Date.now()),
@@ -1172,7 +1373,7 @@ function handleEvent(evt) {
       // composer claims it here, once the panel is actually on screen (and
       // only in the expanded view, where the composer exists).
       if (!evt.compact && usageExpanded && !usageEl.classList.contains('hidden')) {
-        usageInput.focus();
+        usageInput.focus({ preventScroll: true });
       }
       break;
     }
@@ -1182,11 +1383,20 @@ function handleEvent(evt) {
       setPose(evt.pose || evt.name || 'idle');
       return; // render() would immediately replace this forced pose from state
     }
+    case 'side': {
+      // Main saw the window cross the middle of its display: where he settles
+      // when nothing else is pulling him has changed.
+      side = evt.side === 'left' ? 'left' : 'right';
+      applyFacing();
+      break;
+    }
     case 'walk': {
       // Main is stepping the window across the terminal; all we do is put him
       // in a walking pose, facing the way he's going.
       document.body.classList.add('walking');
-      document.body.classList.toggle('facing-left', evt.facing === 'left');
+      // A missing heading means "stand as you were drawn" — that's how the end
+      // of a stroll puts him back to his usual stance.
+      face(evt.facing === 'left' || evt.facing === 'right' ? evt.facing : null);
       refreshPose();
       clearTimeout(walkTimer);
       // Safety net: if the walk event that ends this one never lands, don't
@@ -1206,7 +1416,7 @@ function handleEvent(evt) {
       break;
     }
     case 'question': {
-      // Surface-only: hooks can't answer AskUserQuestion (that's Drive mode).
+      // Surface-only fallback for disabled or malformed questions.
       showQuestion(evt);
       break;
     }
@@ -1356,7 +1566,7 @@ btnFeedback.addEventListener('click', () => {
     cardInput.classList.remove('hidden');
     btnFeedback.disabled = true; // nothing typed yet
     syncMode(); // the card just got taller — the window follows
-    cardInput.focus();
+    cardInput.focus({ preventScroll: true });
     return;
   }
   const msg = cardInput.value.trim();
@@ -1397,7 +1607,10 @@ document.getElementById('btn-qok').addEventListener('click', () => {
 });
 // Same question, other screen: raise the terminal where the picker is waiting,
 // then stand on the prompt.
-btnQgoto.addEventListener('click', () => window.clippyAPI.openWindow({ point: true }));
+// A button that says "go to terminal" goes to the terminal and nothing else —
+// the buddy keeps his spot. Walking him down to the prompt is what "Ask me in
+// terminal" does, where handing the question back *is* the action.
+btnQgoto.addEventListener('click', () => window.clippyAPI.openWindow());
 
 btnFix.addEventListener('click', () => {
   if (bubbleFix) window.clippyAPI.fix(bubbleFix);
@@ -1428,11 +1641,24 @@ document.getElementById('btn-usage-close').addEventListener('click', hideUsage);
 
 /* ---------- Talking back: the composer at the foot of the panel ---------- */
 
+/**
+ * An empty composer is an invitation, not a form: one line tall, no Send
+ * button. Both appear the moment there are words in it — and both change how
+ * tall the panel is, so main is told either way.
+ */
+function syncComposing(el, box) {
+  const composing = Boolean(el.value.trim());
+  if (composing === box.classList.contains('composing')) return;
+  box.classList.toggle('composing', composing);
+  syncMode();
+}
+
 function sendPrompt() {
   const text = usageInput.value.trim();
   if (!text) return;
   window.clippyAPI.sendPrompt(text);
   usageInput.value = '';
+  usageEl.classList.remove('composing');
   hideUsage();
   // The visible confirmation is the terminal raising and the text appearing
   // on its own prompt line — a cheer here bridges the half-second gap.
@@ -1440,6 +1666,8 @@ function sendPrompt() {
   refreshPose();
   setTimeout(refreshPose, 1300);
 }
+
+usageInput.addEventListener('input', () => syncComposing(usageInput, usageEl));
 
 usageInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey) {
@@ -1453,7 +1681,7 @@ document.getElementById('btn-usage-send').addEventListener('click', sendPrompt);
 /**
  * What a plain click should just do, no menu in the way: a message you haven't
  * seen yet wins (it's why the buddy is bouncing), otherwise the session's
- * status summary opens — "how is this session doing?", with Expand for the
+ * status summary opens — "how is this session doing?", with ▾ for the
  * spend and a box to type the next prompt into. Everything else is a
  * right-click away.
  */
@@ -1476,10 +1704,45 @@ function primaryAction() {
   // very enter/leave pair that would park and unpark it again, and again.
   clearTimeout(parkTimer);
   parkTimer = null;
-  const restore = parkedPanel === 'usage';
+  const parked = parkedPanel;
   parkedPanel = null;
-  showUsage(restore ? { restore: true } : undefined);
+  if (parked === 'pet') {
+    showPet();
+    return;
+  }
+  showUsage();
 }
+
+/* ---------- Resting the pointer on him ----------
+   Three seconds without moving on is a deliberate look, not a pointer passing
+   through, so it opens exactly what a click opens. Anything shorter changes
+   nothing: opening a panel resizes the window under the cursor, and doing that
+   to someone who was only on their way somewhere is the flicker that parking
+   exists to avoid. */
+const DWELL_MS = 3000;
+let dwellTimer = null;
+
+function cancelDwell() {
+  clearTimeout(dwellTimer);
+  dwellTimer = null;
+}
+
+function anyPanelOpen() {
+  return PANELS.some((id) => !document.getElementById(id).classList.contains('hidden'));
+}
+
+clippyEl.addEventListener('mouseenter', () => {
+  cancelDwell();
+  dwellTimer = setTimeout(() => {
+    dwellTimer = null;
+    // Not while he's being carried, not over a card that wants an answer, and
+    // never on top of something already open.
+    if (dragFrom || activeRequestId || anyPanelOpen()) return;
+    primaryAction();
+  }, DWELL_MS);
+});
+
+clippyEl.addEventListener('mouseleave', cancelDwell);
 
 /* ---------- Dragging the buddy, by hand ----------
    #clippy is deliberately NOT an app-region drag handle: Electron never
@@ -1492,6 +1755,7 @@ let dragFrom = null; // {x, y} in screen coords while the button is down
 let suppressClickUntil = 0;
 
 clippyEl.addEventListener('mousedown', (e) => {
+  cancelDwell(); // you've made your move; the slow way in isn't needed
   if (e.button !== 0) return;
   dragFrom = { x: e.screenX, y: e.screenY, moved: false };
 });
@@ -1508,7 +1772,7 @@ window.addEventListener('mousemove', (e) => {
   dragFrom.y = e.screenY;
   // Face the way he's being pulled, like the walk does — a couple of pixels of
   // sideways intent before flipping, so a shaky vertical carry doesn't flicker.
-  if (Math.abs(dx) >= 2) document.body.classList.toggle('facing-left', dx < 0);
+  if (Math.abs(dx) >= 2) face(dx < 0 ? 'left' : 'right');
   window.clippyAPI.moveBy(dx, dy);
 });
 
@@ -1517,7 +1781,7 @@ window.addEventListener('mouseup', () => {
     suppressClickUntil = Date.now() + 250;
     // He keeps looking the way he went for a beat, then settles back.
     clearTimeout(settleFacing);
-    settleFacing = setTimeout(() => document.body.classList.remove('facing-left'), 500);
+    settleFacing = setTimeout(() => face(null), 500);
   }
   dragFrom = null;
 });
@@ -1572,10 +1836,20 @@ let parkTimer = null;
 
 function parkPanels() {
   if (activeRequestId) return;
-  if (usageInput.value.trim()) return; // mid-thought in the chat box — stay
+  // Mid-thought in either box — the composer or the pet — so stay put.
+  if (usageInput.value.trim() || petInput.value.trim()) return;
+  if (petThinking) return; // an answer is on its way; don't shut the door on it
   if (!usageEl.classList.contains('hidden')) {
     usageEl.classList.add('hidden');
     parkedPanel = 'usage';
+    // Stepping aside folds it: you looked away, so the next look starts at the
+    // summary rather than dropping you back into the bars and the composer.
+    usageExpanded = false;
+    applyUsageExpansion();
+    syncMode();
+  } else if (!petEl.classList.contains('hidden')) {
+    petEl.classList.add('hidden');
+    parkedPanel = 'pet';
     syncMode();
   } else if (menuOpen()) {
     menuEl.classList.add('hidden');
@@ -1588,6 +1862,12 @@ function parkPanels() {
 // is no matching handler on enter: see primaryAction, which is where a parked
 // panel comes back.
 document.documentElement.addEventListener('mouseleave', () => {
+  // Resizing the window slides the whole layout out from under a pointer that
+  // never moved, and the browser reports that as a leave. Folding the panel did
+  // exactly that — the buttons travelled, the "leave" landed, and 250ms later
+  // the panel you had just folded put itself away. Our own resize is not you
+  // walking off, so a leave in its wake is ignored.
+  if (Date.now() - resizedAt < RESIZE_SETTLE_MS) return;
   clearTimeout(parkTimer);
   parkTimer = setTimeout(parkPanels, 250);
 });
@@ -1597,6 +1877,7 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
     closeMenu();
     hideUsage();
+    hidePet();
   }
 });
 
