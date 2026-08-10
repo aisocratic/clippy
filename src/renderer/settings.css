@@ -291,61 +291,85 @@ button:disabled {
   color: #ffffff;
 }
 
-/* ---------- The cast ----------
-   Same shape as the workbench in the test bench: a row per character, every
-   pose it knows playing side by side. */
+/* ---------- The cast ---------- */
+
+.heading-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.heading-row h1 { margin-bottom: 0; }
+
+.add-buddy {
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border-radius: 50%;
+  background: var(--yellow);
+  font-size: 22px;
+  line-height: 1;
+}
+
+.sound-setting select,
+.draw-tools input {
+  min-width: 150px;
+  padding: 6px 9px;
+  border: 1.5px solid var(--ink);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--text);
+  font: inherit;
+}
 
 .cast {
-  display: flex;
-  flex-direction: column;
-  border: 2px solid var(--ink);
-  border-radius: var(--radius);
-  box-shadow: 4px 4px 0 var(--ink);
-  overflow: hidden;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(128px, 1fr));
+  gap: 11px;
 }
 
 .cast-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 14px;
+  position: relative;
+  min-width: 0;
+  padding: 9px;
   background: var(--surface);
-  border-top: 1px solid var(--line);
-}
-
-.cast-row:first-child {
-  border-top: 0;
+  border: 2px solid var(--ink);
+  border-radius: var(--radius);
+  box-shadow: 3px 3px 0 var(--ink);
 }
 
 .cast-row.on {
   background: var(--surface-2);
-  box-shadow: inset 3px 0 0 var(--accent);
+  box-shadow: 3px 3px 0 var(--accent);
 }
 
 .cast-who {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  width: 150px;
-  flex: none;
-  padding: 4px 6px;
-  margin-left: -6px;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 112px;
+  padding: 8px 4px 5px;
   border: 0;
   border-radius: 8px;
   background: transparent;
   color: var(--text);
   font: inherit;
-  text-align: left;
+  text-align: center;
   cursor: pointer;
 }
 
-.cast-who:hover:enabled {
+.cast-who:hover {
   background: rgba(21, 38, 42, 0.07);
 }
 
-/* Nothing is running, so there is no project to hand this buddy to. */
-.cast-who:disabled {
-  cursor: default;
+.cast-art {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  height: 68px;
 }
 
 .cast-name {
@@ -353,46 +377,30 @@ button:disabled {
   font-weight: 600;
 }
 
-.cast-origin {
+.cast-pose-name {
   font-size: 10px;
   color: var(--faint);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
-.cast-poses {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
-}
-
-.pose {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 3px;
-  padding: 5px 3px 3px;
-  min-width: 54px;
-  background: var(--surface-2);
-  border: 1px solid var(--line-soft);
-  border-radius: 8px;
-}
-
-.pose-art {
-  display: flex;
-  align-items: flex-end;
-  justify-content: center;
-  height: 46px;
-}
-
-.pose-art img,
-.pose-art .sheet {
+.cast-art img,
+.cast-art .sheet {
   image-rendering: pixelated;
 }
 
-.pose-label {
-  font-size: 9px;
-  letter-spacing: 0.04em;
-  color: var(--faint);
-  text-transform: uppercase;
+.remove-buddy {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  z-index: 1;
+  width: 25px;
+  height: 25px;
+  padding: 0;
+  border-width: 1px;
+  border-radius: 50%;
+  color: var(--no);
+  line-height: 1;
 }
 
 .drop-hint {
@@ -471,6 +479,109 @@ button:disabled {
 
 #pet-status.good { color: var(--ok); }
 #pet-status.bad { color: var(--no); }
+
+/* ---------- Add / draw a buddy ---------- */
+
+#buddy-dialog {
+  width: min(590px, calc(100vw - 40px));
+  max-height: calc(100vh - 40px);
+  margin: auto;
+  padding: 20px;
+  border: 2px solid var(--ink);
+  border-radius: 18px;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 7px 7px 0 var(--ink);
+}
+
+#buddy-dialog::backdrop { background: rgba(21, 38, 42, 0.52); }
+
+.dialog-head,
+.dialog-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.dialog-head { margin-bottom: 18px; }
+.dialog-head h2 { font-size: 18px; }
+.dialog-head p,
+.add-option p { color: var(--muted); font-size: 11.5px; }
+
+#close-buddy-dialog {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border-radius: 50%;
+  font-size: 18px;
+}
+
+.add-option {
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-2);
+}
+
+.add-option h3 { margin-bottom: 3px; font-size: 13px; }
+.add-option a { color: var(--accent); }
+.dialog-or { margin: 11px 0; text-align: center; color: var(--faint); font-size: 11px; }
+
+.draw-choice {
+  width: 100%;
+  padding: 11px;
+  background: var(--yellow);
+}
+
+.draw-layout {
+  display: grid;
+  grid-template-columns: 320px 1fr;
+  gap: 16px;
+  align-items: start;
+}
+
+#buddy-canvas {
+  width: 320px;
+  height: 320px;
+  border: 2px solid var(--ink);
+  border-radius: 10px;
+  background-color: #fff;
+  background-image:
+    linear-gradient(45deg, #eae6de 25%, transparent 25%),
+    linear-gradient(-45deg, #eae6de 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #eae6de 75%),
+    linear-gradient(-45deg, transparent 75%, #eae6de 75%);
+  background-size: 20px 20px;
+  background-position: 0 0, 0 10px, 10px -10px, -10px 0;
+  image-rendering: pixelated;
+  cursor: crosshair;
+}
+
+.draw-tools {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.draw-tools label {
+  margin-top: 3px;
+  color: var(--faint);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.draw-tools input { min-width: 0; width: 100%; }
+#draw-colour { height: 38px; padding: 3px; }
+.dialog-actions { margin-top: 14px; }
+.dialog-actions .primary { margin-left: auto; background: var(--yellow); }
+
+@media (max-width: 760px) {
+  .draw-layout { grid-template-columns: 1fr; }
+  #buddy-canvas { width: min(320px, 100%); height: auto; }
+}
 
 /* ---------- Actions ---------- */
 

@@ -47,6 +47,29 @@
       state = { ...state, sizeBySession: bySession };
       push();
     },
+    installPet: async () => ({ ok: false, error: 'Pack installation is available in the desktop app.' }),
+    createPet: async ({ label, pixels }) => {
+      const name = String(label || '').trim();
+      if (!name) return { ok: false, error: 'give your buddy a name' };
+      if (!Array.isArray(pixels) || !pixels.some(Boolean)) {
+        return { ok: false, error: 'draw at least one pixel first' };
+      }
+      const id = `drawn-${Date.now()}`;
+      state = {
+        ...state,
+        characters: [
+          ...state.characters,
+          { id, label: name, vector: 'orbit', poses: ['idle', 'excited'], removable: true },
+        ],
+      };
+      push();
+      return { ok: true, id, label: name };
+    },
+    removePet: async (id) => {
+      state = { ...state, characters: state.characters.filter((character) => character.id !== id) };
+      push();
+      return { ok: true };
+    },
     openExternal: (url) => window.open(url, '_blank', 'noopener'),
     fix: (what) => console.log('would fix', what),
   };

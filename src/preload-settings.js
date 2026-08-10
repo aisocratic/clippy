@@ -25,6 +25,9 @@ contextBridge.exposeInMainWorld('clippySettings', {
   checkUpdates: () => ipcRenderer.invoke('clippy-settings-check-updates'),
   // Paste a pet's page link and main downloads and installs the pack.
   installPet: (url) => ipcRenderer.invoke('clippy-settings-install-pet', url),
+  // Drawn buddies use the same local theme format as installed sprite packs.
+  createPet: (drawing) => ipcRenderer.invoke('clippy-settings-create-pet', drawing),
+  removePet: (character) => ipcRenderer.invoke('clippy-settings-remove-pet', character),
   // Links open in the user's browser, never inside this window.
   openExternal: (url) => ipcRenderer.send('clippy-open-external', url),
 });

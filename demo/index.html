@@ -6,19 +6,18 @@
   <link rel="stylesheet" href="demo.css" />
 </head>
 <body>
-  <header>
-    <h1>📎 Clippy — web test bench</h1>
-    <p>
-      The real <code>src/renderer</code> running in a browser, with
-      <code>window.clippyAPI</code> stubbed. Click a state on the left; the buddy on the
-      right reacts exactly as it would in Electron.
-      <strong>End-to-end still means <code>npm start</code> + a real Claude Code session.</strong>
-    </p>
+  <header id="appbar">
+    <div class="brand"><span>📎</span><div><h1>Clippy workshop</h1><small>live renderer test bench</small></div></div>
+    <p>Edit <code>src/renderer</code>, refresh, and test the real Clippy here—no app rebuild required.</p>
+    <nav>
+      <a href="/settings/">Settings ↗</a>
+      <a href="/gallery">All states ↗</a>
+    </nav>
   </header>
 
   <main>
     <aside id="panel">
-      <section class="box">
+      <section class="box" id="buddy-controls">
         <h2>Buddy</h2>
         <label>Session name
           <input id="opt-name" type="text" value="billing-api" spellcheck="false" />
@@ -32,7 +31,7 @@
         </div>
       </section>
 
-      <section class="box">
+      <section class="box" id="settings-controls">
         <h2>Settings <small>(Clippy's own menu writes back here)</small></h2>
         <label class="check"><input type="checkbox" id="set-approvals" checked /> approvals</label>
         <label class="check"><input type="checkbox" id="set-reviewOnStop" checked /> review on stop</label>
@@ -46,7 +45,7 @@
         </label>
       </section>
 
-      <section class="box">
+      <section class="box" id="window-controls">
         <h2>Window &amp; chrome</h2>
         <label class="check"><input type="checkbox" id="set-canopen" checked /> knows the terminal window (shows “open session ↗”)</label>
         <label class="check"><input type="checkbox" id="set-docked" /> perched on the terminal window</label>
@@ -56,7 +55,10 @@
         </div>
         <div class="row">
           <button id="btn-walk" class="ghost">Walk to the prompt &amp; point</button>
+          <button id="btn-center" class="ghost">Center buddy</button>
         </div>
+        <p class="note">Drag the buddy itself to place it anywhere inside the sandbox.
+          <strong>Center buddy</strong> brings it back to the middle.</p>
         <p class="note">A left click opens one panel: what the agent is doing, what it has
           spent, and a box to keep talking to it. Right-click drops the menu out from under
           the buddy: what's waiting, stats &amp; token usage, settings, hide.</p>
@@ -75,7 +77,8 @@
       </section>
 
       <section class="box" id="scenarios">
-        <h2>States</h2>
+        <h2>Test a state</h2>
+        <p class="box-intro">Send a real event straight into the renderer.</p>
         <div id="scenario-groups"></div>
       </section>
 
@@ -89,8 +92,9 @@
 
     <section id="stagewrap">
       <div id="stagebar">
-        <button id="btn-showrun" class="play">▶ Show run</button>
-        <span id="note">Press play for the hands-off tour of every state.</span>
+        <div><span class="live-dot"></span><strong>Live renderer</strong></div>
+        <span id="note">Drag Clippy anywhere in the sandbox.</span>
+        <button id="btn-showrun" class="play">▶ Tour every state</button>
       </div>
       <div id="desktop">
         <div id="fake-terminal" class="hidden">
@@ -108,31 +112,20 @@
         <iframe id="buddy-frame" title="Clippy renderer" src="about:blank"></iframe>
       </div>
 
-      <section class="workbench">
-        <div class="wb-head">
-          <h2>Buddies &amp; animations</h2>
-          <p>Every character and every pose it knows. Click one to put that buddy
-             on the stage in that pose.</p>
-        </div>
+      <details class="workbench">
+        <summary><span>Buddies &amp; animations</span><small>Open the full character and pose catalog</small></summary>
         <div id="sprite-sheet" class="sprite-sheet"></div>
-      </section>
+      </details>
 
-      <section class="workbench">
-        <div class="wb-head">
-          <h2>Actions</h2>
-          <p>What Clippy does with a Claude Code session, the pose it wears while
-             it happens, and a ▶ to play it on the stage.</p>
-        </div>
+      <details class="workbench">
+        <summary><span>Feature catalog</span><small>Inspect every trigger and play it on the stage</small></summary>
         <div id="action-grid" class="action-grid"></div>
-      </section>
+      </details>
 
-      <div id="logwrap">
-        <div id="loghead">
-          <span>Bridge log</span>
-          <small>events sent to the renderer, and what it sent back (incl. the hook JSON Claude Code would get)</small>
-        </div>
+      <details id="logwrap">
+        <summary id="loghead"><span>Bridge log</span><small>Renderer events and hook responses</small></summary>
         <div id="log"></div>
-      </div>
+      </details>
     </section>
   </main>
 

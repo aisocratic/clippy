@@ -144,6 +144,7 @@ function customThemes(dir = THEMES_DIR) {
       themes.push({
         id: entry.name,
         label: raw.label || entry.name,
+        removable: true,
         sheet,
         // Which way the art is drawn. Packs disagree — one fox faces right, the
         // next faces left — and the renderer mirrors the sprite to turn it

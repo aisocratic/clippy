@@ -22,6 +22,7 @@ const STATUS_TEXT = {
 // rosters and catalogue the page is drawn from.
 let state = { characters: [], sizes: [], actions: [], sessions: [] };
 const sheetTimers = [];
+const previewPose = new Map();
 
 /* ---------- Buddies ---------- */
 
@@ -114,27 +115,15 @@ function posesOf(character) {
   return poses;
 }
 
-/**
- * The cast, and who is wearing which face.
- *
- * There is no "the buddy" to select anymore — every project is cast on its own —
- * so clicking a character here means "give the projects I can see that one",
- * which is the same per-project assignment the Sessions pickers write. With
- * nothing reporting in there is no project to give it to, and the row says so.
- */
+/** One live preview per buddy. Clicking it cycles through its animations. */
 function renderCast() {
   const host = document.getElementById('cast');
   host.replaceChildren();
   const sessions = state.sessions || [];
-  const projects = [...new Set(sessions.map((s) => s.name))];
-  // Highlight whoever is actually on duty: the closest thing left to a selection.
   const onDuty = new Set(sessions.map((s) => s.character));
 
-  document.getElementById('cast-note').textContent = sessions.length
-    ? `Clicking one gives it to every session reporting in right now (${projects.join(', ')}). ` +
-      'For one session at a time, use the picker beside it under Sessions.'
-    : 'Nothing is reporting in, so there is no session to give a buddy to yet — start ' +
-      'Claude Code or Codex and it gets one from this cast automatically.';
+  document.getElementById('cast-note').textContent =
+    'Click a buddy to see its next animation. Choose which session wears it under Sessions.';
 
   for (const character of state.characters) {
     const row = document.createElement('div');
@@ -142,43 +131,45 @@ function renderCast() {
 
     const who = document.createElement('button');
     who.className = 'cast-who';
-    who.disabled = !sessions.length;
-    who.title = sessions.length
-      ? `Give ${projects.join(', ')} ${character.label}`
-      : 'No sessions yet — start Claude Code or Codex somewhere and it gets a buddy of its own';
+    const poses = posesOf(character);
+    const poseIndex = (previewPose.get(character.id) || 0) % poses.length;
+    const pose = poses[poseIndex];
+    who.title = `Show ${character.label}'s next animation`;
+
+    const art = document.createElement('span');
+    art.className = 'cast-art';
+    art.appendChild(poseArt(character, pose, 64));
     const name = document.createElement('span');
     name.className = 'cast-name';
     name.textContent = character.label;
-    const origin = document.createElement('span');
-    origin.className = 'cast-origin';
-    origin.textContent = character.sheet
-      ? `sprite pack · ${character.sheet.frameWidth}×${character.sheet.frameHeight}`
-      : character.vector
-      ? 'live SVG · session colour'
-      : character.perColour
-      ? 'drawn in code · per session colour'
-      : 'drawn in code';
-    who.append(name, origin);
+    const poseName = document.createElement('span');
+    poseName.className = 'cast-pose-name';
+    poseName.textContent = pose.label;
+    who.append(art, name, poseName);
     who.addEventListener('click', () => {
-      for (const session of sessions) window.clippySettings.assign(session.sessionId, character.id);
+      previewPose.set(character.id, (poseIndex + 1) % poses.length);
+      while (sheetTimers.length) clearInterval(sheetTimers.pop());
+      renderCast();
     });
 
-    const poses = document.createElement('div');
-    poses.className = 'cast-poses';
-    for (const pose of posesOf(character)) {
-      const cell = document.createElement('div');
-      cell.className = 'pose';
-      const art = document.createElement('div');
-      art.className = 'pose-art';
-      art.appendChild(poseArt(character, pose, 44));
-      const label = document.createElement('div');
-      label.className = 'pose-label';
-      label.textContent = pose.label;
-      cell.append(art, label);
-      poses.appendChild(cell);
+    row.appendChild(who);
+    if (character.removable) {
+      const remove = document.createElement('button');
+      remove.className = 'remove-buddy';
+      remove.textContent = '×';
+      remove.title = `Remove ${character.label}`;
+      remove.setAttribute('aria-label', `Remove ${character.label}`);
+      remove.addEventListener('click', async () => {
+        if (!confirm(`Remove ${character.label} from this machine?`)) return;
+        remove.disabled = true;
+        const result = await window.clippySettings.removePet(character.id);
+        if (!result?.ok) {
+          remove.disabled = false;
+          alert(result?.error || 'That buddy could not be removed.');
+        }
+      });
+      row.appendChild(remove);
     }
-
-    row.append(who, poses);
     host.appendChild(row);
   }
 }
@@ -194,6 +185,10 @@ function renderSizes() {
     btn.addEventListener('click', () => set('size', size.id));
     host.appendChild(btn);
   }
+}
+
+function renderSound() {
+  document.getElementById('appearance-sound').value = state.appearanceSound || '';
 }
 
 /* ---------- Clippy's Features ---------- */
@@ -445,6 +440,7 @@ function set(key, value) {
 
 function render() {
   renderAccess();
+  renderSound();
   renderSizes();
   renderCast();
   renderActions();
@@ -470,31 +466,72 @@ window.clippySettings.onState((next) => {
   render();
 });
 
-// The rail follows whichever section you're reading.
-const links = [...document.querySelectorAll('.rail-link')];
-const spy = new IntersectionObserver(
-  (entries) => {
-    for (const entry of entries) {
-      if (!entry.isIntersecting) continue;
-      for (const link of links) {
-        link.classList.toggle('on', link.getAttribute('href') === `#${entry.target.id}`);
-      }
+/* The rail is a router, not a table of contents: one page shows at a time, so
+   the docs are somewhere you go rather than something you scroll past. The
+   address is still the hash, which is what main.js sets to deep-link a
+   section. */
+{
+  const links = [...document.querySelectorAll('.rail-link')];
+  const panels = [...document.querySelectorAll('.panel')];
+  const page = document.getElementById('page');
+  const FALLBACK = 'sessions';
+
+  const show = (wanted) => {
+    const id = panels.some((panel) => panel.id === wanted) ? wanted : FALLBACK;
+    for (const panel of panels) panel.classList.toggle('on', panel.id === id);
+    for (const link of links) {
+      const on = link.getAttribute('href') === `#${id}`;
+      link.classList.toggle('on', on);
+      if (on) link.setAttribute('aria-current', 'page');
+      else link.removeAttribute('aria-current');
     }
-  },
-  { rootMargin: '-10% 0px -75% 0px' }
-);
-for (const panel of document.querySelectorAll('.panel')) spy.observe(panel);
+    page.scrollTop = 0;
+  };
+
+  show(location.hash.slice(1));
+  window.addEventListener('hashchange', () => show(location.hash.slice(1)));
+}
 
 window.clippySettings.ready();
 
-/* ---------- Add a pet ---------- */
+/* ---------- Sound ---------- */
 
-// Paste a pet's page link and main downloads and installs the pack; the cast
-// above repaints on the state push that follows.
 {
+  const pick = document.getElementById('appearance-sound');
+  pick.addEventListener('change', () => set('appearanceSound', pick.value));
+  document.getElementById('preview-sound').addEventListener('click', () => {
+    window.ClippySounds.play(pick.value);
+  });
+}
+
+/* ---------- Add, draw, and remove buddies ---------- */
+
+{
+  const dialog = document.getElementById('buddy-dialog');
+  const options = document.getElementById('add-options');
+  const drawing = document.getElementById('draw-buddy');
   const input = document.getElementById('pet-url');
   const button = document.getElementById('pet-install');
   const status = document.getElementById('pet-status');
+  const canvas = document.getElementById('buddy-canvas');
+  const context = canvas.getContext('2d');
+  const name = document.getElementById('draw-name');
+  const colour = document.getElementById('draw-colour');
+  const eraser = document.getElementById('draw-eraser');
+  const drawStatus = document.getElementById('draw-status');
+  const pixels = Array(16 * 16).fill('');
+  let painting = false;
+  let erasing = false;
+
+  const showOptions = () => {
+    options.classList.remove('hidden');
+    drawing.classList.add('hidden');
+  };
+  const showDrawing = () => {
+    options.classList.add('hidden');
+    drawing.classList.remove('hidden');
+    paintCanvas();
+  };
 
   const say = (text, tone) => {
     status.hidden = false;
@@ -512,6 +549,7 @@ window.clippySettings.ready();
     if (res && res.ok) {
       say(`${res.label} joined the cast.`, 'good');
       input.value = '';
+      setTimeout(() => dialog.close(), 500);
     } else {
       say((res && res.error) || 'that didn’t work', 'bad');
     }
@@ -521,6 +559,99 @@ window.clippySettings.ready();
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') install();
   });
+
+  function paintCanvas() {
+    const cell = canvas.width / 16;
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    for (let y = 0; y < 16; y++) {
+      for (let x = 0; x < 16; x++) {
+        const value = pixels[y * 16 + x];
+        if (value) {
+          context.fillStyle = value;
+          context.fillRect(x * cell, y * cell, cell, cell);
+        }
+      }
+    }
+    context.strokeStyle = 'rgba(21, 38, 42, 0.16)';
+    context.lineWidth = 1;
+    for (let n = 1; n < 16; n++) {
+      context.beginPath();
+      context.moveTo(n * cell, 0);
+      context.lineTo(n * cell, canvas.height);
+      context.stroke();
+      context.beginPath();
+      context.moveTo(0, n * cell);
+      context.lineTo(canvas.width, n * cell);
+      context.stroke();
+    }
+  }
+
+  const drawAt = (event) => {
+    const rect = canvas.getBoundingClientRect();
+    const x = Math.floor(((event.clientX - rect.left) / rect.width) * 16);
+    const y = Math.floor(((event.clientY - rect.top) / rect.height) * 16);
+    if (x < 0 || x >= 16 || y < 0 || y >= 16) return;
+    pixels[y * 16 + x] = erasing ? '' : colour.value;
+    paintCanvas();
+  };
+
+  canvas.addEventListener('pointerdown', (event) => {
+    painting = true;
+    canvas.setPointerCapture(event.pointerId);
+    drawAt(event);
+  });
+  canvas.addEventListener('pointermove', (event) => {
+    if (painting) drawAt(event);
+  });
+  canvas.addEventListener('pointerup', () => (painting = false));
+  canvas.addEventListener('pointercancel', () => (painting = false));
+
+  document.getElementById('btn-add-buddy').addEventListener('click', () => {
+    showOptions();
+    dialog.showModal();
+  });
+  document.getElementById('close-buddy-dialog').addEventListener('click', () => dialog.close());
+  document.getElementById('start-drawing').addEventListener('click', showDrawing);
+  document.getElementById('back-to-add').addEventListener('click', showOptions);
+  document.getElementById('draw-clear').addEventListener('click', () => {
+    pixels.fill('');
+    paintCanvas();
+  });
+  eraser.addEventListener('click', () => {
+    erasing = !erasing;
+    eraser.textContent = erasing ? 'Eraser on ✓' : 'Eraser';
+  });
+  colour.addEventListener('input', () => {
+    erasing = false;
+    eraser.textContent = 'Eraser';
+  });
+  document.getElementById('save-drawing').addEventListener('click', async () => {
+    const save = document.getElementById('save-drawing');
+    save.disabled = true;
+    drawStatus.hidden = false;
+    drawStatus.textContent = 'Saving your buddy…';
+    drawStatus.className = 'field-note';
+    const result = await window.clippySettings.createPet({
+      label: name.value.trim(),
+      width: 16,
+      height: 16,
+      pixels: [...pixels],
+    });
+    save.disabled = false;
+    if (result?.ok) {
+      drawStatus.textContent = `${result.label} joined the cast.`;
+      drawStatus.className = 'field-note good';
+      name.value = '';
+      pixels.fill('');
+      paintCanvas();
+      setTimeout(() => dialog.close(), 500);
+    } else {
+      drawStatus.textContent = result?.error || 'That buddy could not be saved.';
+      drawStatus.className = 'field-note bad';
+    }
+  });
+
+  paintCanvas();
 }
 
 /* ---------- Updates ---------- */

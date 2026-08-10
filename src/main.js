@@ -97,6 +97,7 @@ const settings = {
   reviewOnStop: true, // offer a review box when Claude finishes a turn
   answerQuestions: true, // answer Claude/Codex multiple-choice questions in Clippy
   autoPerch: true, // appear on the session's own window, not the screen corner
+  appearanceSound: 'pop', // short cue when a hidden buddy appears; '' is silent
   characterByProject: {}, // project name -> character id, when you've picked one
   sizeByProject: {}, // project name -> size id, likewise
   // …and the same two against one live session, so picking a pet for one row of
@@ -112,6 +113,7 @@ const settings = {
 const CHOICES = {
   size: () => Object.keys(SIZES),
   arrangeEdge: () => EDGE_IDS,
+  appearanceSound: () => ['', 'pop', 'chime', 'chirp'],
 };
 
 // The cast is read fresh each time so a sprite theme dropped into
@@ -700,6 +702,18 @@ function showBuddy(key, { pin = false, mode = 'full' } = {}) {
   const buddy = buddies.get(key);
   if (!buddy || buddy.win.isDestroyed()) return;
   if (pin) buddy.pinned = true;
+  if (!buddy.win.isVisible() && settings.appearanceSound) {
+    const play = () => {
+      if (!buddy.win.isDestroyed()) {
+        buddy.win.webContents.send('clippy-event', {
+          kind: 'appearance',
+          sound: settings.appearanceSound,
+        });
+      }
+    };
+    if (buddy.win.webContents.isLoading()) buddy.win.webContents.once('did-finish-load', play);
+    else play();
+  }
 
   // Perched or not, Clippy is a small paperclip until there's a card or a
   // message to read — then the window grows around him.
@@ -2337,6 +2351,35 @@ app.whenReady().then(async () => {
       const { id, theme } = await installPack(src);
       pushSettingsState(); // the cast re-reads the themes folder, so this repaints it
       return { ok: true, id, label: theme.label };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+  ipcMain.handle('clippy-settings-create-pet', (_e, drawing) => {
+    try {
+      const { createDrawnBuddy } = require('./custom-buddies');
+      const result = createDrawnBuddy(drawing || {});
+      pushSettingsState();
+      sendSettings();
+      return { ok: true, ...result };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+  ipcMain.handle('clippy-settings-remove-pet', (_e, character) => {
+    try {
+      const { removeCustomBuddy } = require('./custom-buddies');
+      const removed = removeCustomBuddy(character);
+      for (const key of ['characterByProject', 'characterBySession']) {
+        settings[key] = Object.fromEntries(
+          Object.entries(settings[key] || {}).filter(([, value]) => value !== removed)
+        );
+      }
+      saveSettings();
+      recast();
+      pushSettingsState();
+      sendSettings();
+      return { ok: true };
     } catch (err) {
       return { ok: false, error: err.message };
     }

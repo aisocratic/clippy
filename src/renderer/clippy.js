@@ -138,6 +138,7 @@ let settings = {
   reviewOnStop: true,
   answerQuestions: true,
   autoPerch: true,
+  appearanceSound: 'pop',
   character: 'clip',
   size: 'medium',
   // Enough of a roster to paint the default buddy correctly on the very first
@@ -1354,6 +1355,10 @@ function handleEvent(evt) {
   refreshIdentity();
 
   switch (evt.kind) {
+    case 'appearance':
+      window.ClippySounds.play(evt.sound || settings.appearanceSound);
+      break;
+
     case 'approval':
     case 'review': {
       // A review card carries no deadline (expiresAt 0): the hook was already
