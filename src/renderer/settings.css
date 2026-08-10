@@ -137,6 +137,21 @@ button:disabled {
   letter-spacing: 0;
 }
 
+/* Settings change things; Docs only explains them. The rail says which is
+   which rather than leaving one reading page at the end of a settings list. */
+.rail-group {
+  padding: 15px 10px 5px;
+  color: var(--faint);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.rail-group:first-of-type {
+  padding-top: 2px;
+}
+
 .rail-link {
   -webkit-app-region: no-drag;
   padding: 7px 10px;
@@ -205,9 +220,13 @@ button:disabled {
 }
 
 .panel {
+  display: none;
   max-width: 760px;
   margin: 0 auto 44px;
-  scroll-margin-top: 24px;
+}
+
+.panel.on {
+  display: block;
 }
 
 .panel-head {
@@ -302,14 +321,34 @@ button:disabled {
 
 .heading-row h1 { margin-bottom: 0; }
 
+/* A circled "+" is only obvious to whoever put it there. This one says what it
+   does and wears the card shadow, so it reads as the page's one action. */
 .add-buddy {
-  width: 34px;
-  height: 34px;
-  padding: 0;
-  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  flex: none;
+  padding: 8px 14px;
+  border: 2px solid var(--ink);
+  border-radius: 10px;
   background: var(--yellow);
-  font-size: 22px;
+  box-shadow: 3px 3px 0 var(--ink);
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+
+.add-buddy span {
+  font-size: 17px;
   line-height: 1;
+}
+
+.add-buddy:hover:not(:disabled) {
+  background: #f7d874;
+}
+
+.add-buddy:active:not(:disabled) {
+  transform: translate(2px, 2px);
+  box-shadow: 1px 1px 0 var(--ink);
 }
 
 .sound-setting select,
