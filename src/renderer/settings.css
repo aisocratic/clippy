@@ -216,7 +216,6 @@ button:disabled {
   flex: 1;
   overflow-y: auto;
   padding: 34px 40px 60px;
-  scroll-behavior: smooth;
 }
 
 .panel {
