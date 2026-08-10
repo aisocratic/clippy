@@ -60,6 +60,16 @@
       post('pet-say', { text });
       return { text: `(bench) “${String(text || '').slice(0, 48)}” — you say the nicest things.` };
     },
+    // "read all" on a card main had to cut. In the app the rest of the message
+    // is sitting in the main process; the bench has no main process, so it
+    // hands back an obviously bench-made continuation — enough to watch the
+    // card unfold and the window grow.
+    cardFull: async (requestId) => {
+      post('card-full', { requestId });
+      return `${(document.getElementById('card-detail') || {}).textContent || ''}\n\n${
+        '(bench) …and here is the rest of it. '.repeat(24)
+      }`;
+    },
     openWindow: (opts) => post('open-window', opts || {}),
     pointAtPrompt: () => post('point'),
     openSettings: () => post('open-settings'),

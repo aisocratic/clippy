@@ -34,6 +34,8 @@ contextBridge.exposeInMainWorld('clippyAPI', {
   // bare paperclip.
   setMode: (mode, height, width) => ipcRenderer.send('clippy-mode', { mode, height, width }),
   identity: () => ipcRenderer.invoke('clippy-session-identity'),
+  // The rest of a message the card had to cut — see "read all".
+  cardFull: (requestId) => ipcRenderer.invoke('clippy-card-full', requestId),
   context: () => ipcRenderer.invoke('clippy-context'),
   usage: () => ipcRenderer.invoke('clippy-usage'),
   hide: () => ipcRenderer.send('clippy-hide'),

@@ -374,6 +374,11 @@ window.addEventListener('message', async (e) => {
       log('in', 'petSay', `to the pet, not the session: ${p.text}`);
       break;
 
+    case 'card-full':
+      // In the app this fetches the part of the message the card had to cut.
+      log('in', 'cardFull', `the rest of ${p.requestId}`);
+      break;
+
     case 'open-window':
       // Raising the window is the whole job: the buddy keeps his spot. Only
       // `point: true` — the answer has to be typed on that prompt — puts him on

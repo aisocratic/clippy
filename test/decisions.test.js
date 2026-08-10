@@ -8,6 +8,7 @@ const {
   normalizeAnswers,
   describeToolCall,
   activityLabel,
+  FULL_DETAIL_MAX,
 } = require('../src/decisions');
 
 test('resolve answers a pending ask', async () => {
@@ -213,6 +214,25 @@ test('describeToolCall summarizes common tools', () => {
   const other = describeToolCall('WebFetch', { url: 'https://example.com' });
   assert.match(other.title, /WebFetch/);
   assert.match(other.detail, /example\.com/);
+});
+
+test('a cut card keeps the rest of the message for "read all"', () => {
+  const long = describeToolCall('Bash', { command: 'x'.repeat(2000) });
+  // What the card shows is cut; what it can grow into is not.
+  assert.match(long.detail, /…$/);
+  assert.ok(long.fullDetail.length > long.detail.length);
+  assert.doesNotMatch(long.fullDetail, /…$/);
+  assert.ok(long.fullDetail.includes('x'.repeat(2000)));
+
+  // Nothing was cut, so there is nothing to offer — the empty string is what
+  // tells the card not to show the button at all.
+  assert.equal(describeToolCall('Bash', { command: 'ls' }).fullDetail, '');
+  assert.equal(describeToolCall('Edit', { file_path: '/a/b.js' }).fullDetail, '');
+
+  // Even the whole version has a ceiling: this is a window over a desktop.
+  const huge = describeToolCall('Write', { file_path: '/a/b.txt', content: 'y'.repeat(FULL_DETAIL_MAX * 2) });
+  assert.ok(huge.fullDetail.length <= FULL_DETAIL_MAX + 200);
+  assert.match(huge.fullDetail, /…$/);
 });
 
 test('Codex apply_patch calls name the edited file', () => {

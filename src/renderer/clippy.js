@@ -44,6 +44,7 @@ const cardEl = document.getElementById('card');
 const cardQueue = document.getElementById('card-queue');
 const cardTitle = document.getElementById('card-title');
 const cardDetail = document.getElementById('card-detail');
+const cardMore = document.getElementById('btn-card-more');
 const cardOptions = document.getElementById('card-options');
 const cardInput = document.getElementById('card-input');
 const countdownFill = document.getElementById('card-countdown-fill');
@@ -1120,6 +1121,11 @@ function showNextRequest() {
   petEl.classList.add('hidden');
   menuEl.classList.add('hidden');
 
+  // Every card starts folded, however the last one was left.
+  cardEl.classList.remove('reading');
+  cardDetail.style.maxHeight = '';
+  cardMore.classList.add('hidden');
+
   const isApproval = next.type === 'approval';
   const isAnswer = next.type === 'answer';
   const isPlan = next.variant === 'plan';
@@ -1162,6 +1168,7 @@ function showNextRequest() {
 
   setMarkdown(cardDetail, next.detail || '');
   cardDetail.classList.toggle('hidden', !next.detail);
+  offerTheRest(next);
   cardInput.value = '';
   cardInput.placeholder = isPlan
     ? 'optional: what to change before approving (Revise sends this back)…'
@@ -1185,6 +1192,50 @@ function showNextRequest() {
   syncMode();
   setExcited(true);
 }
+
+/**
+ * "read all" is offered only when there really is more of the message than the
+ * card is showing, which happens two ways: main cut it before sending (a plan
+ * past 4000 characters, a sign-off past 600), or it arrived whole and doesn't
+ * fit the box. The second one has to be measured — the text is whatever the
+ * agent wrote, and the box is a fixed 190px.
+ */
+function offerTheRest(req) {
+  const boxed =
+    !cardDetail.classList.contains('hidden') &&
+    cardDetail.scrollHeight > cardDetail.clientHeight + 2;
+  cardMore.classList.toggle('hidden', !(req.truncated || boxed));
+}
+
+cardMore.addEventListener('click', async () => {
+  const req = requests.get(activeRequestId);
+  // Only the cut ones need a round trip; the rest are already here in full and
+  // just need the room.
+  if (req && req.truncated) {
+    cardMore.disabled = true;
+    cardMore.textContent = 'reading…';
+    const whole = await window.clippyAPI.cardFull(req.id);
+    cardMore.disabled = false;
+    cardMore.textContent = 'read all';
+    if (whole) {
+      req.detail = whole;
+      req.truncated = false;
+      setMarkdown(cardDetail, whole);
+      cardDetail.classList.remove('hidden');
+    }
+  }
+  cardMore.classList.add('hidden');
+  cardEl.classList.add('reading');
+  // Unfolded, the card can want more window than the screen has, and a window
+  // clamped shorter than its contents loses the *top* of them — the title and
+  // the queue go off-screen and you're left reading the middle of a message.
+  // So the box only grows into the room that is actually there: everything
+  // else on the stage, measured, subtracted from the screen.
+  const rest = contentHeight() - cardDetail.clientHeight;
+  const room = Math.max(120, (window.screen?.availHeight || 900) - rest - 24);
+  if (room < cardDetail.clientHeight) cardDetail.style.maxHeight = `${room}px`;
+  syncMode(); // the window grows to whatever the unfolded card now needs
+});
 
 /** "+2 more": how many held requests are stacked up behind this card. */
 function showQueueDepth() {
@@ -1315,6 +1366,8 @@ function handleEvent(evt) {
         name: evt.name,
         title: evt.kind === 'approval' ? evt.title : evt.message,
         detail: evt.detail || '',
+        // Main kept the rest of it; "read all" comes and gets it.
+        truncated: !!evt.truncated,
         expiresAt: evt.expiresAt || 0,
         holdMs: evt.expiresAt ? Math.max(1, evt.expiresAt - Date.now()) : 1,
       });

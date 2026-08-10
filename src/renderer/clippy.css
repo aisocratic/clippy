@@ -599,6 +599,23 @@ body.flipped #buddy-vector {
   user-select: text;
 }
 
+/* "read all": the message was longer than the card, either because main cut it
+   on the way here or because the box it landed in is 190px tall. Sits under the
+   detail like a fold in the paper, not beside the answers — pressing it reads,
+   it doesn't decide anything. */
+#btn-card-more {
+  margin-top: 5px;
+  font-size: 10px;
+  padding: 2px 8px;
+}
+
+/* Read in full: the box takes the room a plan gets, and syncMode asks main for
+   a window to match (clamped to the screen, so a very long message still
+   scrolls the last of itself inside a box that now shows far more of it). */
+#card.reading #card-detail {
+  max-height: 460px;
+}
+
 /* Plan approvals: a realistic plan is a page of numbered steps, so while the
    active card is a plan the card grows — wider, and with much more room to
    scroll — and clippy.js asks main for a window to match. Every other card

@@ -15,6 +15,10 @@
       </div>
       <div id="card-title"></div>
       <div id="card-detail" class="markdown hidden"></div>
+      <!-- Only when there is more of the message than the card is showing:
+           either it was cut before it got here, or it doesn't fit the box. -->
+      <button id="btn-card-more" class="dim hidden"
+              title="Show the whole message — the window grows to fit it">read all</button>
       <div id="card-options" class="hidden"></div>
       <textarea id="card-input" rows="2" spellcheck="false"></textarea>
       <div id="card-actions">

@@ -1,20 +1,25 @@
-/* Clippy's settings window. Same design language as the buddy's cards — one
-   surface, one accent, one rhythm — but laid out for a window you sit and read
-   rather than one that hovers over your work. */
+/* Clippy's settings window. The same card the buddy's popups wear and the
+   landing page is built from — warm paper, an ink outline, an offset shadow
+   with no blur — but laid out for a window you sit and read rather than one
+   that hovers over your work. The palette is shared on purpose: these tokens
+   are src/renderer/clippy.css's, which are website/app/globals.css's. */
 
 :root {
-  --bg: #101217;
-  --surface: #191c22;
-  --surface-2: #14171c;
-  --line: #2a2f38;
-  --line-soft: #21252c;
-  --text: #eef1f5;
-  --muted: #98a2ae;
-  --faint: #6f7a87;
-  --accent: #6ea8fe;
-  --ok: #4aa870;
-  --warn: #e0b23f;
-  --radius: 12px;
+  --ink: #15262a;
+  --bg: #f7f2e8; /* the page under the cards */
+  --surface: #f9f6ef; /* the cards themselves */
+  --surface-2: #eae6de; /* inset blocks: code, choices, empty states */
+  --line: rgba(21, 38, 42, 0.2);
+  --line-soft: rgba(21, 38, 42, 0.12);
+  --text: var(--ink);
+  --muted: #56666b;
+  --faint: #7b8b90;
+  --accent: #4f9dce;
+  --ok: #4f9f6f;
+  --warn: #a16207;
+  --yellow: #f2c94c;
+  --no: #b7402c; /* a refusal, dark enough to read on paper */
+  --radius: 14px;
   --sans: 'Avenir Next', Avenir, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
 
@@ -44,7 +49,36 @@ code {
   border: 1px solid var(--line);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 11px;
-  color: #cbd3dc;
+  color: #3d4d52;
+}
+
+/* The same button the buddy's cards use: white, outlined in ink, heavy label.
+   The controls that are deliberately *not* buttons-looking — a rail link, a
+   cast row, a session name — say so themselves and win on specificity. */
+button {
+  padding: 6px 12px;
+  border: 1.5px solid var(--ink);
+  border-radius: 8px;
+  background: #ffffff;
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.12s ease, transform 0.08s ease;
+}
+
+button:hover:not(:disabled) {
+  background: var(--surface-2);
+}
+
+button:active:not(:disabled) {
+  transform: translate(1px, 1px);
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
 /* ---------- Rail ---------- */
@@ -53,8 +87,8 @@ code {
   flex: none;
   width: 208px;
   padding: 14px 12px;
-  border-right: 1px solid var(--line);
-  background: #0d0f13;
+  border-right: 2px solid var(--ink);
+  background: #eee6d7;
   display: flex;
   flex-direction: column;
   gap: 3px;
@@ -100,13 +134,14 @@ code {
 }
 
 .rail-link:hover {
-  background: #171a20;
+  background: rgba(21, 38, 42, 0.07);
   color: var(--text);
 }
 
+/* The page you're on is the site's active tab: solid ink, white label. */
 .rail-link.on {
-  background: #1e232b;
-  color: var(--text);
+  background: var(--ink);
+  color: #ffffff;
 }
 
 #rail-meta {
@@ -142,7 +177,7 @@ code {
   border-radius: 50%;
   background: var(--ok);
   flex: none;
-  box-shadow: 0 0 0 3px rgba(74, 168, 112, 0.15);
+  box-shadow: 0 0 0 3px rgba(79, 159, 111, 0.22);
 }
 
 /* ---------- Page ---------- */
@@ -187,8 +222,9 @@ code {
   padding: 14px 16px;
   margin-bottom: 16px;
   background: var(--surface);
-  border: 1px solid var(--line);
+  border: 2px solid var(--ink);
   border-radius: var(--radius);
+  box-shadow: 4px 4px 0 var(--ink);
 }
 
 .field label {
@@ -210,11 +246,12 @@ code {
 
 .segmented {
   display: inline-flex;
-  padding: 3px;
+  padding: 4px;
   gap: 3px;
-  background: var(--surface-2);
-  border: 1px solid var(--line);
-  border-radius: 9px;
+  background: #fffdf8;
+  border: 2px solid var(--ink);
+  border-radius: 11px;
+  box-shadow: 3px 3px 0 var(--ink);
 }
 
 .segmented button {
@@ -235,9 +272,8 @@ code {
 }
 
 .segmented button.on {
-  background: #2b323d;
-  color: var(--text);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  background: var(--ink);
+  color: #ffffff;
 }
 
 /* ---------- The cast ----------
@@ -247,8 +283,9 @@ code {
 .cast {
   display: flex;
   flex-direction: column;
-  border: 1px solid var(--line);
+  border: 2px solid var(--ink);
   border-radius: var(--radius);
+  box-shadow: 4px 4px 0 var(--ink);
   overflow: hidden;
 }
 
@@ -266,7 +303,7 @@ code {
 }
 
 .cast-row.on {
-  background: #1b212c;
+  background: var(--surface-2);
   box-shadow: inset 3px 0 0 var(--accent);
 }
 
@@ -288,7 +325,7 @@ code {
 }
 
 .cast-who:hover:enabled {
-  background: #232833;
+  background: rgba(21, 38, 42, 0.07);
 }
 
 /* Nothing is running, so there is no project to hand this buddy to. */
@@ -359,7 +396,7 @@ code {
 }
 
 .drop-hint b {
-  color: #c3cbd5;
+  color: var(--text);
 }
 
 .drop-hint a {
@@ -384,8 +421,8 @@ code {
   min-width: 0;
   padding: 5px 9px;
   border-radius: 8px;
-  border: 1px solid var(--line);
-  background: var(--surface);
+  border: 1.5px solid var(--line);
+  background: #ffffff;
   color: var(--text);
   font: inherit;
   font-size: 11.5px;
@@ -395,16 +432,17 @@ code {
   flex: none;
   padding: 5px 12px;
   border-radius: 8px;
-  border: 1px solid var(--line);
-  background: var(--surface);
-  color: var(--text);
+  border: 1.5px solid var(--ink);
+  background: #ffffff;
+  color: var(--ink);
   font: inherit;
   font-size: 11.5px;
+  font-weight: 700;
   cursor: pointer;
 }
 
 .add-pet button:hover {
-  background: #232833;
+  background: var(--surface-2);
 }
 
 .add-pet button:disabled {
@@ -416,8 +454,8 @@ code {
   margin-top: 6px;
 }
 
-#pet-status.good { color: var(--ok, #4aa870); }
-#pet-status.bad { color: var(--no, #d76b64); }
+#pet-status.good { color: var(--ok); }
+#pet-status.bad { color: var(--no); }
 
 /* ---------- Actions ---------- */
 
@@ -430,8 +468,9 @@ code {
 .action {
   padding: 14px 16px;
   background: var(--surface);
-  border: 1px solid var(--line);
+  border: 2px solid var(--ink);
   border-radius: var(--radius);
+  box-shadow: 4px 4px 0 var(--ink);
 }
 
 .action-head {
@@ -465,9 +504,9 @@ code {
 }
 
 .tag.off {
-  background: rgba(224, 178, 63, 0.14);
-  border-color: rgba(224, 178, 63, 0.4);
-  color: var(--warn);
+  background: var(--yellow);
+  border-color: var(--ink);
+  color: var(--ink);
 }
 
 .action dl {
@@ -511,7 +550,7 @@ code {
   flex: none;
   font-size: 11.5px;
   font-weight: 600;
-  color: #cbd3dc;
+  color: var(--text);
 }
 
 .choice-effect {
@@ -526,7 +565,7 @@ code {
   overflow-x: auto;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 10.5px;
-  color: #8fc7a4;
+  color: #2f6b47;
   white-space: pre;
 }
 
@@ -539,9 +578,10 @@ code {
 .access {
   padding: 14px 16px;
   margin-bottom: 12px;
-  background: rgba(224, 178, 63, 0.08);
-  border: 1px solid rgba(224, 178, 63, 0.4);
+  background: rgba(242, 201, 76, 0.3);
+  border: 2px solid var(--ink);
   border-radius: var(--radius);
+  box-shadow: 4px 4px 0 var(--ink);
 }
 
 .access-title {
@@ -563,7 +603,7 @@ code {
   padding: 7px 9px;
   margin-bottom: 10px;
   font-size: 11px;
-  color: #dbe3ea;
+  color: var(--text);
   word-break: break-all;
 }
 
@@ -581,22 +621,21 @@ code {
 .access-actions button {
   padding: 6px 12px;
   border-radius: 8px;
-  border: 1px solid var(--line);
-  background: var(--surface-2);
-  color: var(--text);
+  border: 1.5px solid var(--ink);
+  background: #ffffff;
+  color: var(--ink);
   font: inherit;
   font-size: 12px;
+  font-weight: 700;
   cursor: pointer;
 }
 
 .access-actions button:hover {
-  background: #232833;
+  background: var(--surface-2);
 }
 
 .access-actions button.primary {
-  background: rgba(224, 178, 63, 0.16);
-  border-color: rgba(224, 178, 63, 0.5);
-  color: #f0dca8;
+  background: var(--yellow);
 }
 
 /* ---------- Sessions ---------- */
@@ -614,8 +653,9 @@ code {
   width: 100%;
   padding: 10px 14px;
   background: var(--surface);
-  border: 1px solid var(--line);
+  border: 2px solid var(--ink);
   border-radius: var(--radius);
+  box-shadow: 4px 4px 0 var(--ink);
   color: var(--text);
 }
 
@@ -635,7 +675,7 @@ code {
 }
 
 .session-name:hover {
-  background: #232833;
+  background: rgba(21, 38, 42, 0.07);
 }
 
 .session-art {
@@ -660,8 +700,8 @@ code {
   max-width: 190px;
   padding: 4px 7px;
   border-radius: 8px;
-  border: 1px solid var(--line);
-  background: var(--surface-2);
+  border: 1.5px solid var(--ink);
+  background: #ffffff;
   color: var(--text);
   font: inherit;
   font-size: 11.5px;
@@ -703,8 +743,9 @@ code {
   padding: 14px 16px;
   margin-bottom: 16px;
   background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--radius, 12px);
+  border: 2px solid var(--ink);
+  border-radius: var(--radius, 14px);
+  box-shadow: 4px 4px 0 var(--ink);
 }
 
 .update-row {
@@ -731,6 +772,6 @@ code {
   color: var(--muted);
 }
 
-.update-result.good { color: var(--ok, #4aa870); }
-.update-result.warn { color: var(--warn, #e0b23f); }
-.update-result.bad { color: var(--no, #d76b64); }
+.update-result.good { color: var(--ok); }
+.update-result.warn { color: var(--warn); }
+.update-result.bad { color: var(--no); }
