@@ -142,6 +142,24 @@ body {
 
 /* ---------- Buttons ---------- */
 
+/* Anything you click says so under the pointer. Buttons never get this from
+   the browser, and neither does an anchor without an href — so it is stated
+   once, here, rather than remembered per component. (The buddy himself is the
+   exception, below: he is something you pick up, not something you press.) */
+button,
+a,
+select,
+summary,
+label[for],
+[role='button'] {
+  cursor: pointer;
+}
+
+button:disabled,
+select:disabled {
+  cursor: default;
+}
+
 /* The site's card buttons: white, outlined in ink, heavy label. Only the one
    that says yes carries colour. */
 button {
@@ -155,7 +173,6 @@ button {
   border: 1.5px solid var(--ink);
   background: #ffffff;
   color: var(--ink);
-  cursor: pointer;
   transition: background 0.12s ease, border-color 0.12s ease, opacity 0.12s ease,
     transform 0.08s ease;
 }
@@ -172,7 +189,6 @@ button:active:not(:disabled) {
 
 button:disabled {
   opacity: 0.4;
-  cursor: default;
 }
 
 /* The affirmative action wears the card's colour, as on the site. */
@@ -235,6 +251,7 @@ button.dim:hover:not(:disabled) {
     0 1px 2px rgba(0, 0, 0, 0.9),
     0 0 6px rgba(0, 0, 0, 0.55);
   -webkit-app-region: drag; /* the name plate is a drag handle too */
+  cursor: grab; /* …so it says so, the same way the buddy does */
   opacity: 0;
   transition: opacity 0.15s ease;
 }

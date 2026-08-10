@@ -180,6 +180,19 @@ Restart any already-running agent sessions so they pick up the hooks. Codex requ
 trust step: open `/hooks`, review the new Clippy definitions, and trust them. Then ask either agent
 to do something that needs permission — Clippy will let you know.
 
+### Mobile companion
+
+The Expo-based iOS and Android companion lives in [`mobile/`](mobile/). It
+brings Clippy's sessions, approval inbox, activity timeline, context usage, and
+prompt composer into a touch-first interface. The current milestone includes a
+deterministic demo workspace while the secure Mac-to-phone relay is developed.
+
+```bash
+cd mobile
+npm install
+npm run ios       # or npm run android / npm run web
+```
+
 Use `npm run hooks:install -- --agent claude` or `--agent codex` to install only one integration.
 The matching options also work with `hooks:status` and `hooks:uninstall`.
 

@@ -1,0 +1,36 @@
+{
+  "expo": {
+    "name": "Clippy",
+    "slug": "clippy-mobile",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "scheme": "clippy",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "dev.aisocratic.clippy.mobile"
+    },
+    "android": {
+      "package": "dev.aisocratic.clippy.mobile",
+      "edgeToEdgeEnabled": true
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "single"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#F7F1E7",
+          "resizeMode": "contain"
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}

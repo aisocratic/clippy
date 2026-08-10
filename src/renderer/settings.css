@@ -52,6 +52,23 @@ code {
   color: #3d4d52;
 }
 
+/* Anything you click says so under the pointer. Buttons never get this from
+   the browser, and neither does an anchor without an href — so it is stated
+   once, here, rather than remembered per component. */
+button,
+a,
+select,
+summary,
+label[for],
+[role='button'] {
+  cursor: pointer;
+}
+
+button:disabled,
+select:disabled {
+  cursor: default;
+}
+
 /* The same button the buddy's cards use: white, outlined in ink, heavy label.
    The controls that are deliberately *not* buttons-looking — a rail link, a
    cast row, a session name — say so themselves and win on specificity. */
@@ -64,7 +81,6 @@ button {
   font: inherit;
   font-size: 12px;
   font-weight: 700;
-  cursor: pointer;
   transition: background 0.12s ease, transform 0.08s ease;
 }
 
@@ -78,7 +94,6 @@ button:active:not(:disabled) {
 
 button:disabled {
   opacity: 0.45;
-  cursor: default;
 }
 
 /* ---------- Rail ---------- */
