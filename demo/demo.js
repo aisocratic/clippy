@@ -16,7 +16,11 @@ const noteEl = document.getElementById('note');
 // Same geometry main uses (src/main.js): a bare buddy until there's a card,
 // then as tall as the renderer says it needs to be. The compact size comes from
 // the size roster, so it tracks whichever size is selected.
-const FULL_W = 268;
+// WIN_W in src/main.js — the panel is 300px and the window keeps 5px of air
+// either side of it for the card's shadow. The bench was still on an older,
+// narrower number, so every card here was drawn with its rounded corners
+// cropped off.
+const FULL_W = 310;
 const FALLBACK_H = 470;
 const MIN_FULL_H = 190;
 // Which of the two window sizes the frame is at. Tracked rather than measured:

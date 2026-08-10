@@ -179,7 +179,10 @@ function contentHeight() {
     if (cs.display === 'none') continue;
     h += el.offsetHeight + parseFloat(cs.marginTop) + parseFloat(cs.marginBottom);
   }
-  return Math.ceil(h) + 4; // a hair of slack for shadows and the card's tail
+  // Slack for what layout does not measure: the panel's offset shadow falls
+  // 5px below it, and while he's perched the bottom panel is the last thing in
+  // the window, with no padding under it to fall into.
+  return Math.ceil(h) + 10;
 }
 
 /**
