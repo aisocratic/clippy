@@ -7,6 +7,7 @@ const {
   parseProcessTable,
   appNameFromComm,
   findAppAncestor,
+  ancestorsOf,
   windowScript,
   parseBounds,
   dockPosition,
@@ -81,6 +82,37 @@ test("VS Code's nested helper is skipped for the window-owning app", () => {
     name: 'Visual Studio Code',
     bundle: '/Applications/Visual Studio Code.app',
   });
+});
+
+test('the ancestor chain starts at the process itself and stops at the root', () => {
+  const table = parseProcessTable(`
+ 24047 23520 claude
+ 23520  2802 /bin/zsh
+  2802  1196 /Applications/Visual Studio Code.app/Contents/Frameworks/Code Helper.app/Contents/MacOS/Code Helper
+  1196     1 /Applications/Visual Studio Code.app/Contents/MacOS/Code
+`);
+
+  // The starting pid is in the chain: a tmux pane whose command `exec`s has no
+  // intermediate shell, so the agent *is* the pane process.
+  assert.deepEqual(ancestorsOf(24047, table), [24047, 23520, 2802, 1196]);
+  assert.deepEqual(ancestorsOf(1196, table), [1196]);
+
+  // The same walk findAppAncestor makes, so the two agree about the tree.
+  assert.ok(ancestorsOf(24047, table).includes(findAppAncestor(24047, table).pid));
+});
+
+test('an ancestor walk gives up rather than running away', () => {
+  const table = parseProcessTable('  500 400 claude\n  300 200 /bin/zsh\n');
+
+  // A pid whose parent left the table: report what is known, not a guess.
+  assert.deepEqual(ancestorsOf(500, table), [500]);
+  assert.deepEqual(ancestorsOf(999, table), []);
+  assert.deepEqual(ancestorsOf(0, table), []);
+
+  const deep = parseProcessTable(
+    Array.from({ length: 30 }, (_, i) => ` ${100 + i} ${101 + i} p${i}`).join('\n')
+  );
+  assert.equal(ancestorsOf(100, deep, { maxHops: 4 }).length, 4);
 });
 
 test('windowScript targets the tty for Terminal and iTerm, the app otherwise', () => {

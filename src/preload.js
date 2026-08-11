@@ -38,6 +38,9 @@ contextBridge.exposeInMainWorld('clippyAPI', {
   cardFull: (requestId) => ipcRenderer.invoke('clippy-card-full', requestId),
   context: () => ipcRenderer.invoke('clippy-context'),
   usage: () => ipcRenderer.invoke('clippy-usage'),
+  // What a session Clippy started has been saying, for the panel that
+  // shows more than the last line of it.
+  feed: () => ipcRenderer.invoke('clippy-feed'),
   hide: () => ipcRenderer.send('clippy-hide'),
   quit: () => ipcRenderer.send('clippy-quit'),
 });

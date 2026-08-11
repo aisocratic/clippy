@@ -804,12 +804,14 @@ button.opt.chosen::after {
 
 /* ---------- Drive mode panel ---------- */
 
-#drive {
+#drive,
+#feed {
   padding: 12px 14px 13px;
   margin-bottom: 13px;
 }
 
-#drive-head {
+#drive-head,
+#feed-head {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -824,7 +826,8 @@ button.opt.chosen::after {
   padding: 2px 8px;
 }
 
-#drive-transcript {
+#drive-transcript,
+#feed-log {
   max-height: 300px;
   overflow: auto;
   font-size: 12px;
@@ -836,30 +839,36 @@ button.opt.chosen::after {
   user-select: text;
 }
 
-.drive-line {
+.drive-line,
+.feed-line {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   gap: 5px;
   margin-bottom: 5px;
 }
 
-.drive-role {
+.drive-role,
+.feed-role {
   font-weight: 600;
 }
 
-.drive-copy {
+.drive-copy,
+.feed-copy {
   min-width: 0;
 }
 
-.drive-line.user {
+.drive-line.user,
+.feed-line.user {
   color: #1d6fd8;
 }
 
-.drive-line.assistant {
+.drive-line.assistant,
+.feed-line.assistant {
   color: var(--text);
 }
 
-.drive-line.system {
+.drive-line.system,
+.feed-line.system {
   color: var(--muted);
   font-style: italic;
 }
@@ -1492,4 +1501,50 @@ body.compact #controls button {
 
 .hidden {
   display: none !important;
+}
+
+/* Recent messages — a session Clippy started, read from its own transcript.
+   Shares the driven-session panel's rules above; only what differs is here. */
+#feed-log {
+  max-height: 240px;
+}
+
+/* Where this came from: `tmux · clippy-app-1`, or `via me@box`. */
+#feed-src {
+  font-weight: 400;
+  font-size: 10px;
+}
+
+/* Losing touch with a remote session is a note, never an alarm. */
+#feed-note {
+  font-size: 10.5px;
+  color: var(--warn);
+  margin-bottom: 6px;
+}
+
+.feed-tools {
+  grid-column: 2;
+  font-size: 10px;
+  color: var(--muted);
+}
+
+/* Text scraped back off the terminal rather than read from a transcript: it is
+   rendered output, so it keeps its own spacing and never pretends to be prose. */
+.feed-copy pre.pane {
+  margin: 0;
+  font: 10px/1.35 ui-monospace, Menlo, monospace;
+  white-space: pre-wrap;
+  opacity: 0.85;
+}
+
+/* A buddy whose session Clippy started. The ring is on the container rather
+   than the artwork, so it survives every character and sprite theme. */
+body.owned #clippy::after {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border: 1px dashed var(--clip);
+  border-radius: 7px;
+  opacity: 0.45;
+  pointer-events: none;
 }

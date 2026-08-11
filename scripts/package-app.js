@@ -93,21 +93,40 @@ function chunk(type, data) {
 }
 
 /**
- * RGBA pixels -> a complete PNG. Truecolour-with-alpha, eight bits a channel,
- * every scanline filter "none": the least clever PNG there is, which is the
- * point — zlib does the compressing and the rest is bookkeeping.
+ * RGBA pixels -> a complete PNG. Truecolour, eight bits a channel, every
+ * scanline filter "none": the least clever PNG there is, which is the point —
+ * zlib does the compressing and the rest is bookkeeping.
+ *
+ * `alpha: false` drops the alpha channel entirely rather than merely setting
+ * it opaque. That is not a size optimisation: App Store Connect rejects an app
+ * icon that *has* an alpha channel, however opaque every pixel in it is, and
+ * it rejects it after the build and the upload rather than here. Callers that
+ * pass this must composite onto a background first — whatever was transparent
+ * arrives as whatever colour it was carrying.
  */
-function encodePng(width, height, rgba) {
+function encodePng(width, height, rgba, { alpha = true } = {}) {
+  const channels = alpha ? 4 : 3;
   const ihdr = Buffer.alloc(13);
   ihdr.writeUInt32BE(width, 0);
   ihdr.writeUInt32BE(height, 4);
   ihdr[8] = 8; // bit depth
-  ihdr[9] = 6; // colour type: RGBA
+  ihdr[9] = alpha ? 6 : 2; // colour type: RGBA, or RGB with no alpha at all
   // [10..12] compression, filter, interlace: all zero
-  const raw = Buffer.alloc(height * (1 + width * 4));
+  const stride = 1 + width * channels;
+  const raw = Buffer.alloc(height * stride);
   for (let y = 0; y < height; y++) {
     // Each scanline leads with its filter byte (0 = none), then the pixels.
-    rgba.copy(raw, y * (1 + width * 4) + 1, y * width * 4, (y + 1) * width * 4);
+    if (alpha) {
+      rgba.copy(raw, y * stride + 1, y * width * 4, (y + 1) * width * 4);
+      continue;
+    }
+    for (let x = 0; x < width; x++) {
+      const from = (y * width + x) * 4;
+      const to = y * stride + 1 + x * 3;
+      raw[to] = rgba[from];
+      raw[to + 1] = rgba[from + 1];
+      raw[to + 2] = rgba[from + 2];
+    }
   }
   return Buffer.concat([
     Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), // signature

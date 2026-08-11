@@ -14,6 +14,7 @@ const {
   nativeImage,
   clipboard,
 } = require('electron');
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -35,6 +36,7 @@ const { windowActionFor } = require('./visibility');
 const { EDGE_OPTIONS, EDGE_IDS, edgeLineup, edgeHome } = require('./arrange');
 const {
   terminalFromHeaders,
+  parseProcessTable,
   resolveTarget,
   revealWindow,
   windowBounds,
@@ -42,6 +44,11 @@ const {
   promptPosition,
   typeAndSubmit,
 } = require('./terminal');
+const tmux = require('./tmux');
+const { SpawnedSessions, buddyKeyFor, rememberProject } = require('./spawned');
+const { resolveSession, createReader, readTail, turnsFrom, lastSaid } = require('./transcript');
+const { createRemoteReader, controlPathFor, ensureControlDir } = require('./transport');
+const { startAgentWatch } = require('./agent-watch');
 const {
   sessionUsage,
   lastAssistantText,
@@ -107,6 +114,11 @@ const settings = {
   sizeBySession: {},
   size: 'medium', // the size a project gets when it hasn't picked one
   arrangeEdge: '', // screen edge new buddies line up on; '' = the classic corner
+  // …and the sessions Clippy starts itself (see spawnAgent).
+  defaultAgent: 'claude', // which agent a recent project re-opens with
+  attachTerminal: 'terminal', // where "attach in terminal" opens the session
+  recentProjects: [], // [{ path, host, remotePath, agent, at }] — the New agent menu
+  spawnedSessions: [], // the tmux sessions we own, so they survive a restart
 };
 
 // Settings that aren't simple on/off switches, with the values they accept.
@@ -114,7 +126,23 @@ const CHOICES = {
   size: () => Object.keys(SIZES),
   arrangeEdge: () => EDGE_IDS,
   appearanceSound: () => ['', 'pop', 'chime', 'chirp'],
+  defaultAgent: () => Object.keys(tmux.SPAWNABLE),
+  attachTerminal: () => Object.keys(ATTACH_APPS),
 };
+
+// Where "attach in terminal" opens a tmux session.
+const ATTACH_APPS = { terminal: 'Terminal', iterm: 'iTerm' };
+
+// Settings a renderer must never set directly: each is a collection with its
+// own writer (assignCharacter, rememberRecentProject, saveSpawned).
+const MANAGED = [
+  'characterByProject',
+  'sizeByProject',
+  'characterBySession',
+  'sizeBySession',
+  'recentProjects',
+  'spawnedSessions',
+];
 
 // The cast is read fresh each time so a sprite theme dropped into
 // `src/renderer/assets/themes/` can be assigned without touching the code.
@@ -235,9 +263,9 @@ function saveSettings() {
 
 function setSetting(key, value) {
   if (!(key in settings)) return;
-  // The assignment maps have their own setters — they are not one value.
-  const maps = ['characterByProject', 'sizeByProject', 'characterBySession', 'sizeBySession'];
-  if (maps.includes(key)) return;
+  // Settings that are a collection rather than one value: they have their own
+  // writers, and the Boolean() fallback below would flatten them to `true`.
+  if (MANAGED.includes(key)) return;
   if (CHOICES[key]) {
     if (!CHOICES[key]().includes(value)) return;
     settings[key] = value;
@@ -311,6 +339,7 @@ function replaceAll() {
 /* ---------------- Settings window ---------------- */
 
 let settingsWin = null;
+let newAgentWin = null; // the "start an agent somewhere" form (see openNewAgentWindow)
 
 /**
  * The window behind the 📎 in the menu bar: who the buddies are, what they cost
@@ -559,8 +588,14 @@ function nextFreeSlot() {
 /**
  * The window for a session, created on first sight. Each one carries its own
  * identity (name + colour) so you can tell your agents apart at a glance.
+ *
+ * `identityKey` is what the colour and the pet name are derived from, and it
+ * defaults to the buddy's key — which is right for a watched session, whose key
+ * never changes. A session Clippy spawned is keyed by its tmux name until a
+ * hook tells us its real session id, so it passes the tmux name here and keeps
+ * the same face across that change, and across a restart.
  */
-function buddyFor(key, name = '', agent = '') {
+function buddyFor(key, name = '', agent = '', identityKey = key) {
   const existing = buddies.get(key);
   if (existing) {
     if (name && name !== existing.name) {
@@ -576,7 +611,7 @@ function buddyFor(key, name = '', agent = '') {
   // against, and this window is created at that size.
   const [compactW, compactH] = compactSize({ name, sessionId: key });
   const { x, y } = homeBounds(slot, compactW, compactH);
-  const identity = identityFor(key, name);
+  const identity = identityFor(identityKey, name);
   const win = new BrowserWindow({
     width: compactW,
     height: compactH,
@@ -605,7 +640,7 @@ function buddyFor(key, name = '', agent = '') {
       name: identity.name,
       color: identity.color,
       agent: agent || 'claude',
-      pet: petNameFor(key),
+      pet: petNameFor(identityKey),
     },
   });
   // CLIPPY_SANDBOXTOOLS=1 npm start opens an inspector per buddy, detached so it
@@ -617,8 +652,19 @@ function buddyFor(key, name = '', agent = '') {
     // Only offer "open the session's window" when we actually know where it is.
     win.webContents.send('clippy-event', {
       kind: 'can-open',
-      value: Boolean(tracker.terminalFor(key)),
+      value: Boolean(tracker.terminalFor(key) || tmuxRecordFor(key)),
     });
+    // A buddy whose session Clippy started wears a mark, so "mine" and "one I
+    // happened to notice" are not the same thing at a glance.
+    const owned = tmuxRecordFor(key);
+    if (owned) {
+      win.webContents.send('clippy-event', {
+        kind: 'ownership',
+        owned: true,
+        host: owned.host,
+        tmux: owned.name,
+      });
+    }
     // Which way to face when there is nothing else to say.
     const buddy = buddies.get(key);
     if (buddy) {
@@ -649,6 +695,7 @@ function buddyFor(key, name = '', agent = '') {
     slot,
     name: identity.name,
     sessionId: key,
+    identityKey,
     agent: agent || 'claude',
     pinned: false,
     dock: null,
@@ -688,6 +735,7 @@ function closeBuddy(key) {
   const buddy = buddies.get(key);
   if (!buddy) return;
   buddy.dock?.poll?.cancel();
+  unwatchSpawned(key);
   buddies.delete(key);
   if (!buddy.win.isDestroyed()) buddy.win.destroy();
   pushSettingsState();
@@ -831,6 +879,15 @@ async function perchOn(key, { raise = false, auto = false, mode = null } = {}) {
   const buddy = buddies.get(key);
   if (!buddy || buddy.win.isDestroyed()) return false;
 
+  // A detached tmux pane has no window to sit on. Said out loud only when the
+  // user asked; the automatic perch just declines.
+  if (tmuxRecordFor(key)) {
+    if (!auto) {
+      tellBuddy(key, `“${buddy.name}” runs in tmux — there's no window to perch on, but you can attach one.`);
+    }
+    return false;
+  }
+
   // Already perched: a "go to terminal" click just raises the window again.
   if (buddy.dock) {
     if (raise) {
@@ -941,6 +998,12 @@ async function raiseTerminal(key) {
   const buddy = buddies.get(key);
   if (!buddy || buddy.win.isDestroyed()) return false;
 
+  // A session Clippy started has no window of its own — it has a tmux session,
+  // which the user can attach a terminal to. Checked before the Accessibility
+  // gate below, because attaching needs no permission at all.
+  const record = tmuxRecordFor(key);
+  if (record) return attachSpawned(buddy, record);
+
   if (!tracker.terminalFor(key)) {
     tellBuddy(
       key,
@@ -1011,6 +1074,11 @@ async function sendPromptToTerminal(key, text) {
   const buddy = buddies.get(key);
   const prompt = String(text || '').trim();
   if (!buddy || !prompt) return false;
+
+  // Ours to drive: tmux takes the text directly, so there is no window to
+  // raise, no keystrokes to aim, and nothing for macOS to block.
+  const record = tmuxRecordFor(key);
+  if (record) return sendToSpawned(buddy, record, prompt);
 
   if (!canDriveWindows()) {
     askForWindowAccess(key);
@@ -1347,6 +1415,493 @@ function tellBuddy(key, message, { sticky = false, fix = null } = {}) {
   buddy.win.showInactive();
 }
 
+/* ---------------- Sessions Clippy starts (tmux) ---------------- */
+
+/**
+ * Watch mode waits for an agent to report in. This is the other direction:
+ * Clippy starts the agent, in a tmux session it owns.
+ *
+ * tmux is the point. It gives a session Clippy can type into without an
+ * Accessibility grant or a visible window, that the user can attach a real
+ * terminal to whenever they want to take over, and that outlives Clippy itself
+ * — quitting the app leaves the work running.
+ *
+ * What such a session does *not* have is hooks, at least not at first: there is
+ * no SessionStart hook, so nothing is heard until the first prompt, and an
+ * agent over ssh reports to its own machine and never will. So everything these
+ * buddies know about what their agent is saying comes from reading the
+ * transcript it writes (see transcript.js).
+ */
+
+// Populated from the settings file once it has been read (see whenReady):
+// this runs at module load, when `settings` is still the defaults.
+const spawned = new SpawnedSessions();
+// Buddy key -> { watch, record }. Rekeyed alongside the buddy on adoption.
+const watchers = new Map();
+// Codex rollouts record their cwd on line one, which never changes.
+const codexMetaCache = new Map();
+// How much of a session's talk to keep for the "recent messages" panel.
+const FEED_TURNS = 12;
+
+function saveSpawned() {
+  settings.spawnedSessions = spawned.toJSON();
+  saveSettings();
+}
+
+/** A path as the agent will see it: symlinks resolved, or unchanged if it's gone. */
+function canonicalPath(dir) {
+  try {
+    return dir ? fs.realpathSync(dir) : '';
+  } catch {
+    return dir;
+  }
+}
+
+function rememberRecentProject(entry) {
+  settings.recentProjects = rememberProject(settings.recentProjects, { ...entry, at: Date.now() });
+  saveSettings();
+}
+
+/** Where this session's transcript is — what the hooks said, or what we found. */
+function transcriptPathFor(key) {
+  return tracker.transcriptFor(key) || spawned.forKey(key)?.transcript || '';
+}
+
+/** Is this buddy one we started, and can therefore drive through tmux? */
+const tmuxRecordFor = (key) => spawned.forKey(key);
+
+/**
+ * The last thing this session said, for the status summary.
+ *
+ * A remote session's transcript is on the other machine, so there is nothing
+ * local to open — the watcher's last reading is the only copy we have.
+ */
+async function recapFor(key) {
+  const record = spawned.forKey(key);
+  if (record && record.host) return (record.lastSay || '').slice(0, 200);
+  return lastAssistantText(transcriptPathFor(key), { maxChars: 200 });
+}
+
+/**
+ * A reader that finds its own transcript.
+ *
+ * A freshly spawned agent has not written anything yet, and a Codex session has
+ * to be searched for by cwd, so resolution cannot happen at spawn time. It
+ * happens on the first poll that succeeds, and again if the file ever goes away
+ * — a /clear starts a new session id, which is a new file at a new path.
+ */
+function spawnedReader(record) {
+  // A session on another machine writes its transcript over there, so reading
+  // it is one ssh command per poll rather than a local file handle. Everything
+  // downstream sees the same shape either way.
+  if (record.host) {
+    return createRemoteReader({
+      host: record.host,
+      agent: record.agent,
+      cwd: record.remotePath,
+      sessionId: record.sessionId,
+      // The same socket the session's own ssh is holding open, so a poll costs
+      // a round trip rather than a handshake and an authentication.
+      controlPath: controlPathFor(),
+      turnsFrom,
+      clip: (turn) => (turn.text.length > 4000 ? { ...turn, text: `${turn.text.slice(0, 4000)}…` } : turn),
+    });
+  }
+
+  let reader = null;
+  return {
+    async poll() {
+      if (!reader) {
+        const found = await resolveSession({
+          agent: record.agent,
+          cwd: record.cwd,
+          sessionId: record.sessionId,
+          roots: { claudeProjects: CLAUDE_PROJECTS_DIR, codexSessions: CODEX_SESSIONS_DIR },
+          sinceMs: record.createdAt,
+          cache: codexMetaCache,
+        });
+        if (!found) return { turns: [], changed: false };
+        record.transcript = found.path;
+        reader = createReader({ path: found.path, agent: record.agent });
+      }
+      const result = await reader.poll();
+      if (result.gone) {
+        reader = null;
+        record.transcript = '';
+      }
+      return result;
+    },
+  };
+}
+
+/** Start following what a spawned session is saying. */
+function watchSpawned(record) {
+  const key = buddyKeyFor(record);
+  if (watchers.has(key)) return watchers.get(key);
+
+  const watch = startAgentWatch({
+    reader: spawnedReader(record),
+    remote: Boolean(record.host),
+    onTurns: (turns, meta) => {
+      const said = lastSaid(turns);
+      if (said) record.lastSay = said;
+      // Kept because a remote transcript cannot be re-read from here: for an
+      // SSH session this is the only copy of what it has been saying.
+      record.recentTurns = [...(record.recentTurns || []), ...turns].slice(-FEED_TURNS);
+      const buddy = buddies.get(buddyKeyFor(record));
+      if (!buddy || buddy.win.isDestroyed()) return;
+      buddy.win.webContents.send('clippy-event', {
+        kind: 'transcript',
+        turns,
+        // A first read is the backlog, not news — the buddy files it away
+        // rather than announcing it.
+        cold: Boolean(meta && meta.cold),
+        source: record.host ? `via ${record.host}` : `tmux · ${record.name}`,
+      });
+    },
+    onStatus: (status) => {
+      const buddy = buddies.get(buddyKeyFor(record));
+      if (!buddy || buddy.win.isDestroyed()) return;
+      // Quietly: a flaky connection must not make a paperclip bounce.
+      buddy.win.webContents.send('clippy-event', {
+        kind: 'transcript-status',
+        state: status.state,
+        host: record.host,
+      });
+    },
+  });
+
+  const entry = { watch, record };
+  watchers.set(key, entry);
+  return entry;
+}
+
+function unwatchSpawned(key) {
+  const entry = watchers.get(key);
+  if (!entry) return;
+  entry.watch.stop();
+  watchers.delete(key);
+}
+
+/** Something happened in this session — look at its transcript sooner. */
+const pokeWatch = (key) => watchers.get(key)?.watch?.poke?.();
+
+/**
+ * Move a buddy from one key to another, in place.
+ *
+ * A spawned Codex session lives under `tmux:<name>` until a hook tells us its
+ * real session id; from then on everything — the tracker, the decision broker,
+ * the settings maps — keys off that id, so the buddy has to move with it. The
+ * renderer never sends its own key back (windows are resolved with
+ * buddyForSender), so this really is just a map move.
+ */
+function rekeyBuddy(from, to) {
+  const buddy = buddies.get(from);
+  if (!buddy || from === to || buddies.has(to)) return false;
+  buddies.delete(from);
+  buddy.sessionId = to;
+  buddies.set(to, buddy);
+
+  const entry = watchers.get(from);
+  if (entry) {
+    watchers.delete(from);
+    watchers.set(to, entry);
+  }
+  pushSettingsState();
+  return true;
+}
+
+/**
+ * A hook arrived from a session we may have started. Claude sessions are
+ * spawned already knowing their id, so this is really about Codex.
+ */
+async function adoptSpawned(sessionId) {
+  if (!sessionId || spawned.forSession(sessionId) || !spawned.hasUnadopted()) return;
+  const pid = tracker.terminalFor(sessionId)?.pid;
+  if (!pid) return;
+
+  let table;
+  try {
+    table = parseProcessTable(await tmux.run('/bin/ps', ['-Ao', 'pid=,ppid=,comm='], { timeout: 4000 }));
+  } catch {
+    return;
+  }
+  const record = spawned.matchHookPid(pid, table);
+  if (!record) return;
+
+  const from = buddyKeyFor(record);
+  spawned.adopt(record.name, sessionId);
+  rekeyBuddy(from, sessionId);
+  saveSpawned();
+}
+
+/**
+ * The agent in a spawned session ended, but the pane did not — the launch
+ * command drops to a shell rather than dying, so the session is still there and
+ * still attachable. Hand it back to its tmux name instead of closing the buddy.
+ *
+ * @returns {boolean} true if the caller should leave this buddy alone.
+ */
+function unadoptBuddy(sessionId) {
+  const record = spawned.forSession(sessionId);
+  if (!record) return false;
+  spawned.release(sessionId);
+  rekeyBuddy(sessionId, buddyKeyFor(record));
+  saveSpawned();
+  return true;
+}
+
+/** Type into a spawned session's pane. No window, no keystrokes, no permission. */
+async function sendToSpawned(buddy, record, prompt) {
+  try {
+    const bin = await tmux.findTmux();
+    await tmux.sendPrompt(bin, record.paneId || `=${record.name}`, prompt);
+    pokeWatch(buddy.sessionId);
+    return true;
+  } catch (err) {
+    console.warn('clippy: could not send to tmux:', err.message);
+    tellBuddy(buddy.sessionId, `I couldn't reach “${record.name}” — is the tmux session still there?`, {
+      sticky: true,
+    });
+    return false;
+  }
+}
+
+/**
+ * Open a real terminal attached to a spawned session.
+ *
+ * A `.command` file handed to `open` rather than AppleScript's `do script`:
+ * that needs the Automation consent, which is a different grant from the
+ * Accessibility one the perch uses, with its own dialog and its own silent
+ * failure — and askForWindowAccess would send the user to the wrong pane.
+ * `open` is what a double-click does and needs nothing at all, and the terminal
+ * runs the file in a login shell, where tmux is on PATH for the same reason the
+ * agent binary is.
+ */
+async function attachSpawned(buddy, record) {
+  let bin;
+  try {
+    bin = await tmux.findTmux();
+  } catch {
+    offerTmuxInstall();
+    return false;
+  }
+
+  const command = tmux.attachCommand(bin, record.name);
+  try {
+    const file = path.join(app.getPath('userData'), 'attach', `${record.name}.command`);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, `#!/bin/sh\nexec ${command}\n`, { mode: 0o755 });
+    await tmux.run('/usr/bin/open', ['-a', ATTACH_APPS[settings.attachTerminal] || 'Terminal', file]);
+    return true;
+  } catch (err) {
+    console.warn('clippy: could not open a terminal:', err.message);
+    clipboard.writeText(command);
+    tellBuddy(buddy.sessionId, "I couldn't open your terminal — the attach command is on your clipboard.", {
+      sticky: true,
+    });
+    return false;
+  }
+}
+
+// Claude Code asks whether you trust a folder the first time it runs in one,
+// and that prompt swallows whatever is typed at it — so a first prompt sent
+// from the buddy would vanish without explanation.
+const TRUST_PROMPT = /trust the files in this folder|yes, i trust this folder/i;
+// Long enough for the TUI to have drawn something, short enough to still be
+// ahead of the user typing their first prompt.
+const TRUST_CHECK_MS = 6000;
+
+/**
+ * Say so if the agent is sitting on its trust prompt. Deliberately only says
+ * so: answering a security question on the user's behalf is not Clippy's to do.
+ */
+async function warnIfAwaitingTrust(bin, record, label) {
+  await new Promise((r) => setTimeout(r, TRUST_CHECK_MS));
+  const key = buddyKeyFor(record);
+  if (!buddies.has(key)) return;
+  const pane = await tmux.capturePane(bin, record.paneId || `=${record.name}`, { lines: 40 }).catch(() => '');
+  if (!TRUST_PROMPT.test(pane)) return;
+  tellBuddy(
+    key,
+    `${tmux.SPAWNABLE[record.agent].label} is asking whether you trust “${label}” before it will start. ` +
+      'Attach a terminal from my menu to answer it — that one is yours, not mine.',
+    { sticky: true }
+  );
+}
+
+/**
+ * The window for starting an agent somewhere.
+ *
+ * The tray handles the common case — an agent in a folder — with a native
+ * picker. This exists for the case a menu cannot express: an SSH target needs a
+ * host *and* a path typed in, and Electron has no text-input dialog.
+ */
+function openNewAgentWindow() {
+  if (newAgentWin && !newAgentWin.isDestroyed()) {
+    newAgentWin.show();
+    newAgentWin.focus();
+    return newAgentWin;
+  }
+
+  newAgentWin = new BrowserWindow({
+    width: 480,
+    height: 460,
+    resizable: false,
+    title: 'New agent',
+    titleBarStyle: 'hiddenInset',
+    backgroundColor: '#f7f2e8',
+    show: false,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload-newagent.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+  newAgentWin.loadFile(path.join(__dirname, 'renderer', 'new-agent.html'));
+  newAgentWin.once('ready-to-show', () => newAgentWin.show());
+  newAgentWin.on('closed', () => {
+    newAgentWin = null;
+  });
+  return newAgentWin;
+}
+
+const closeNewAgentWindow = () => {
+  if (newAgentWin && !newAgentWin.isDestroyed()) newAgentWin.close();
+};
+
+function offerTmuxInstall() {
+  dialog.showMessageBox({
+    type: 'info',
+    message: 'Starting an agent needs tmux',
+    detail:
+      'Clippy runs the agents it starts inside tmux, so they survive quitting the app and you can ' +
+      'attach a terminal to them whenever you like.\n\nInstall it with:  brew install tmux',
+    buttons: ['OK'],
+  });
+}
+
+/** Start an agent in a folder (or on another machine) and give it a buddy. */
+async function spawnAgent({ path: rawCwd = '', host = '', remotePath = '', agent } = {}) {
+  const kind = tmux.SPAWNABLE[agent] ? agent : settings.defaultAgent;
+  // The agent will record its *resolved* working directory, and Claude Code
+  // derives its transcript directory from that — so a path through a symlink
+  // (every /var/… on macOS, and plenty of people's ~/work) has to be
+  // canonicalized here or the transcript is looked for somewhere it isn't.
+  const cwd = canonicalPath(rawCwd);
+  let bin;
+  try {
+    bin = await tmux.findTmux();
+  } catch {
+    offerTmuxInstall();
+    return null;
+  }
+
+  if (!host && (!cwd || !fs.existsSync(cwd))) {
+    dialog.showMessageBox({
+      type: 'warning',
+      message: 'That folder has moved',
+      detail: cwd ? `${cwd} isn't there any more.` : 'No folder was chosen.',
+      buttons: ['OK'],
+    });
+    return null;
+  }
+
+  const label = host ? host.replace(/^.*@/, '') : path.basename(cwd);
+  let name = tmux.sessionName(label);
+  for (let seq = 1; seq < 50 && (await tmux.hasSession(bin, name)); seq++) {
+    name = tmux.sessionName(label, { seq });
+  }
+
+  // Claude lets us pick the session id, which makes its buddy correctly keyed
+  // from the start and its transcript path a certainty rather than a search.
+  const sessionId = kind === 'claude' ? crypto.randomUUID() : '';
+  const command = tmux.launchCommand({
+    agent: kind,
+    cwd,
+    sessionId,
+    host,
+    remotePath,
+    // The pane's ssh opens the connection the transcript probe reuses.
+    controlPath: host ? ensureControlDir(fs.mkdirSync) && controlPathFor() : '',
+  });
+
+  let pane;
+  try {
+    pane = await tmux.newSession(bin, { name, cwd: host ? os.homedir() : cwd, command });
+    if (!pane) throw new Error('tmux did not report a pane');
+  } catch (err) {
+    await tmux.killSession(bin, name).catch(() => {});
+    dialog.showMessageBox({
+      type: 'warning',
+      message: `Could not start ${tmux.SPAWNABLE[kind].label}`,
+      detail: err.message,
+      buttons: ['OK'],
+    });
+    return null;
+  }
+
+  const record = spawned.add({
+    name,
+    cwd,
+    agent: kind,
+    host,
+    remotePath,
+    sessionId,
+    paneId: pane.paneId,
+    panePid: pane.panePid,
+    createdAt: Date.now(),
+  });
+  rememberRecentProject({ path: cwd, host, remotePath, agent: kind });
+  saveSpawned();
+
+  const buddy = buddyFor(buddyKeyFor(record), label, kind, record.name);
+  buddy.pinned = true; // a session you started is one you meant to see
+  showBuddy(buddy.sessionId, { pin: true });
+  watchSpawned(record);
+  tellBuddy(
+    buddy.sessionId,
+    `Starting ${tmux.SPAWNABLE[kind].label} in “${label}”. Type below, or attach a terminal from my menu.`
+  );
+  warnIfAwaitingTrust(bin, record, label).catch(() => {});
+  updateTray();
+  return record;
+}
+
+/**
+ * tmux outliving Clippy is the whole point, so on launch we go and find the
+ * sessions still running and give them their buddies back.
+ */
+async function restoreSpawned() {
+  if (!spawned.list().length) return;
+  let bin;
+  try {
+    bin = await tmux.findTmux();
+  } catch {
+    return; // tmux gone: leave the registry alone rather than forgetting real work
+  }
+
+  const live = await tmux.listSessions(bin).catch(() => null);
+  if (!live) return;
+  // Prune before asking about panes, so a dead session is never queried.
+  for (const gone of spawned.keep(live)) {
+    fs.rmSync(path.join(app.getPath('userData'), 'attach', `${gone.name}.command`), { force: true });
+  }
+
+  for (const record of spawned.list()) {
+    // Pane ids and pids are from a previous run of the app, and pids get reused.
+    const [pane] = await tmux.listPanes(bin, record.name).catch(() => []);
+    if (pane) Object.assign(record, pane);
+    const label = record.host ? record.host.replace(/^.*@/, '') : path.basename(record.cwd);
+    const buddy = buddyFor(buddyKeyFor(record), label, record.agent, record.name);
+    buddy.pinned = true;
+    showBuddy(buddy.sessionId, { pin: true });
+    watchSpawned(record);
+  }
+  saveSpawned();
+  updateTray();
+}
+
 /* ---------------- Token usage (right-click) ---------------- */
 
 const CLAUDE_PROJECTS_DIR = path.join(os.homedir(), '.claude', 'projects');
@@ -1379,7 +1934,7 @@ function refreshUsageWindowsFor(agent) {
  */
 async function collectUsage(key) {
   const agent = tracker.agentFor(key);
-  const transcriptSession = await sessionUsage(tracker.transcriptFor(key));
+  const transcriptSession = await sessionUsage(transcriptPathFor(key));
   const trackedModel = tracker.modelFor(key);
   const session = transcriptSession
     ? { ...transcriptSession, model: transcriptSession.model || trackedModel }
@@ -1401,7 +1956,7 @@ async function collectUsage(key) {
     session,
     // What Claude said as its last turn ended — the status summary's "doing
     // right now" line falls back to it when no tool activity is fresher.
-    recap: await lastAssistantText(tracker.transcriptFor(key), { maxChars: 200 }),
+    recap: await recapFor(key),
     windows: cached.windows,
     now,
   };
@@ -1415,8 +1970,12 @@ function trayMenu() {
     submenu: [
       { label: 'Show Clippy', click: () => showBuddy(b.sessionId, { pin: true }) },
       {
-        label: b.dock ? 'Open window again' : 'Open session window',
-        enabled: Boolean(tracker.terminalFor(b.sessionId)),
+        label: tmuxRecordFor(b.sessionId)
+          ? 'Attach in Terminal'
+          : b.dock
+          ? 'Open window again'
+          : 'Open session window',
+        enabled: Boolean(tracker.terminalFor(b.sessionId) || tmuxRecordFor(b.sessionId)),
         click: () => openSessionWindow(b.sessionId),
       },
       ...(b.dock
@@ -1455,6 +2014,7 @@ function trayMenu() {
     },
     ...(sessionItems.length ? [{ type: 'separator' }, ...sessionItems] : []),
     { type: 'separator' },
+    { label: 'New agent', submenu: newAgentMenu() },
     drive
       ? { label: `Stop Clippy-driven session (${drive.name})`, click: stopDriveSession }
       : { label: 'New Clippy-driven session…', click: startDriveSession },
@@ -1484,6 +2044,50 @@ function trayMenu() {
     },
     { label: 'Quit', click: () => app.quit() },
   ]);
+}
+
+/** `~/projects/clippy — Claude Code`, or `box:/srv/app — Codex`. */
+function recentLabel(entry) {
+  const where = entry.host
+    ? `${entry.host}:${entry.remotePath || '~'}`
+    : entry.path.replace(os.homedir(), '~');
+  return `${where} — ${tmux.SPAWNABLE[entry.agent]?.label || 'Claude Code'}`;
+}
+
+/** Ask for a folder, then start an agent in it. */
+async function pickFolderAndSpawn(agent) {
+  const { canceled, filePaths } = await dialog.showOpenDialog({
+    title: `Folder for the new ${tmux.SPAWNABLE[agent]?.label || 'agent'} session`,
+    buttonLabel: 'Start here',
+    properties: ['openDirectory', 'createDirectory'],
+    defaultPath: settings.recentProjects.find((p) => !p.host)?.path || os.homedir(),
+  });
+  if (canceled || !filePaths?.length) return;
+  await spawnAgent({ path: filePaths[0], agent });
+}
+
+/** The "New agent" submenu: pick an agent and a folder, or reopen a recent one. */
+function newAgentMenu() {
+  const recents = settings.recentProjects.slice(0, 8);
+  return [
+    ...Object.entries(tmux.SPAWNABLE).map(([id, { label }]) => ({
+      label: `${label} in a folder…`,
+      click: () => pickFolderAndSpawn(id),
+    })),
+    ...(recents.length
+      ? [
+          { type: 'separator' },
+          { label: 'Recent', enabled: false },
+          ...recents.map((entry) => ({
+            label: recentLabel(entry),
+            click: () => spawnAgent({ ...entry }),
+          })),
+        ]
+      : []),
+    { type: 'separator' },
+    // A host and a path cannot be typed into a menu.
+    { label: 'Over SSH…', click: openNewAgentWindow },
+  ];
 }
 
 /**
@@ -1518,6 +2122,22 @@ function globalSettingsMenu() {
       type: 'checkbox',
       checked: settings.reviewOnStop,
       click: (item) => setSetting('reviewOnStop', item.checked),
+    },
+    { type: 'separator' },
+    { label: 'Agents you start', enabled: false },
+    {
+      label: 'Default agent',
+      submenu: radios(
+        'defaultAgent',
+        Object.entries(tmux.SPAWNABLE).map(([id, { label }]) => ({ id, label }))
+      ),
+    },
+    {
+      label: 'Attach in',
+      submenu: radios(
+        'attachTerminal',
+        Object.entries(ATTACH_APPS).map(([id, label]) => ({ id, label }))
+      ),
     },
     { type: 'separator' },
     { label: 'Appearance', enabled: false },
@@ -1787,7 +2407,9 @@ function emitPassive(reaction, { osNotification = true } = {}) {
   updateTray();
 
   if (reaction.kind === 'remove') {
-    closeBuddy(reaction.sessionId);
+    // A session Clippy started outlives the agent inside it: the pane drops to
+    // a shell, so the buddy stays and goes back to waiting to be adopted.
+    if (!unadoptBuddy(reaction.sessionId)) closeBuddy(reaction.sessionId);
   } else {
     sendTo(reaction.sessionId, { ...reaction, counts: tracker.counts() });
     // Show only when Claude is done or wants something; ambient chatter (tool
@@ -1924,7 +2546,7 @@ async function handleStop(payload) {
   // to the generic headline.
   // Read the whole sign-off, not the card's worth of it: the card still shows
   // the card's worth, and "read all" has somewhere to go when it doesn't fit.
-  const whole = await lastAssistantText(tracker.transcriptFor(reaction.sessionId), {
+  const whole = await lastAssistantText(transcriptPathFor(reaction.sessionId), {
     maxChars: FULL_DETAIL_MAX,
   });
   const recap = whole.length > REVIEW_RECAP_CHARS ? `${whole.slice(0, REVIEW_RECAP_CHARS).trim()}…` : whole;
@@ -2102,9 +2724,16 @@ function noteTerminal(payload, ctx) {
   // Every payload also points at the session's transcript — that's where the
   // token counts for the right-click panel come from.
   tracker.setTranscript(sessionId, payload?.transcript_path);
+  // A hook means this session just did something; its transcript is worth
+  // another look now rather than at the end of the current backoff.
+  pokeWatch(sessionId);
   const term = terminalFromHeaders(ctx?.headers);
   if (!term) return;
   if (tracker.setTerminal(sessionId, term)) {
+    // The pid in that header is how a spawned Codex session finds out its own
+    // name — see adoptSpawned. Deliberately not awaited: the hook response
+    // must not wait on a process-table sweep.
+    adoptSpawned(sessionId).catch(() => {});
     const buddy = buddies.get(sessionId);
     if (buddy && !buddy.win.isDestroyed()) {
       buddy.win.webContents.send('clippy-event', { kind: 'can-open', value: true });
@@ -2258,7 +2887,9 @@ function sweepStaleSessions() {
   for (const s of removed) {
     broker.cancelBySession(s.sessionId);
     closeReviewsFor(s.sessionId); // a review card for a vanished session is moot
-    closeBuddy(s.sessionId);
+    // Silence is not death for a session we started — tmux still has it, and
+    // the transcript watcher is a better judge than a timeout.
+    if (!unadoptBuddy(s.sessionId)) closeBuddy(s.sessionId);
   }
   updateTray();
 }
@@ -2276,8 +2907,13 @@ app.whenReady().then(async () => {
   if (process.platform === 'darwin') app.dock.hide();
 
   loadSettings();
+  spawned.load(settings.spawnedSessions);
   warnOnHookDrift();
   createTray();
+  // tmux keeps running when Clippy doesn't, so anything we started and is still
+  // alive gets its buddy back. Not awaited: it shells out to tmux, and the app
+  // should be up before that finishes.
+  restoreSpawned().catch((err) => console.warn('clippy: could not restore sessions:', err.message));
   // The DMG path: first launch has no hooks and no terminal in sight. Ask once
   // per run; the tray menu keeps the same action for later.
   if (hooksAbsent) offerHookInstall();
@@ -2289,7 +2925,7 @@ app.whenReady().then(async () => {
     if (buddy.sessionId.startsWith('sandbox:')) {
       return { session: sandboxUsage(buddy.name).session };
     }
-    return { session: await sessionUsage(tracker.transcriptFor(buddy.sessionId)) };
+    return { session: await sessionUsage(transcriptPathFor(buddy.sessionId)) };
   });
   // "read all" on a card that ends in an ellipsis. Only ever hands a window
   // the rest of its own session's message.
@@ -2307,6 +2943,56 @@ app.whenReady().then(async () => {
     if (buddy.sessionId.startsWith('sandbox:')) return sandboxUsage(buddy.name);
     return collectUsage(buddy.sessionId);
   });
+  /* ---- The "start an agent somewhere" window ---- */
+
+  ipcMain.on('clippy-newagent-ready', (e) => {
+    e.sender.send('clippy-newagent-state', {
+      agents: Object.entries(tmux.SPAWNABLE).map(([id, { label }]) => ({ id, label })),
+      defaultAgent: settings.defaultAgent,
+      recentProjects: settings.recentProjects,
+    });
+  });
+
+  ipcMain.handle('clippy-newagent-browse', async () => {
+    const { canceled, filePaths } = await dialog.showOpenDialog(newAgentWin || undefined, {
+      title: 'Folder for the new session',
+      buttonLabel: 'Choose',
+      properties: ['openDirectory', 'createDirectory'],
+      defaultPath: settings.recentProjects.find((p) => !p.host)?.path || os.homedir(),
+    });
+    return canceled || !filePaths?.length ? '' : filePaths[0];
+  });
+
+  ipcMain.handle('clippy-newagent-start', async (_e, target) => {
+    const host = String(target?.host || '').trim();
+    const record = await spawnAgent({
+      path: String(target?.path || '').trim(),
+      host,
+      remotePath: String(target?.remotePath || '').trim(),
+      agent: target?.agent,
+    });
+    // spawnAgent explains its own failures in a dialog; the form just stays put.
+    if (!record) return { error: 'That session could not be started.' };
+    closeNewAgentWindow();
+    return { ok: true };
+  });
+
+  ipcMain.on('clippy-newagent-close', closeNewAgentWindow);
+
+  // The "recent messages" panel, opened after the pushes it missed. Reads the
+  // transcript fresh rather than replaying what the watcher happened to catch.
+  ipcMain.handle('clippy-feed', async (e) => {
+    const buddy = buddyForSender(e.sender);
+    if (!buddy) return null;
+    const record = tmuxRecordFor(buddy.sessionId);
+    const source = record ? (record.host ? `via ${record.host}` : `tmux · ${record.name}`) : '';
+    const file = transcriptPathFor(buddy.sessionId);
+    // A remote transcript is not ours to open, so the watcher's running record
+    // of it is the history — there is nothing else to read.
+    if (!file) return { source, turns: (record && record.recentTurns) || [] };
+    const agent = record ? record.agent : tracker.agentFor(buddy.sessionId);
+    return { source, turns: await readTail(file, { agent, limit: FEED_TURNS, maxChars: 1200 }) };
+  });
   ipcMain.handle('clippy-session-identity', async (e) => {
     const buddy = buddyForSender(e.sender);
     if (!buddy) return null;
@@ -2317,7 +3003,7 @@ app.whenReady().then(async () => {
     if (!model) {
       model = buddy.sessionId.startsWith('sandbox:')
         ? sandboxUsage(buddy.name).session?.model || ''
-        : await modelFromTranscriptFile(tracker.transcriptFor(buddy.sessionId));
+        : await modelFromTranscriptFile(transcriptPathFor(buddy.sessionId));
     }
     return { name: buddy.name, agent: buddy.agent, model };
   });
@@ -2473,7 +3159,7 @@ app.whenReady().then(async () => {
         // Read fresh every turn: the model and the status move under the pet
         // while you're talking to it.
         context: () => ({
-          pet: petNameFor(buddy.sessionId),
+          pet: petNameFor(buddy.identityKey || buddy.sessionId),
           character: allCharacters().find((c) => c.id === buddy.character)?.label || 'desk buddy',
           project: buddy.name,
           cwd: tracker.cwdFor(buddy.sessionId),

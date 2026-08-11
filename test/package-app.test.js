@@ -77,3 +77,17 @@ test('sha256File produces the release checksum without shelling out', () => {
   );
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+test('an icon can be written without an alpha channel at all', () => {
+  const rgba = renderIconPixels(32);
+  const rgb = encodePng(32, 32, rgba, { alpha: false });
+
+  // App Store Connect rejects an app icon that *has* an alpha channel, however
+  // opaque every pixel in it is — so the channel has to be absent, not full.
+  // IHDR's colour type is byte 25: 6 is truecolour+alpha, 2 is truecolour.
+  assert.equal(rgb[25], 2);
+  assert.equal(encodePng(32, 32, rgba)[25], 6, 'and the default is unchanged');
+  assert.equal(rgb.subarray(0, 8).toString('hex'), '89504e470d0a1a0a');
+  // Three channels a pixel rather than four, so it is genuinely smaller.
+  assert.ok(rgb.length < encodePng(32, 32, rgba).length);
+});

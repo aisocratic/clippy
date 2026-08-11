@@ -32,6 +32,7 @@
     "test:watch": "node --test --watch test/*.test.js",
     "check": "find bin demo scripts src test -name '*.js' -exec node --check {} \\; && node --test test/*.test.js",
     "make-buddies": "node scripts/make-buddies.js",
+    "make-mobile-icons": "node scripts/make-mobile-icons.js",
     "package": "node scripts/package-app.js",
     "package:release": "node scripts/package-app.js --require-release-signing",
     "add-sprite-pack": "node scripts/add-sprite-pack.js",

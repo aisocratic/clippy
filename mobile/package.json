@@ -10,7 +10,11 @@
     "web": "expo start --web",
     "typecheck": "tsc --noEmit",
     "test": "jest --runInBand",
-    "doctor": "expo-doctor"
+    "doctor": "expo-doctor",
+    "build:ios": "npx eas-cli@latest build --platform ios --profile production",
+    "build:ios:preview": "npx eas-cli@latest build --platform ios --profile preview",
+    "submit:ios": "npx eas-cli@latest submit --platform ios --profile production --latest",
+    "testflight": "npm run build:ios && npm run submit:ios"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",

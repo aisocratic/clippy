@@ -84,6 +84,7 @@ test('the browser bench can center and move its buddy inside the sandbox', () =>
 test('settings expose appearance sounds and buddy management', () => {
   const html = fs.readFileSync(path.join(ROOT, 'src', 'renderer', 'settings.html'), 'utf8');
   const settings = fs.readFileSync(path.join(ROOT, 'src', 'renderer', 'settings.js'), 'utf8');
+  const styles = fs.readFileSync(path.join(ROOT, 'src', 'renderer', 'settings.css'), 'utf8');
   const buddy = fs.readFileSync(path.join(ROOT, 'src', 'renderer', 'clippy.js'), 'utf8');
 
   assert.match(html, /id="appearance-sound"/);
@@ -92,5 +93,30 @@ test('settings expose appearance sounds and buddy management', () => {
   assert.match(settings, /previewPose\.set/);
   assert.match(settings, /clippySettings\.createPet/);
   assert.match(settings, /clippySettings\.removePet/);
+  assert.match(settings, /new IntersectionObserver/);
+  assert.doesNotMatch(styles, /\.panel\s*{[^}]*display:\s*none/s);
   assert.match(buddy, /case 'appearance'/);
+});
+
+test('a buddy can show what the session Clippy started has been saying', () => {
+  const html = fs.readFileSync(path.join(ROOT, 'src', 'renderer', 'index.html'), 'utf8');
+  const buddy = fs.readFileSync(path.join(ROOT, 'src', 'renderer', 'clippy.js'), 'utf8');
+  const styles = fs.readFileSync(path.join(ROOT, 'src', 'renderer', 'clippy.css'), 'utf8');
+
+  assert.match(html, /id="feed-log"/);
+  assert.match(html, /id="menu-feed"/);
+  // The panel has to be in PANELS, or syncMode never measures it and the
+  // window stays buddy-sized around it.
+  assert.match(buddy, /const PANELS = \[[^\]]*'feed'/);
+  assert.match(buddy, /const CONTROL_HOSTS = \[[^\]]*'feed'/);
+  assert.match(buddy, /case 'transcript'/);
+  assert.match(buddy, /case 'transcript-status'/);
+  assert.match(buddy, /case 'ownership'/);
+
+  // Terminal output scraped off a pane is not markdown; rendering it as such
+  // would mangle it. It goes in a <pre> as text.
+  assert.match(buddy, /pre\.textContent = turn\.text/);
+  // The ring goes on the wrapper: #buddy is an <img>, which has no ::after.
+  assert.match(styles, /body\.owned #clippy::after/);
+  assert.doesNotMatch(styles, /body\.owned #buddy::after/);
 });

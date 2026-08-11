@@ -466,31 +466,24 @@ window.clippySettings.onState((next) => {
   render();
 });
 
-/* The rail is a router, not a table of contents: one page shows at a time, so
-   the docs are somewhere you go rather than something you scroll past. The
-   address is still the hash, which is what main.js sets to deep-link a
-   section. */
-{
-  const links = [...document.querySelectorAll('.rail-link')];
-  const panels = [...document.querySelectorAll('.panel')];
-  const page = document.getElementById('page');
-  const FALLBACK = 'sessions';
-
-  const show = (wanted) => {
-    const id = panels.some((panel) => panel.id === wanted) ? wanted : FALLBACK;
-    for (const panel of panels) panel.classList.toggle('on', panel.id === id);
-    for (const link of links) {
-      const on = link.getAttribute('href') === `#${id}`;
-      link.classList.toggle('on', on);
-      if (on) link.setAttribute('aria-current', 'page');
-      else link.removeAttribute('aria-current');
+// The rail is a table of contents for one continuous settings page. Highlight
+// the section currently being read while normal hash links scroll the page.
+const links = [...document.querySelectorAll('.rail-link')];
+const spy = new IntersectionObserver(
+  (entries) => {
+    for (const entry of entries) {
+      if (!entry.isIntersecting) continue;
+      for (const link of links) {
+        const on = link.getAttribute('href') === `#${entry.target.id}`;
+        link.classList.toggle('on', on);
+        if (on) link.setAttribute('aria-current', 'location');
+        else link.removeAttribute('aria-current');
+      }
     }
-    page.scrollTop = 0;
-  };
-
-  show(location.hash.slice(1));
-  window.addEventListener('hashchange', () => show(location.hash.slice(1)));
-}
+  },
+  { root: document.getElementById('page'), rootMargin: '-8% 0px -72% 0px' }
+);
+for (const panel of document.querySelectorAll('.panel')) spy.observe(panel);
 
 window.clippySettings.ready();
 
