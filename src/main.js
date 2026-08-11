@@ -19,7 +19,12 @@ const os = require('node:os');
 const path = require('node:path');
 const { createHookServer } = require('./server');
 const { SessionTracker, AGENTS, agentDisplayName, WORKING, WAITING } = require('./sessions');
-const { DecisionBroker, toHookResponse, describeToolCall } = require('./decisions');
+const {
+  DecisionBroker,
+  toHookResponse,
+  describeToolCall,
+  FULL_DETAIL_MAX,
+} = require('./decisions');
 const { DriveSession } = require('./sdk-session');
 const { PetChat } = require('./pet-chat');
 const { checkDrift, checkCodexDrift, checkOpenclawDrift, installToFiles } = require('../bin/clippy-hooks');
@@ -92,6 +97,7 @@ const settings = {
   reviewOnStop: true, // offer a review box when Claude finishes a turn
   answerQuestions: true, // answer Claude/Codex multiple-choice questions in Clippy
   autoPerch: true, // appear on the session's own window, not the screen corner
+  appearanceSound: 'pop', // short cue when a hidden buddy appears; '' is silent
   characterByProject: {}, // project name -> character id, when you've picked one
   sizeByProject: {}, // project name -> size id, likewise
   // …and the same two against one live session, so picking a pet for one row of
@@ -107,6 +113,7 @@ const settings = {
 const CHOICES = {
   size: () => Object.keys(SIZES),
   arrangeEdge: () => EDGE_IDS,
+  appearanceSound: () => ['', 'pop', 'chime', 'chirp'],
 };
 
 // The cast is read fresh each time so a sprite theme dropped into
@@ -695,6 +702,18 @@ function showBuddy(key, { pin = false, mode = 'full' } = {}) {
   const buddy = buddies.get(key);
   if (!buddy || buddy.win.isDestroyed()) return;
   if (pin) buddy.pinned = true;
+  if (!buddy.win.isVisible() && settings.appearanceSound) {
+    const play = () => {
+      if (!buddy.win.isDestroyed()) {
+        buddy.win.webContents.send('clippy-event', {
+          kind: 'appearance',
+          sound: settings.appearanceSound,
+        });
+      }
+    };
+    if (buddy.win.webContents.isLoading()) buddy.win.webContents.once('did-finish-load', play);
+    else play();
+  }
 
   // Perched or not, Clippy is a small paperclip until there's a card or a
   // message to read — then the window grows around him.
@@ -1787,6 +1806,33 @@ function emitPassive(reaction, { osNotification = true } = {}) {
   }
 }
 
+/* ---------------- "read all": the rest of a message that didn't fit ----------
+ *
+ * Cards are cut on purpose — a card is a glance, and 4000 characters of plan
+ * over someone's desktop is not one. But the cut version is all the renderer
+ * ever gets, so a card that ends in "…" has nowhere to grow: the rest of the
+ * words are back here. Whatever was cut is kept beside its request id, and the
+ * card asks for it when you press "read all".
+ *
+ * Bounded rather than swept: a handful of the most recent cards is all anyone
+ * can be reading, and tying the lifetime to every close path (answered,
+ * timed out, passed, session gone) is four more places to get wrong.
+ */
+const WHOLE_MESSAGE_CAP = 40;
+/* How much of a finished turn's sign-off the review card carries. Its own
+   number rather than lastAssistantText's default: that default is what the
+   *status panel* wants, and this one now has a "read all" behind it. */
+const REVIEW_RECAP_CHARS = 600;
+const wholeMessages = new Map(); // requestId -> { sessionId, text }
+
+function rememberWhole(requestId, sessionId, text) {
+  if (!text) return;
+  wholeMessages.set(requestId, { sessionId, text });
+  for (const key of [...wholeMessages.keys()].slice(0, wholeMessages.size - WHOLE_MESSAGE_CAP)) {
+    wholeMessages.delete(key);
+  }
+}
+
 /**
  * Claude Code is about to show a permission dialog. Hold the hook open and
  * let the user answer from Clippy; on timeout/pass return {} so the normal
@@ -1800,13 +1846,14 @@ async function handlePermissionRequest(payload, ctx) {
   updateTray();
 
   const isPlan = payload.tool_name === 'ExitPlanMode';
-  const { title, detail } = describeToolCall(payload.tool_name, payload.tool_input);
+  const { title, detail, fullDetail } = describeToolCall(payload.tool_name, payload.tool_input);
   const { id, expiresAt, promise } = broker.ask(
     { event: 'PermissionRequest', sessionId: reaction.sessionId },
     APPROVAL_HOLD_MS
   );
   ctx.onClose(() => broker.resolve(id, 'cancel'));
 
+  rememberWhole(id, reaction.sessionId, fullDetail);
   sendTo(reaction.sessionId, {
     ...reaction,
     counts: tracker.counts(),
@@ -1816,6 +1863,7 @@ async function handlePermissionRequest(payload, ctx) {
     variant: isPlan ? 'plan' : 'tool',
     title,
     detail,
+    truncated: Boolean(fullDetail),
     expiresAt,
   });
   showBuddy(reaction.sessionId);
@@ -1874,7 +1922,12 @@ async function handleStop(payload) {
   // What Claude actually said right before stopping, if it said anything — a
   // turn that ends on a bare tool call has no recap, and the card falls back
   // to the generic headline.
-  const recap = await lastAssistantText(tracker.transcriptFor(reaction.sessionId));
+  // Read the whole sign-off, not the card's worth of it: the card still shows
+  // the card's worth, and "read all" has somewhere to go when it doesn't fit.
+  const whole = await lastAssistantText(tracker.transcriptFor(reaction.sessionId), {
+    maxChars: FULL_DETAIL_MAX,
+  });
+  const recap = whole.length > REVIEW_RECAP_CHARS ? `${whole.slice(0, REVIEW_RECAP_CHARS).trim()}…` : whole;
   // The headline is the summary itself: what got done beats "something got
   // done". First non-empty line, clipped to card width; the full recap rides
   // below only when there is more of it than the headline already shows.
@@ -1883,6 +1936,7 @@ async function handleStop(payload) {
 
   const id = `review-${++reviewSeq}`;
   pendingReviews.set(id, reaction.sessionId);
+  rememberWhole(id, reaction.sessionId, whole === recap ? '' : whole);
   sendTo(reaction.sessionId, {
     ...reaction,
     kind: 'review',
@@ -1890,6 +1944,7 @@ async function handleStop(payload) {
       ? `${agentName} finished: “${short}”`
       : `${agentName} finished in “${reaction.name}”. Looks good, or should it keep going?`,
     detail: recap !== firstLine ? recap : '',
+    truncated: whole !== recap,
     counts: tracker.counts(),
     requestId: id,
     expiresAt: 0, // nothing is held open, so the card has no deadline
@@ -1945,7 +2000,7 @@ function closeReviewsFor(sessionId) {
 async function handleQuestion(payload, ctx) {
   const reaction = tracker.handle('PreToolUse', null, payload);
   const toolName = payload.tool_name;
-  const { title, detail } = describeToolCall(toolName, payload.tool_input);
+  const { title, detail, fullDetail } = describeToolCall(toolName, payload.tool_input);
   const questions = Array.isArray(payload.tool_input?.questions)
     ? payload.tool_input.questions
     : [];
@@ -1967,6 +2022,7 @@ async function handleQuestion(payload, ctx) {
   );
   ctx.onClose(() => broker.resolve(id, 'cancel'));
 
+  rememberWhole(id, reaction.sessionId, fullDetail);
   sendTo(reaction.sessionId, {
     ...reaction,
     kind: 'answer',
@@ -1974,6 +2030,7 @@ async function handleQuestion(payload, ctx) {
     requestId: id,
     title,
     detail,
+    truncated: Boolean(fullDetail),
     questions,
     expiresAt,
   });
@@ -2234,6 +2291,14 @@ app.whenReady().then(async () => {
     }
     return { session: await sessionUsage(tracker.transcriptFor(buddy.sessionId)) };
   });
+  // "read all" on a card that ends in an ellipsis. Only ever hands a window
+  // the rest of its own session's message.
+  ipcMain.handle('clippy-card-full', (e, requestId) => {
+    const buddy = buddyForSender(e.sender);
+    const held = buddy && wholeMessages.get(String(requestId || ''));
+    if (!held || held.sessionId !== buddy.sessionId) return '';
+    return held.text;
+  });
   ipcMain.handle('clippy-usage', (e) => {
     const buddy = buddyForSender(e.sender);
     if (!buddy) return null;
@@ -2286,6 +2351,35 @@ app.whenReady().then(async () => {
       const { id, theme } = await installPack(src);
       pushSettingsState(); // the cast re-reads the themes folder, so this repaints it
       return { ok: true, id, label: theme.label };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+  ipcMain.handle('clippy-settings-create-pet', (_e, drawing) => {
+    try {
+      const { createDrawnBuddy } = require('./custom-buddies');
+      const result = createDrawnBuddy(drawing || {});
+      pushSettingsState();
+      sendSettings();
+      return { ok: true, ...result };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+  ipcMain.handle('clippy-settings-remove-pet', (_e, character) => {
+    try {
+      const { removeCustomBuddy } = require('./custom-buddies');
+      const removed = removeCustomBuddy(character);
+      for (const key of ['characterByProject', 'characterBySession']) {
+        settings[key] = Object.fromEntries(
+          Object.entries(settings[key] || {}).filter(([, value]) => value !== removed)
+        );
+      }
+      saveSettings();
+      recast();
+      pushSettingsState();
+      sendSettings();
+      return { ok: true };
     } catch (err) {
       return { ok: false, error: err.message };
     }

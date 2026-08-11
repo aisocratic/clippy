@@ -16,13 +16,22 @@ const noteEl = document.getElementById('note');
 // Same geometry main uses (src/main.js): a bare buddy until there's a card,
 // then as tall as the renderer says it needs to be. The compact size comes from
 // the size roster, so it tracks whichever size is selected.
-const FULL_W = 268;
+// WIN_W in src/main.js — the panel is 300px and the window keeps 5px of air
+// either side of it for the card's shadow. The bench was still on an older,
+// narrower number, so every card here was drawn with its rounded corners
+// cropped off.
+const FULL_W = 310;
 const FALLBACK_H = 470;
 const MIN_FULL_H = 190;
 // Which of the two window sizes the frame is at. Tracked rather than measured:
 // the frame's width animates, so reading offsetWidth mid-transition reports the
 // size it is leaving, not the one it is at.
 let frameMode = 'compact';
+// Where the fake BrowserWindow lives inside the fake desktop. `free` means the
+// user dragged it; center and dock continue to follow resizes like real window
+// placement does.
+let framePlacement = 'center';
+let dragSettleTimer = null;
 const compactSize = () => {
   const step = (settings.sizes || []).find((s) => s.id === settings.size);
   return (step && step.win) || [108, 136];
@@ -34,6 +43,70 @@ const POINT_EXTRA_H = 30;
 let walkTimers = [];
 let spriteTimers = []; // the workbench animations, cleared on every re-render
 let previewPose = 'idle';
+
+const FRAME_INSET = 12;
+const clamp = (value, low, high) => Math.max(low, Math.min(value, Math.max(low, high)));
+
+// Inline dimensions are the destination of the CSS size transition. Using
+// offsetWidth/offsetHeight here can briefly return the old size and leave a
+// newly compacted buddy visibly off-center.
+function targetFrameSize() {
+  const width = Number.parseFloat(frame.style.width);
+  const height = Number.parseFloat(frame.style.height);
+  return {
+    width: Number.isFinite(width) ? width : frame.offsetWidth,
+    height: Number.isFinite(height) ? height : frame.offsetHeight,
+  };
+}
+
+/** Put the iframe at an explicit, clamped point inside the fake desktop. */
+function placeFrame(x, y) {
+  const { width, height } = targetFrameSize();
+  frame.style.transform = 'none';
+  frame.style.right = 'auto';
+  frame.style.bottom = 'auto';
+  frame.style.left = `${Math.round(clamp(x, FRAME_INSET, desktop.clientWidth - width - FRAME_INSET))}px`;
+  frame.style.top = `${Math.round(clamp(y, FRAME_INSET, desktop.clientHeight - height - FRAME_INSET))}px`;
+}
+
+function centerFrame({ logMove = true } = {}) {
+  const { width, height } = targetFrameSize();
+  framePlacement = 'center';
+  placeFrame(
+    (desktop.clientWidth - width) / 2,
+    (desktop.clientHeight - height) / 2
+  );
+  if (logMove) log('note', 'position', 'buddy centered in the sandbox');
+}
+
+function dockFrame() {
+  const { width } = targetFrameSize();
+  framePlacement = 'dock';
+  placeFrame(desktop.clientWidth - width - 26, 34);
+}
+
+/** Apply the renderer's real moveBy deltas instead of only logging them. */
+function moveFrameBy(dx, dy) {
+  const x = Number(dx) || 0;
+  const y = Number(dy) || 0;
+  if (!x && !y) return;
+  if (desktop.classList.contains('docked')) setDocked(false, { reposition: false });
+  walkTimers.forEach(clearTimeout);
+  walkTimers = [];
+  framePlacement = 'free';
+  frame.classList.add('dragging');
+  placeFrame(frame.offsetLeft + x, frame.offsetTop + y);
+  clearTimeout(dragSettleTimer);
+  dragSettleTimer = setTimeout(() => frame.classList.remove('dragging'), 90);
+  log('in', 'moveBy', `moved the buddy by ${x},${y}`);
+}
+
+/** Reapply an anchored position after the renderer changes the frame size. */
+function syncFramePlacement() {
+  if (framePlacement === 'center') centerFrame({ logMove: false });
+  else if (framePlacement === 'dock') dockFrame();
+  else placeFrame(frame.offsetLeft, frame.offsetTop);
+}
 
 let data = { scenarios: [], usage: {}, palette: [], characters: [], sizes: [] };
 // Mirrors main's settings, including the rosters the renderer builds its menu
@@ -200,7 +273,8 @@ function walkToPrompt() {
   const term = terminal.getBoundingClientRect();
   const stage = desktop.getBoundingClientRect();
   const w = frame.offsetWidth;
-  const h = frame.offsetHeight + POINT_EXTRA_H; // room for the arrow underneath
+  const restingHeight = frame.offsetHeight;
+  const h = restingHeight + POINT_EXTRA_H; // room for the arrow underneath
 
   frame.style.height = `${h}px`;
   frame.style.transition = `left ${WALK_MS}ms ease-in-out, top ${WALK_MS}ms ease-in-out`;
@@ -220,15 +294,13 @@ function walkToPrompt() {
     setTimeout(() => {
       send('event', { kind: 'point', on: false });
       send('event', { kind: 'walk', facing: 'right' });
-      frame.style.left = '';
-      frame.style.top = '';
+      dockFrame();
     }, WALK_MS + POINT_MS),
     setTimeout(() => {
-      // Back on the perch: hand the position back to the stylesheet.
+      // Back on the perch at the renderer's original compact/full height.
       frame.style.transition = '';
-      frame.style.right = '';
-      frame.style.bottom = '';
-      frame.style.height = `${frame.offsetHeight - POINT_EXTRA_H}px`;
+      frame.style.height = `${restingHeight}px`;
+      dockFrame();
     }, WALK_MS * 2 + POINT_MS),
   ];
 }
@@ -284,6 +356,7 @@ window.addEventListener('message', async (e) => {
             );
       frame.style.width = `${w}px`;
       frame.style.height = `${h}px`;
+      syncFramePlacement();
       send('event', {
         kind: 'dock',
         docked: desktop.classList.contains('docked'),
@@ -370,6 +443,11 @@ window.addEventListener('message', async (e) => {
       log('in', 'petSay', `to the pet, not the session: ${p.text}`);
       break;
 
+    case 'card-full':
+      // In the app this fetches the part of the message the card had to cut.
+      log('in', 'cardFull', `the rest of ${p.requestId}`);
+      break;
+
     case 'open-window':
       // Raising the window is the whole job: the buddy keeps his spot. Only
       // `point: true` — the answer has to be typed on that prompt — puts him on
@@ -402,7 +480,7 @@ window.addEventListener('message', async (e) => {
       break;
 
     case 'move-by':
-      log('in', 'moveBy', `would nudge the window by ${p.dx},${p.dy} (it stays put here)`);
+      moveFrameBy(p.dx, p.dy);
       break;
 
     case 'hide':
@@ -441,13 +519,18 @@ function reloadFrame() {
   const params = new URLSearchParams({ session: 'demo-session', name, color });
   frame.style.width = `${FULL_W}px`;
   frame.style.height = `${FALLBACK_H}px`;
+  centerFrame({ logMove: false });
   frame.src = `/renderer/?${params}`;
 }
 
-function setDocked(on) {
+function setDocked(on, { reposition = true } = {}) {
   document.getElementById('set-docked').checked = on;
   desktop.classList.toggle('docked', on);
   terminal.classList.toggle('hidden', !on);
+  if (reposition) {
+    if (on) dockFrame();
+    else centerFrame({ logMove: false });
+  }
   send('event', { kind: 'dock', docked: on, compact: frameMode === 'compact' });
 }
 
@@ -484,9 +567,10 @@ async function boot() {
   for (const s of data.scenarios) {
     let box = seen.get(s.group);
     if (!box) {
-      const wrap = document.createElement('div');
+      const wrap = document.createElement('details');
       wrap.className = 'group';
-      const name = document.createElement('div');
+      wrap.open = seen.size === 0;
+      const name = document.createElement('summary');
       name.className = 'group-name';
       name.textContent = s.group;
       wrap.appendChild(name);
@@ -557,6 +641,10 @@ for (const btn of document.querySelectorAll('[data-poke]')) {
 }
 
 document.getElementById('btn-walk').addEventListener('click', walkToPrompt);
+document.getElementById('btn-center').addEventListener('click', () => {
+  setDocked(false, { reposition: false });
+  centerFrame();
+});
 
 /* ---------------- Workbench: every sprite, every action ---------------- */
 
@@ -731,7 +819,7 @@ document.getElementById('btn-clear-log').addEventListener('click', () => {
 });
 
 document.getElementById('btn-reset').addEventListener('click', () => {
-  setDocked(false);
+  setDocked(false, { reposition: false });
   logEl.replaceChildren();
   reloadFrame();
 });

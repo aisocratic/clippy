@@ -889,6 +889,7 @@ const server = http.createServer(async (req, res) => {
       reviewOnStop: true,
       answerQuestions: true,
       autoPerch: true,
+      appearanceSound: 'pop',
       characterByProject: {},
       sizeByProject: {},
       characterBySession: {},

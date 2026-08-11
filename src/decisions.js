@@ -226,11 +226,29 @@ function toHookResponse(event, action, message = '', { toolInput, source, toolNa
   return {};
 }
 
-/** One-line-ish human summary of a tool call for the approval card. */
-function describeToolCall(toolName, toolInput = {}) {
-  const clip = (s, n = 700) =>
-    String(s ?? '').length > n ? `${String(s).slice(0, n)}…` : String(s ?? '');
+const clipTo = (s, n) =>
+  String(s ?? '').length > n ? `${String(s).slice(0, n)}…` : String(s ?? '');
 
+/* What "read all" is allowed to hand back. A card cut at 400 characters is a
+   card doing its job; a 4MB file pasted into a window over someone's desktop
+   is not, so the whole version has a ceiling too — a generous one. */
+const FULL_DETAIL_MAX = 20000;
+
+/**
+ * One-line-ish human summary of a tool call for the approval card, plus the
+ * same summary with the card's limits taken off.
+ *
+ * `fullDetail` is empty whenever nothing was cut, so it doubles as the answer
+ * to "is there more of this?" — which is what decides whether the card offers
+ * to show the rest.
+ */
+function describeToolCall(toolName, toolInput = {}) {
+  const card = describeWith(toolName, toolInput, (s, n = 700) => clipTo(s, n));
+  const whole = describeWith(toolName, toolInput, (s) => clipTo(s, FULL_DETAIL_MAX));
+  return { ...card, fullDetail: whole.detail === card.detail ? '' : whole.detail };
+}
+
+function describeWith(toolName, toolInput, clip) {
   switch (toolName) {
     case 'Bash':
       return {
@@ -342,4 +360,5 @@ module.exports = {
   normalizeAnswers,
   describeToolCall,
   activityLabel,
+  FULL_DETAIL_MAX,
 };

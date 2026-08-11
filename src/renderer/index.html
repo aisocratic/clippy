@@ -15,6 +15,10 @@
       </div>
       <div id="card-title"></div>
       <div id="card-detail" class="markdown hidden"></div>
+      <!-- Only when there is more of the message than the card is showing:
+           either it was cut before it got here, or it doesn't fit the box. -->
+      <button id="btn-card-more" class="dim hidden"
+              title="Show the whole message — the window grows to fit it">read all</button>
       <div id="card-options" class="hidden"></div>
       <textarea id="card-input" rows="2" spellcheck="false"></textarea>
       <div id="card-actions">
@@ -77,8 +81,10 @@
       <div id="usage-actions">
         <button id="btn-usage-close" class="dim">Close</button>
         <!-- One button, two directions: it grows this same panel into the full
-             view and shrinks it back again. Never a second window. -->
-        <button id="btn-usage-size" class="good"
+             view and shrinks it back again. Never a second window. Plain: the
+             colour on a button means "this is the answer", and unfolding a
+             panel isn't answering anything. -->
+        <button id="btn-usage-size"
                 title="Show more: the allowance bars, and a box to talk to this agent">▾</button>
         <!-- Only once there is something to send — see #usage.composing. -->
         <button id="btn-usage-send" class="good">Send ↵</button>
@@ -172,6 +178,7 @@
     <div id="statusline">waiting for sessions…</div>
   </div>
   <script src="vector-buddies.js"></script>
+  <script src="sounds.js"></script>
   <script src="markdown.js"></script>
   <script src="summary.js"></script>
   <script src="clippy.js"></script>

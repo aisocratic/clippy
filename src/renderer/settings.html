@@ -12,10 +12,13 @@
       <span id="brand-mark">📎</span>
       <span id="brand-name">Clippy<small>for Claude + Codex</small></span>
     </div>
+    <p class="rail-group">Settings</p>
     <a class="rail-link on" href="#sessions">Sessions</a>
+    <a class="rail-link" href="#sounds">Sounds</a>
     <a class="rail-link" href="#buddies">Buddies</a>
-    <a class="rail-link" href="#actions">Clippy&#39;s Features</a>
     <a class="rail-link" href="#updates">Updates</a>
+    <p class="rail-group">Docs</p>
+    <a class="rail-link" href="#actions">Clippy&#39;s features</a>
     <div id="rail-meta">
       <a id="maker-link" href="https://aisocratic.org">by AI Socratic ↗</a>
       <div id="rail-foot">
@@ -25,7 +28,7 @@
   </nav>
 
   <main id="page">
-    <section id="sessions" class="panel">
+    <section id="sessions" class="panel on">
       <header class="panel-head">
         <h1>Sessions</h1>
         <p>Every Claude Code or Codex session that has reported in. Click one to bring its buddy
@@ -35,9 +38,32 @@
       <div id="session-list" class="sessions"></div>
     </section>
 
+    <section id="sounds" class="panel">
+      <header class="panel-head">
+        <h1>Sounds</h1>
+        <p>The only noise Clippy makes, and it's off until you pick one.</p>
+      </header>
+      <div class="field-row sound-setting">
+        <div class="field">
+          <label for="appearance-sound">Appearance sound</label>
+          <select id="appearance-sound">
+            <option value="">Off</option>
+            <option value="pop">Pop</option>
+            <option value="chime">Chime</option>
+            <option value="chirp">Chirp</option>
+          </select>
+        </div>
+        <button id="preview-sound">Preview</button>
+        <p class="field-note">A short cue plays only when a hidden buddy appears.</p>
+      </div>
+    </section>
+
     <section id="buddies" class="panel">
       <header class="panel-head">
-        <h1>Buddies</h1>
+        <div class="heading-row">
+          <h1>Buddies</h1>
+          <button id="btn-add-buddy" class="add-buddy"><span aria-hidden="true">+</span> Add a buddy</button>
+        </div>
         <p>One buddy per coding-agent session, in the colour of that session. Every
            live session gets its own available face from the cast, including sessions
            running side by side in the same project.</p>
@@ -56,35 +82,8 @@
 
       <p class="field-note" id="cast-note"></p>
       <div id="cast" class="cast"></div>
-
-      <div class="drop-hint">
-        <p><b>Want more buddies?</b> Pick one on
-          <a id="pack-link" href="https://openpets.dev/gallery">openpets.dev/gallery ↗</a>,
-          then paste the pet's page link:</p>
-        <div class="add-pet">
-          <input id="pet-url" type="url" placeholder="https://openpets.dev/pets/…"
-            spellcheck="false" aria-label="Add a pet">
-          <button id="pet-install">Install</button>
-        </div>
-        <p class="field-note" id="pet-status" hidden></p>
-        <p>The same install from a terminal is
-          <code>npm run add-sprite-pack -- &lt;pet url&gt;</code> (a pet id or a downloaded
-          pack folder work too). Any folder under <code>src/renderer/assets/themes/</code>
-          with a <code>theme.json</code> shows up here.</p>
-        <p>Packs stay on this machine and keep their own licence — Clippy never
-          redistributes them.</p>
-      </div>
     </section>
 
-
-    <section id="actions" class="panel">
-      <header class="panel-head">
-        <h1>Clippy's Features</h1>
-        <p>Everything a buddy does with a session, what triggers it, and — where it
-           answers on your behalf — the exact hook JSON the agent receives.</p>
-      </header>
-      <div id="action-list" class="actions"></div>
-    </section>
 
     <section id="updates" class="panel">
       <header class="panel-head">
@@ -113,8 +112,63 @@
       </div>
     </section>
 
+    <!-- Docs, not a setting: nothing here changes anything, so it lives in its
+         own group in the rail rather than at the end of the settings list. -->
+    <section id="actions" class="panel">
+      <header class="panel-head">
+        <h1>Clippy's features</h1>
+        <p>Everything a buddy does with a session, what triggers it, and — where it
+           answers on your behalf — the exact hook JSON the agent receives.</p>
+      </header>
+      <div id="action-list" class="actions"></div>
+    </section>
+
   </main>
 
+  <dialog id="buddy-dialog">
+    <div class="dialog-head">
+      <div>
+        <h2>Add a buddy</h2>
+        <p>Install a sprite pack or draw one pixel by pixel.</p>
+      </div>
+      <button id="close-buddy-dialog" aria-label="Close">×</button>
+    </div>
+    <div id="add-options">
+      <section class="add-option">
+        <h3>Install a pet</h3>
+        <p>Paste a pet page from <a id="pack-link" href="https://openpets.dev/gallery">openpets.dev ↗</a>.</p>
+        <div class="add-pet">
+          <input id="pet-url" type="url" placeholder="https://openpets.dev/pets/…"
+            spellcheck="false" aria-label="Pet page URL">
+          <button id="pet-install">Install</button>
+        </div>
+        <p class="field-note" id="pet-status" hidden></p>
+      </section>
+      <div class="dialog-or">or</div>
+      <button id="start-drawing" class="draw-choice">✎ Draw a buddy from scratch</button>
+    </div>
+    <div id="draw-buddy" class="hidden">
+      <div class="draw-layout">
+        <canvas id="buddy-canvas" width="320" height="320"
+          aria-label="16 by 16 pixel drawing canvas"></canvas>
+        <div class="draw-tools">
+          <label for="draw-name">Name</label>
+          <input id="draw-name" maxlength="48" placeholder="My buddy">
+          <label for="draw-colour">Pencil colour</label>
+          <input id="draw-colour" type="color" value="#4fa3d1">
+          <button id="draw-eraser">Eraser</button>
+          <button id="draw-clear">Clear canvas</button>
+        </div>
+      </div>
+      <p id="draw-status" class="field-note" hidden></p>
+      <div class="dialog-actions">
+        <button id="back-to-add">Back</button>
+        <button id="save-drawing" class="primary">Save buddy</button>
+      </div>
+    </div>
+  </dialog>
+
+  <script src="sounds.js"></script>
   <script src="vector-buddies.js"></script>
   <script src="settings.js"></script>
 </body>
