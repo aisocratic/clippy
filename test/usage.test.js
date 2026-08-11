@@ -176,6 +176,29 @@ test('the latest prose-bearing main assistant turn wins', async (t) => {
   assert.equal(await lastAssistantText(file), 'latest recap  \nwith detail');
 });
 
+test("Codex's finished answer beats the commentary it streamed on the way there", async (t) => {
+  const event = (payload) => JSON.stringify({ type: 'event_msg', payload });
+  const file = transcriptFile(
+    t,
+    [
+      event({ type: 'agent_message', message: 'let me check the config' }),
+      event({ type: 'task_complete', last_agent_message: 'The port is 43117.' }),
+      event({ type: 'token_count', info: {} }),
+    ].join('\n')
+  );
+
+  assert.equal(await lastAssistantText(file), 'The port is 43117.');
+});
+
+test('a Codex turn that never reported task_complete still recaps what it said', async (t) => {
+  const file = transcriptFile(
+    t,
+    JSON.stringify({ type: 'event_msg', payload: { type: 'agent_message', message: 'done' } })
+  );
+
+  assert.equal(await lastAssistantText(file), 'done');
+});
+
 test('a large transcript prefix is not read when the recap is in the tail', async (t) => {
   const oldLine = `${JSON.stringify({ type: 'user', message: { content: 'old history' } })}\n`;
   const file = transcriptFile(

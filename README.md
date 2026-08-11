@@ -180,6 +180,28 @@ Restart any already-running agent sessions so they pick up the hooks. Codex requ
 trust step: open `/hooks`, review the new Clippy definitions, and trust them. Then ask either agent
 to do something that needs permission — Clippy will let you know.
 
+### Start an agent through Clippy
+
+Clippy can start Claude Code or Codex in a persistent tmux session instead of
+waiting for an existing terminal to report through hooks. Install tmux first:
+
+```bash
+brew install tmux
+```
+
+Right-click the **📎 menu bar icon → New agent**. Pick Claude Code or Codex and
+a local folder, or choose **Over SSH…** and enter an SSH host plus the project
+path on that machine. An SSH config alias works anywhere `user@host` would.
+The agent CLI must already be installed and authenticated on the machine where
+it will run.
+
+The tmux session lives on the Mac running Clippy, even for an SSH target. It
+keeps running when Clippy quits, accepts prompts directly from the buddy, and
+can be opened at any time from the session's **Attach in Terminal** menu item.
+If SSH needs a first-time host-key/password answer, or the agent asks whether
+to trust the folder, attach once and answer it in the terminal. Remote
+transcripts are then read over the same multiplexed SSH connection.
+
 ### Mobile companion
 
 The Expo-based iOS and Android companion lives in [`mobile/`](mobile/). It
@@ -498,7 +520,9 @@ would at least make the row say "Clippy" instead of "Electron".
 
 Click **📎 in the menu bar** and Clippy's settings window opens (right-click for
 the quick menu — sessions, Drive mode, quit). It's the one part of Clippy you sit
-and read, and it has five sections:
+and read. The rail splits it in two — **Settings**, which is Sessions, Sounds,
+Buddies and Updates, and **Docs**, which is the feature catalogue. One page at a
+time; nothing under Docs changes anything.
 
 - **Sessions** — everything reporting in right now, each with the buddy it's
   wearing and pickers to **give that session a buddy and a size of its own**.
@@ -508,6 +532,8 @@ and read, and it has five sections:
   gone — the folder's other agents are pinned to what they were wearing at that
   moment so they don't come along for the ride. A session with no size of its
   own follows the default under **Buddies**.
+- **Sounds** — the only noise Clippy makes: a short cue when a hidden buddy
+  appears, off until you pick one. Nothing plays for a buddy already on screen.
 - **Buddies** — every character with all nine of its animations playing side by
   side (the same layout as the test bench's workbench), and the default size
   picker (per-project sizes live beside each session above).
@@ -519,21 +545,22 @@ and read, and it has five sections:
   more — paste a pet's page link into the **Add a pet** box right there (or into
   `npm run add-sprite-pack -- <pet url>` in a terminal) and it downloads,
   installs, and joins the cast on the spot.
-- **Clippy's Features** — the full catalogue: what triggers each behaviour,
-  which hook it rides on, what you see, and — for anything that answers on your
-  behalf — **the exact JSON Claude Code receives** for each button. Those strings
-  come from the same `toHookResponse` the app answers with (`src/actions.js`), so
-  the page can't drift from the behaviour, and a test asserts it.
 - **Updates** — which copy you're running (checkout vs packaged app, version,
   commit), and a button that compares it with the tip of `main` on GitHub.
   Like the pet downloads above, it's a deliberate, user-initiated request —
   the app never talks to anything but localhost on its own.
+- **Clippy's features** — the one page under **Docs**, and the full catalogue:
+  what triggers each behaviour, which hook it rides on, what you see, and — for
+  anything that answers on your behalf — **the exact JSON Claude Code receives**
+  for each button. Those strings come from the same `toHookResponse` the app
+  answers with (`src/actions.js`), so the page can't drift from the behaviour,
+  and a test asserts it.
 (Clicking a session's name brings its buddy to the front.)
 
 The on/off switches for what Clippy answers aren't in this window at all: they
 live in **📎 menu bar → Quick settings**, one right-click from anywhere. Turn one
 off and that moment goes back to the terminal exactly as if Clippy weren't
-running — *Clippy's Features* marks the affected entries **off**.
+running — *Clippy's features* marks the affected entries **off**.
 
 ## Bring your own buddy (sprite-sheet themes)
 

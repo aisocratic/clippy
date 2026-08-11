@@ -448,6 +448,12 @@ window.addEventListener('message', async (e) => {
       log('in', 'cardFull', `the rest of ${p.requestId}`);
       break;
 
+    case 'feed':
+      // Only sessions Clippy started have a transcript to read, so on the
+      // bench this is just the panel asking.
+      log('in', 'feed', 'recent messages');
+      break;
+
     case 'open-window':
       // Raising the window is the whole job: the buddy keeps his spot. Only
       // `point: true` — the answer has to be typed on that prompt — puts him on

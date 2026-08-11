@@ -80,6 +80,30 @@ function findAppAncestor(pid, table, { maxHops = 12 } = {}) {
   return null;
 }
 
+/**
+ * Every pid from `pid` up to the root of the tree, `pid` itself included.
+ *
+ * The hooks report the agent's own pid; a session Clippy started knows the pid
+ * of the shell tmux put in the pane. Walking up from one to look for the other
+ * is how a hook gets matched to the pane it came from. `pid` is in the chain
+ * because a pane whose command `exec`s has no intermediate shell at all, and
+ * that case must match too.
+ *
+ * A walk, not an equality test, because the chain can legitimately grow a link:
+ * an npm shim, a wrapper script, a `claude` that is really `node claude.js`.
+ */
+function ancestorsOf(pid, table, { maxHops = 12 } = {}) {
+  const chain = [];
+  let current = Number(pid) || 0;
+  for (let i = 0; i < maxHops && current > 1; i++) {
+    const entry = table.get(current);
+    if (!entry) break;
+    chain.push(current);
+    current = entry.ppid;
+  }
+  return chain;
+}
+
 /** AppleScript string literal (the only characters that matter are " and \). */
 const q = (s) => `"${String(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
 
@@ -408,6 +432,7 @@ module.exports = {
   parseProcessTable,
   appNameFromComm,
   findAppAncestor,
+  ancestorsOf,
   windowScript,
   parseBounds,
   dockPosition,

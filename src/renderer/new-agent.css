@@ -1,0 +1,151 @@
+/* The "start an agent somewhere" window. Same warm paper and ink outline as
+   the settings window and the buddy's own cards — these tokens are
+   src/renderer/settings.css's, kept in step on purpose. */
+
+:root {
+  --ink: #15262a;
+  --bg: #f7f2e8;
+  --surface: #f9f6ef;
+  --surface-2: #eae6de;
+  --line: rgba(21, 38, 42, 0.2);
+  --text: var(--ink);
+  --muted: #56666b;
+  --accent: #4f9dce;
+  --ok: #4f9f6f;
+  --no: #b7402c;
+  --radius: 12px;
+  --sans: 'Avenir Next', Avenir, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font: 13px/1.45 var(--sans);
+  /* The title bar is hidden-inset, so the top of the form has to clear it. */
+  padding: 34px 20px 18px;
+}
+
+h1 {
+  font-size: 15px;
+  margin-bottom: 14px;
+}
+
+fieldset {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: 10px 12px 12px;
+  margin-bottom: 12px;
+}
+
+legend {
+  padding: 0 5px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.choice {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-right: 14px;
+  padding: 3px 0;
+  cursor: pointer;
+}
+
+#agent-row {
+  display: flex;
+  flex-wrap: wrap;
+}
+
+.indent {
+  padding: 4px 0 8px 18px;
+}
+
+/* The half of the form you are not using stays visible — so you can see what
+   the other option would ask for — but says clearly that it is not in play. */
+.indent.off {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+.row {
+  display: flex;
+  gap: 6px;
+}
+
+input[type='text'] {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+input[type='text']:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.note {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 6px;
+}
+
+button {
+  font: inherit;
+  padding: 5px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--text);
+  cursor: pointer;
+}
+
+button:hover {
+  background: var(--surface);
+}
+
+button.good {
+  background: var(--ok);
+  border-color: var(--ok);
+  color: #ffffff;
+}
+
+button.dim {
+  color: var(--muted);
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+#error {
+  color: var(--no);
+  font-size: 12px;
+  margin-bottom: 10px;
+}
+
+#actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.hidden {
+  display: none;
+}

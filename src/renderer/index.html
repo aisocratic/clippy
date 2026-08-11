@@ -46,6 +46,17 @@
       </div>
     </div>
 
+    <!-- What a session Clippy started has been saying, read from its own
+         transcript. Separate from #drive, which belongs to Drive mode. -->
+    <div id="feed" class="hidden">
+      <div id="feed-head">
+        <span id="feed-title">recent messages</span>
+        <span id="feed-src" class="dim"></span>
+      </div>
+      <div id="feed-note" class="hidden"></div>
+      <div id="feed-log"></div>
+    </div>
+
     <div id="qcard" class="hidden">
       <div id="qcard-head"><span id="qcard-tag">asking you</span></div>
       <div id="qcard-title"></div>
@@ -124,6 +135,7 @@
       </div>
 
       <button id="menu-waiting" class="menu-item hidden"><span class="mi">📨</span>See what's waiting</button>
+      <button id="menu-feed" class="menu-item hidden"><span class="mi">📜</span>Recent messages</button>
       <button id="menu-stats" class="menu-item"><span class="mi">📊</span>Stats &amp; token usage</button>
 
       <div class="menu-sep"></div>

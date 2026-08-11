@@ -196,6 +196,34 @@ const ACTIONS = [
       'requests and questions through the same cards.',
     passive: true,
   },
+  {
+    id: 'spawn',
+    pose: 'excited',
+    scenario: 'story',
+    icon: '🚀',
+    title: 'Start an agent itself',
+    appliesTo: 'Claude + Codex',
+    when: 'You pick New agent in the menu bar and choose a folder — or an SSH host.',
+    shows: 'A buddy for a session Clippy started, in a tmux session it owns. Typing at ' +
+      'it goes straight in, so no window has to be raised and macOS has nothing to ' +
+      'block; “Attach in Terminal” hands you the same session whenever you want to ' +
+      'take over. It outlives Clippy — quitting the app leaves the work running.',
+    passive: true,
+  },
+  {
+    id: 'transcript',
+    pose: 'idle',
+    scenario: 'story',
+    icon: '📜',
+    title: 'Read what a session it started is saying',
+    appliesTo: 'Claude + Codex',
+    when: 'Continuously, for sessions Clippy started — including over SSH, where hooks ' +
+      'report to the other machine and never reach here.',
+    shows: "The agent's own transcript, read from disk rather than scraped off a " +
+      'terminal: the latest message in the bubble, and the last few under Recent ' +
+      'messages. A quiet session costs one look at the file every twenty seconds.',
+    passive: true,
+  },
 ];
 
 module.exports = { ACTIONS };

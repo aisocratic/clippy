@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'" />
+  <title>New agent</title>
+  <link rel="stylesheet" href="new-agent.css" />
+</head>
+<body>
+  <form id="form" autocomplete="off">
+    <h1>Start an agent</h1>
+
+    <fieldset id="agents">
+      <legend>Agent</legend>
+      <div id="agent-row"></div>
+    </fieldset>
+
+    <fieldset id="where">
+      <legend>Where</legend>
+      <label class="choice">
+        <input type="radio" name="place" value="local" checked />
+        <span>On this machine</span>
+      </label>
+      <div class="indent">
+        <div class="row">
+          <input id="folder" type="text" spellcheck="false" placeholder="/Users/you/projects/thing" />
+          <button id="browse" type="button">Choose…</button>
+        </div>
+      </div>
+
+      <label class="choice">
+        <input type="radio" name="place" value="ssh" />
+        <span>Over SSH</span>
+      </label>
+      <div class="indent">
+        <div class="row">
+          <input id="host" type="text" spellcheck="false" placeholder="you@box" />
+          <input id="remote-path" type="text" spellcheck="false" placeholder="~/projects/thing" />
+        </div>
+        <p class="note">
+          The tmux session runs here and connects out, so you can type at it and attach a terminal
+          just the same. Its messages are read over the same connection.
+        </p>
+      </div>
+    </fieldset>
+
+    <p id="error" class="hidden"></p>
+
+    <div id="actions">
+      <button id="cancel" type="button" class="dim">Cancel</button>
+      <button id="start" type="submit" class="good">Start</button>
+    </div>
+  </form>
+  <script src="new-agent.js"></script>
+</body>
+</html>

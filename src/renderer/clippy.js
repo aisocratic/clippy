@@ -75,6 +75,11 @@ const usageNote = document.getElementById('usage-note');
 const usageInput = document.getElementById('usage-input');
 const btnUsageSize = document.getElementById('btn-usage-size');
 
+const feedEl = document.getElementById('feed');
+const feedSrc = document.getElementById('feed-src');
+const feedNote = document.getElementById('feed-note');
+const feedLog = document.getElementById('feed-log');
+
 const petEl = document.getElementById('pet');
 const petWho = document.getElementById('pet-who');
 const petLog = document.getElementById('pet-log');
@@ -87,6 +92,7 @@ const menuEl = document.getElementById('menu');
 const menuName = document.getElementById('menu-name');
 const menuStatus = document.getElementById('menu-status');
 const menuWaiting = document.getElementById('menu-waiting');
+const menuFeed = document.getElementById('menu-feed');
 
 const sheetEl = document.getElementById('buddy-sheet');
 const vectorEl = document.getElementById('buddy-vector');
@@ -160,7 +166,7 @@ let widthSent = 0;
 // the normal panel. Every other card leaves the width alone (0 = default).
 const PLAN_WIN_W = 510;
 
-const PANELS = ['card', 'bubble', 'qcard', 'usage', 'pet', 'drive', 'menu'];
+const PANELS = ['card', 'bubble', 'qcard', 'usage', 'pet', 'drive', 'feed', 'menu'];
 
 // When we last asked main for a different window, and how long afterwards a
 // mouseleave is treated as the layout moving rather than the pointer.
@@ -197,7 +203,7 @@ function contentHeight() {
    actions waiting on you, so a second row underneath would be one more thing
    to read at the moment you can least afford it. While one of those is up the
    row simply steps aside. */
-const CONTROL_HOSTS = ['usage', 'pet', 'bubble', 'drive'];
+const CONTROL_HOSTS = ['usage', 'pet', 'bubble', 'drive', 'feed'];
 
 /**
  * Where hide/chat live right now.
@@ -260,8 +266,17 @@ function applyIdentity() {
   // `claude-` stripped label the panels use — because on the plate it is the
   // only thing that says which model this session is actually costing you.
   whoPet.textContent = me.pet;
-  whoSub.textContent = me.model ? `${me.name} · ${me.model}` : me.name;
-  whoEl.title = `${me.pet} the ${buddyName}, on “${me.name}” — running ${harness} with ${model}`;
+  // A session Clippy started says so on the plate: ⧉ for one in tmux here, ⇅
+  // for one on another machine. Both are "mine", which is worth knowing before
+  // you wonder why it has no terminal window.
+  const owned = me.owned ? (me.host ? `⇅ ${me.host} · ` : '⧉ ') : '';
+  whoSub.textContent = owned + (me.model ? `${me.name} · ${me.model}` : me.name);
+  const where = me.owned
+    ? me.host
+      ? ` in tmux over ${me.host}`
+      : ` in tmux (${me.tmux || 'started by Clippy'})`
+    : '';
+  whoEl.title = `${me.pet} the ${buddyName}, on “${me.name}”${where} — running ${harness} with ${model}`;
 }
 
 // Hook payloads identify the harness, while its transcript is the reliable
@@ -1100,6 +1115,102 @@ function addDriveLine(role, text) {
   driveTranscript.scrollTop = driveTranscript.scrollHeight;
 }
 
+/* ---------- Recent messages (sessions Clippy started) ---------- */
+
+// Enough to see how a turn went without the panel becoming a scrollback log.
+const FEED_MAX = 12;
+// Turns this buddy has said, newest last, keyed so a turn that arrives twice
+// (a Claude response is written across several lines) merges instead of repeats.
+const feedTurns = [];
+
+/** Merge a batch of turns in, replacing any we have already seen by id. */
+function mergeFeed(turns) {
+  for (const turn of turns || []) {
+    if (!turn || !turn.text) continue;
+    const at = feedTurns.findIndex((seen) => seen.id === turn.id);
+    if (at === -1) feedTurns.push(turn);
+    else feedTurns[at] = turn;
+  }
+  if (feedTurns.length > FEED_MAX) feedTurns.splice(0, feedTurns.length - FEED_MAX);
+}
+
+function renderFeed() {
+  feedLog.replaceChildren();
+  if (!feedTurns.length) {
+    const empty = document.createElement('div');
+    empty.className = 'feed-line system';
+    empty.textContent = 'Nothing said yet.';
+    feedLog.appendChild(empty);
+    return;
+  }
+
+  for (const turn of feedTurns) {
+    const line = document.createElement('div');
+    line.className = `feed-line ${turn.role}`;
+
+    const label = document.createElement('span');
+    label.className = 'feed-role';
+    label.textContent = turn.role === 'user' ? 'you:' : `${me.name}:`;
+    line.appendChild(label);
+
+    const copy = document.createElement('div');
+    if (turn.source === 'pane') {
+      // Reconstructed from the terminal, not read from the transcript. It is
+      // rendered output, not markdown, and pretending otherwise mangles it.
+      const pre = document.createElement('pre');
+      pre.className = 'pane';
+      pre.textContent = turn.text;
+      copy.appendChild(pre);
+      copy.className = 'feed-copy';
+    } else {
+      copy.className = 'feed-copy markdown';
+      setMarkdown(copy, turn.text);
+    }
+    line.appendChild(copy);
+
+    if (turn.tools && turn.tools.length) {
+      const tools = document.createElement('span');
+      tools.className = 'feed-tools';
+      tools.textContent = turn.tools.join(' · ');
+      line.appendChild(tools);
+    }
+    feedLog.appendChild(line);
+  }
+  feedLog.scrollTop = feedLog.scrollHeight;
+}
+
+async function showFeed() {
+  // Everything wants the same space above the buddy's head.
+  usageEl.classList.add('hidden');
+  bubbleEl.classList.add('hidden');
+  qcardEl.classList.add('hidden');
+  petEl.classList.add('hidden');
+  menuEl.classList.add('hidden');
+  renderFeed();
+  feedEl.classList.remove('hidden');
+  syncMode();
+
+  // The pushes only carry what arrived while we were listening; opening the
+  // panel is the moment to go and read the rest.
+  try {
+    const history = await window.clippyAPI.feed();
+    if (!history) return;
+    if (history.source) feedSrc.textContent = history.source;
+    mergeFeed(history.turns);
+    if (!feedEl.classList.contains('hidden')) {
+      renderFeed();
+      syncMode();
+    }
+  } catch {
+    // Nothing to read is a normal state, not an error worth a bubble.
+  }
+}
+
+function hideFeed() {
+  feedEl.classList.add('hidden');
+  syncMode();
+}
+
 /* ---------- Interactive cards (approvals & reviews) ---------- */
 
 function showNextRequest() {
@@ -1526,6 +1637,49 @@ function handleEvent(evt) {
       }
       break;
     }
+    // A session Clippy started, read out of its own transcript. Ambient by
+    // design: it never steals the window from a card you have to answer.
+    case 'transcript': {
+      const wasEmpty = !feedTurns.length;
+      mergeFeed(evt.turns);
+      menuFeed.classList.remove('hidden'); // there is something to show now
+      if (evt.source) feedSrc.textContent = evt.source;
+      if (!feedEl.classList.contains('hidden')) renderFeed();
+
+      // The newest thing it said, in the bubble — but only when the panel is
+      // closed, nothing is being asked of the user, and this is news rather
+      // than the backlog we read on the way in.
+      const said = [...(evt.turns || [])].reverse().find((t) => t.role === 'assistant' && t.text);
+      const quiet = feedEl.classList.contains('hidden') && !activeRequestId && !evt.cold && !wasEmpty;
+      if (said && quiet) {
+        showBubble(said.text);
+        setTimeout(() => {
+          if (!activeRequestId && ![...pending.values()].some((p) => !p.acknowledged)) hideBubble();
+        }, 6000);
+      }
+      break;
+    }
+
+    // This buddy's session is one Clippy started, not one it noticed.
+    case 'ownership':
+      me.owned = Boolean(evt.owned);
+      me.host = evt.host || '';
+      me.tmux = evt.tmux || '';
+      document.body.classList.toggle('owned', me.owned);
+      if (me.owned) menuFeed.classList.remove('hidden');
+      feedSrc.textContent = me.host ? `via ${me.host}` : me.tmux ? `tmux · ${me.tmux}` : '';
+      applyIdentity();
+      break;
+
+    // Whether we can still reach a remote transcript. A muted line in the
+    // panel and nothing more — a flaky VPN must not make a paperclip bounce.
+    case 'transcript-status': {
+      const trouble = evt.state === 'unreachable';
+      feedNote.textContent = trouble ? `can't reach ${evt.host || 'the session'} — retrying` : '';
+      feedNote.classList.toggle('hidden', !trouble);
+      break;
+    }
+
     case 'info':
       // "Now watching …" — say hello.
       if (!evt.sticky) {
@@ -1951,6 +2105,12 @@ menuWaiting.addEventListener('click', () => {
 document.getElementById('menu-settings').addEventListener('click', () => {
   closeMenu();
   window.clippyAPI.openSettings();
+});
+
+document.getElementById('menu-feed').addEventListener('click', () => {
+  closeMenu();
+  if (feedEl.classList.contains('hidden')) showFeed();
+  else hideFeed();
 });
 
 document.getElementById('menu-stats').addEventListener('click', () => {

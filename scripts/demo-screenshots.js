@@ -285,8 +285,10 @@ app.whenReady().then(async () => {
     ['14-settings-buddies.png', 'buddies'],
     ['15-settings-actions.png', 'actions'],
   ]) {
+    // The rail is a router now — each section is its own page, so ask for it by
+    // hash rather than scrolling to something that isn't rendered.
     await settings.webContents.executeJavaScript(
-      `document.getElementById('${section}').scrollIntoView(); true`
+      `location.hash = ${JSON.stringify(`#${section}`)}; true`
     );
     await sleep(500);
     await settings.webContents.executeJavaScript(
