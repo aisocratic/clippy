@@ -67,6 +67,9 @@ const runArgv = (script, PATH = process.env.PATH, env = {}) =>
 const argvOf = (command) =>
   runArgv(command.replace(/^exec '[^']*'/, `exec '${path.join(STUB, 'argv')}'`));
 
+/** Stop before the persistent login shell that follows the agent command. */
+const withoutPersistentShell = (script) => script.replace(/; exec '[^']+' -il$/, '');
+
 test('a session name survives whatever the folder was called', () => {
   assert.equal(sessionName('My.App', { now: 0 }), 'clippy-my-app-0');
   assert.equal(sessionName('/Users/me/Web UI!', { now: 0 }), 'clippy-users-me-web-ui-0');
@@ -137,7 +140,10 @@ test('an ssh launch survives a project path with a quote in it, at every layer',
   const [, script] = argvOf(launchCommand({ agent: 'codex', host: 'me@box', remotePath, shell: '/bin/sh' }));
 
   // Layer 2: ssh gets -t, the host, and exactly one remote command.
-  const [dashT, host, remote, ...rest] = runArgv(script, `${STUB}:${process.env.PATH}`);
+  const [dashT, host, remote, ...rest] = runArgv(
+    withoutPersistentShell(script),
+    `${STUB}:${process.env.PATH}`
+  );
   assert.equal(dashT, '-t');
   assert.equal(host, 'me@box');
   assert.ok(rest.length <= 1, 'ssh takes one remote command'); // the trailing `exec sh -il`
@@ -156,7 +162,7 @@ test('the pane\'s ssh opens the connection the transcript probe will reuse', () 
   const [, script] = argvOf(
     launchCommand({ agent: 'claude', host: 'me@box', remotePath: '~/my app', sessionId: 'u-1', controlPath, shell: '/bin/sh' })
   );
-  const argv = runArgv(script, `${STUB}:${process.env.PATH}`);
+  const argv = runArgv(withoutPersistentShell(script), `${STUB}:${process.env.PATH}`);
 
   // Each -o must arrive as its own argument, not one run-together word.
   assert.deepEqual(argv.slice(0, 2), ['-t', '-o']);
