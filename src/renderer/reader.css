@@ -1,0 +1,97 @@
+/* The reading window borrows the buddy's palette so a message looks the same
+   here as it did on the card — but laid out as a page, because that is the
+   whole reason for opening it. */
+
+:root {
+  --ink: #15262a;
+  --surface: #f9f6ef;
+  --surface-2: #eae6de;
+  --line-soft: rgba(21, 38, 42, 0.12);
+  --text: var(--ink);
+  --muted: #56666b;
+  --sans: 'Avenir Next', Avenir, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  background: var(--surface);
+  color: var(--text);
+  font-family: var(--sans);
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Draggable, so the window can be moved by its header as well as its frame. */
+#head {
+  -webkit-app-region: drag;
+  flex: none;
+  padding: 14px 22px 12px;
+  border-bottom: 1px solid var(--line-soft);
+  background: var(--surface-2);
+}
+
+#who {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+#what {
+  margin-top: 2px;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+#body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 18px 22px 26px;
+  font-size: 13.5px;
+  line-height: 1.55;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+#body p,
+#body ul,
+#body ol,
+#body pre {
+  margin-bottom: 11px;
+}
+
+#body ul,
+#body ol {
+  padding-left: 20px;
+}
+
+#body pre {
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--surface-2);
+  overflow-x: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+#body code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12.5px;
+}
+
+#body h1,
+#body h2,
+#body h3 {
+  margin: 16px 0 7px;
+  font-size: 14.5px;
+}

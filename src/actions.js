@@ -224,6 +224,55 @@ const ACTIONS = [
       'messages. A quiet session costs one look at the file every twenty seconds.',
     passive: true,
   },
+  {
+    id: 'chat',
+    pose: 'wave',
+    scenario: 'story',
+    icon: '💬',
+    title: 'Talk to the buddy, and through it to your agents',
+    appliesTo: 'Clippy itself',
+    when: 'You press 💬 under the buddy.',
+    shows: 'A word with the pet itself — its own small model, no tools, and nothing ' +
+      'that reaches a session. Above it, a row of who you could be talking to ' +
+      'instead: the agent this buddy sits on, or — with one buddy standing in for ' +
+      'every agent — all of them. Pick one and what you type goes into that ' +
+      "agent's session, through its tmux pane or its terminal window. This is the " +
+      'only box in the window that types at an agent; the panel behind ▾ is ' +
+      'numbers, and nothing you can type into.',
+    passive: true,
+  },
+  {
+    id: 'quiet',
+    pose: 'idle',
+    scenario: 'story',
+    icon: '🤫',
+    title: 'Stay out of the way when you are already there',
+    appliesTo: 'Claude + Codex',
+    setting: 'quietWhenFocused',
+    when: 'A session wants you and the window it runs in is the one you are ' +
+      'looking at — the right app in front, and for Terminal and iTerm the right ' +
+      'tab as well.',
+    shows: 'Nothing. No buddy, no notification, and a held question is handed back ' +
+      "to that window so the agent's own prompt appears where you are already " +
+      'typing. The tray still counts it. Whenever it cannot tell for certain — ' +
+      'no answer from the window server, a terminal whose tabs it cannot read — ' +
+      'it speaks up rather than risk a message you never see.',
+    passive: true,
+  },
+  {
+    id: 'feedback',
+    pose: 'wave',
+    scenario: 'story',
+    icon: '💬',
+    title: 'Tell us how it is going',
+    appliesTo: 'Clippy itself',
+    when: 'You open Settings → Feedback, pick a thumb, and press send. Never on its own.',
+    shows: 'A thumb and a box. It goes privately to the people who make Clippy — not ' +
+      'published, not a review, and nowhere public. The only thing Clippy sends that ' +
+      'came from you, and it carries just the thumb, your words, and the build number: ' +
+      'no project names, no paths, no code, nothing that says who you are.',
+    passive: true,
+  },
 ];
 
 module.exports = { ACTIONS };

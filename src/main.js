@@ -33,6 +33,12 @@ const { identityFor, petNameFor } = require('./identity');
 const { SIZES, sizeList, allCharacters, characterFor, sizeFor } = require('./characters');
 const { ACTIONS } = require('./actions');
 const { windowActionFor } = require('./visibility');
+const {
+  SOLO_KEY,
+  sharesWindow,
+  windowKeyFor: soloWindowKey,
+  successorFor,
+} = require('./buddy-mode');
 const { EDGE_OPTIONS, EDGE_IDS, edgeLineup, edgeHome } = require('./arrange');
 const {
   terminalFromHeaders,
@@ -43,9 +49,14 @@ const {
   dockPosition,
   promptPosition,
   typeAndSubmit,
+  appForPid,
+  TERMINAL_APP,
+  ITERM_APP,
 } = require('./terminal');
 const tmux = require('./tmux');
 const { SpawnedSessions, buddyKeyFor, rememberProject } = require('./spawned');
+const { chatWorkspace, ensureChatWorkspace } = require('./workspace');
+const { TRUST_PROMPT, paneStartupState, prepareAgentWorkspace } = require('./agent-startup');
 const { resolveSession, createReader, readTail, turnsFrom, lastSaid } = require('./transcript');
 const { createRemoteReader, controlPathFor, ensureControlDir } = require('./transport');
 const { startAgentWatch } = require('./agent-watch');
@@ -57,14 +68,25 @@ const {
   modelFromTranscriptFile,
 } = require('./usage');
 const { checkForUpdates, localBuild } = require('./updates');
+const { lockPath, allowsMultiple, writeLock, holderOf, defend } = require('./single-instance');
+const { sendFeedback } = require('./feedback');
 const { DEV_SESSION, eventsFor, storyList, sandboxUsage } = require('./sandbox-scenarios');
 const { startCompletionPoll, coalesceAsync } = require('./async-control');
+const { createOutbox } = require('./outbox');
+const { createFocusProbe, looksFocused } = require('./frontmost');
+const { describeSource } = require('./source-app');
+const { routingPrompt, parseChoice, routable } = require('./delegate');
 
 const PORT = Number(process.env.CLIPPY_PORT || 43117);
 
 // Clippy is a small paperclip by default — the size it is when perched on a
 // window — and only takes the full window when there's a card to read.
-const WIN_W = 310;
+// Wider than the 300px panel inside it, and by enough for what is drawn
+// outside the panel's own box: the offset shadow to its right, and — when
+// several messages are waiting — the sheets stacked past its top-left corner
+// (`.stacked` in clippy.css). Anything drawn past this is clipped by the
+// window edge rather than shown.
+const WIN_W = 342;
 const WIN_H = 520; // fallback until the renderer reports what it needs
 const WIN_GAP = 6;
 const ROW_STEP = 160; // how far a second row of Clippys sits above the first
@@ -104,6 +126,11 @@ const settings = {
   reviewOnStop: true, // offer a review box when Claude finishes a turn
   answerQuestions: true, // answer Claude/Codex multiple-choice questions in Clippy
   autoPerch: true, // appear on the session's own window, not the screen corner
+  // Say nothing when you are already looking at the window that is asking: the
+  // agent's own prompt is right there, so a buddy over the top of it is the app
+  // getting in the way of the thing it exists to help with. Held cards are
+  // handed straight back to that window instead of being kept here.
+  quietWhenFocused: true,
   appearanceSound: 'pop', // short cue when a hidden buddy appears; '' is silent
   characterByProject: {}, // project name -> character id, when you've picked one
   sizeByProject: {}, // project name -> size id, likewise
@@ -112,6 +139,12 @@ const settings = {
   // session id, and capped, because sessions are many and short-lived.
   characterBySession: {},
   sizeBySession: {},
+  // 'each': a buddy per session, side by side. 'one': a single buddy that
+  // speaks for whichever agent needs you, wearing that agent's face.
+  buddyMode: 'each',
+  // In 'one' mode, the face the single buddy always wears. '' means "let
+  // Clippy pick" — the same casting a session would have got.
+  soloCharacter: '',
   size: 'medium', // the size a project gets when it hasn't picked one
   arrangeEdge: '', // screen edge new buddies line up on; '' = the classic corner
   // …and the sessions Clippy starts itself (see spawnAgent).
@@ -126,6 +159,8 @@ const CHOICES = {
   size: () => Object.keys(SIZES),
   arrangeEdge: () => EDGE_IDS,
   appearanceSound: () => ['', 'pop', 'chime', 'chirp'],
+  buddyMode: () => ['each', 'one'],
+  soloCharacter: () => ['', ...characterIds()],
   defaultAgent: () => Object.keys(tmux.SPAWNABLE),
   attachTerminal: () => Object.keys(ATTACH_APPS),
 };
@@ -213,7 +248,7 @@ function pinSiblings(sessionId, name, { size = false } = {}) {
 /** Give one session's buddy a character (or '' to go back to the automatic one). */
 function assignCharacter(sessionId, character) {
   if (!sessionId) return;
-  const name = buddies.get(sessionId)?.name || tracker.cwdFor(sessionId).split('/').pop() || '';
+  const name = buddyOf(sessionId)?.name || tracker.cwdFor(sessionId).split('/').pop() || '';
   if (!name) return;
   const wanted = character && characterIds().includes(character) ? character : '';
 
@@ -234,7 +269,7 @@ function assignCharacter(sessionId, character) {
 /** Give one project a size of its own (or '' to fall back to the default). */
 function assignSize(sessionId, size) {
   if (!sessionId) return;
-  const name = buddies.get(sessionId)?.name || tracker.cwdFor(sessionId).split('/').pop() || '';
+  const name = buddyOf(sessionId)?.name || tracker.cwdFor(sessionId).split('/').pop() || '';
   if (!name) return;
   const wanted = size && SIZES[size] ? size : '';
 
@@ -279,6 +314,15 @@ function setSetting(key, value) {
   // for a new height once it has re-measured, but this keeps the bare buddy
   // from sitting in the wrong box in the meantime.
   if (key === 'size') replaceAll();
+  // A different face for the shared buddy is a look, not a rebuild — but the
+  // window is holding the old one until it is told.
+  if (key === 'soloCharacter') {
+    const solo = buddies.get(SOLO_KEY);
+    if (solo && !solo.win.isDestroyed()) {
+      solo.character = soloCharacter();
+      post(solo, 'clippy-settings', settingsPayload(solo));
+    }
+  }
 }
 
 /**
@@ -295,7 +339,14 @@ function settingsPayload(buddy) {
     // A buddy is told its own casting and its own size; the settings window
     // gets the defaults, and reads the per-project maps for the rest.
     ...(buddy
-      ? { character: buddy.character, size: sizeFor(settings, buddy.name, buddy.sessionId) }
+      ? {
+          character: buddy.character,
+          size: sizeFor(settings, buddy.name, buddy.sessionId),
+          // Is *this* window the one that speaks for everybody? Not the same
+          // question as "is the mode 'one'": buddies that already existed when
+          // the mode changed keep their own windows and are not the manager.
+          isSolo: buddies.get(SOLO_KEY) === buddy,
+        }
       : null),
     characters: allCharacters(),
     sizes: sizeList(),
@@ -304,7 +355,7 @@ function settingsPayload(buddy) {
 
 function sendSettings() {
   for (const buddy of buddies.values()) {
-    buddy.win.webContents.send('clippy-settings', settingsPayload(buddy));
+    post(buddy, 'clippy-settings', settingsPayload(buddy));
   }
 }
 
@@ -335,6 +386,17 @@ function replaceAll() {
     if (!buddy.win.isDestroyed()) placeBuddy(buddy, buddy.mode || 'compact');
   }
 }
+
+/**
+ * Switching between one-each and one-for-all changes *where the next message
+ * goes*, and nothing else.
+ *
+ * It used to tear every window down and build them again, which is the obvious
+ * reading of "a different set of windows" and the wrong one: buddies you had
+ * placed, perched and were reading vanished mid-thought because you flipped a
+ * setting. Whoever is on screen stays there. The shared buddy appears when it
+ * has something to say, which is the only moment it is needed.
+ */
 
 /* ---------------- Settings window ---------------- */
 
@@ -418,6 +480,16 @@ function settingsState() {
     windowAccess: canDriveWindows(),
     appName: path.basename(appBundlePath(), '.app'),
     appPath: appBundlePath(),
+    // The shared buddy, for the row that stands in for it in Sessions. Its
+    // face and name are worked out here because "Auto" means a casting rule
+    // the settings window has no way to run for itself.
+    solo: {
+      character: soloCharacter(),
+      pet: petNameFor(SOLO_KEY),
+      color: identityFor(SOLO_KEY, 'clippy').color,
+      // Who it is speaking for at the moment, if anyone.
+      showing: buddies.get(SOLO_KEY)?.name || '',
+    },
     sessions: tracker.list().map((s) => ({
       sessionId: s.sessionId,
       name: s.name,
@@ -426,7 +498,7 @@ function settingsState() {
       status: s.status,
       // Who this session's buddy is right now — which is what "Auto" means in
       // the picker next to it.
-      character: buddies.get(s.sessionId)?.character || characterFor(settings, s.name, s.sessionId),
+      character: buddyOf(s.sessionId)?.character || characterFor(settings, s.name, s.sessionId),
     })),
   };
 }
@@ -443,6 +515,31 @@ function pushSettingsState() {
 // `drive:<id>`); every session that reports in gets its own little buddy so
 // several parallel agents never fight over one window.
 const buddies = new Map();
+
+/**
+ * One buddy for everything, when you'd rather not have a desk full of them.
+ *
+ * In 'one' mode every session shares a single window, and that window wears
+ * the face of whichever agent it is currently speaking for — its name, its
+ * colour, its character. The buddy's `sessionId` is therefore not fixed: it is
+ * whoever it is showing right now, which is what makes "approve", "go to
+ * terminal" and the token panel act on the agent you are looking at.
+ */
+const sharesSoloWindow = (key) => sharesWindow(settings.buddyMode, key);
+
+/** Which window shows this session: its own, or the shared one. */
+const windowKeyFor = (key) => soloWindowKey(settings.buddyMode, key);
+
+/**
+ * The buddy showing `key`.
+ *
+ * Falls back to the shared window so that every existing per-session lookup
+ * keeps working in 'one' mode without each of them having to know about it.
+ */
+function buddyOf(key) {
+  if (!key) return null;
+  return buddies.get(key) || (sharesSoloWindow(key) ? buddies.get(SOLO_KEY) || null : null);
+}
 
 /**
  * Bottom-right first, then leftwards, wrapping onto a row above. Windows are
@@ -509,6 +606,7 @@ function organizeBuddies(edge) {
     // From here the lineup spot outranks the corner, exactly like a hand move:
     // cards and menus grow around it instead of snapping back.
     buddy.dragged = true;
+    rehome(buddy); // a lineup is an explicit "stand here", not a resize
     const [ownW, ownH] = compactSize(buddy);
     // Park the compact footprint on the spot, then let placeBuddy re-grow any
     // open card around it — same as a card opening over a hand-placed buddy.
@@ -525,7 +623,12 @@ function organizeBuddies(edge) {
  */
 function setBuddyBounds(buddy, bounds) {
   buddy.win.setBounds(bounds);
-  buddy.lastPlaced = { x: bounds.x, y: bounds.y };
+  // Record where the window *landed*, not where it was sent. macOS nudges a
+  // window that would hang off a display, and comparing against the ask made
+  // the difference look like the user had dragged him — which then pinned him
+  // to a spot he never chose.
+  const [x, y] = buddy.win.getPosition();
+  buddy.lastPlaced = { x, y };
   sendSide(buddy);
 }
 
@@ -568,14 +671,16 @@ function sendSide(buddy) {
  * still move him, and only far enough to keep a wide panel on screen.
  */
 function draggedSpot(buddy, width, height, workArea) {
-  const clamp = (v, lo, hi) => Math.round(Math.max(lo, Math.min(hi, v)));
   const current = buddy.win.getBounds();
   const centre = current.x + current.width / 2;
   const bottom = current.y + current.height;
-  return {
-    x: clamp(centre - width / 2, workArea.x, workArea.x + workArea.width - width),
-    y: clamp(bottom - height, workArea.y, workArea.y + workArea.height - height),
-  };
+  // Clamped on the buddy, not the window: see keepBuddyOnScreen. Clamping the
+  // window here is what stopped him reaching the top of the screen.
+  return keepBuddyOnScreen(
+    { x: Math.round(centre - width / 2), y: Math.round(bottom - height), width, height },
+    workArea,
+    buddy
+  );
 }
 
 function nextFreeSlot() {
@@ -596,11 +701,19 @@ function nextFreeSlot() {
  * the same face across that change, and across a restart.
  */
 function buddyFor(key, name = '', agent = '', identityKey = key) {
-  const existing = buddies.get(key);
+  // In 'one' mode every session lands in the same window; `key` still says
+  // which session this is *about*, and wearIdentity below makes the window
+  // look like it.
+  const windowKey = windowKeyFor(key);
+  const existing = buddies.get(windowKey);
   if (existing) {
+    if (windowKey !== key) {
+      wearIdentity(existing, key, name, agent);
+      return existing;
+    }
     if (name && name !== existing.name) {
       existing.name = name;
-      existing.win.webContents.send('clippy-identity', { name });
+      post(existing, 'clippy-identity', { name });
     }
     if (agent && agent !== existing.agent) existing.agent = agent;
     return existing;
@@ -611,7 +724,7 @@ function buddyFor(key, name = '', agent = '', identityKey = key) {
   // against, and this window is created at that size.
   const [compactW, compactH] = compactSize({ name, sessionId: key });
   const { x, y } = homeBounds(slot, compactW, compactH);
-  const identity = identityFor(identityKey, name);
+  const identity = identityFor(sharesSoloWindow(key) ? SOLO_KEY : identityKey, name);
   const win = new BrowserWindow({
     width: compactW,
     height: compactH,
@@ -640,41 +753,46 @@ function buddyFor(key, name = '', agent = '', identityKey = key) {
       name: identity.name,
       color: identity.color,
       agent: agent || 'claude',
-      pet: petNameFor(identityKey),
+      // The shared window is named after itself, not after whichever session
+      // happened to open it — petNameOf says the same thing once it exists.
+      pet: petNameFor(sharesSoloWindow(key) ? SOLO_KEY : identityKey),
     },
   });
   // CLIPPY_SANDBOXTOOLS=1 npm start opens an inspector per buddy, detached so it
   // never fights the transparent always-on-top window for space — the fast
   // way to iterate on the cards/menu/bubble without a real Claude Code turn.
   if (process.env.CLIPPY_SANDBOXTOOLS) win.webContents.openDevTools({ mode: 'detach' });
-  win.webContents.on('did-finish-load', () => {
-    win.webContents.send('clippy-settings', settingsPayload(buddies.get(key)));
-    // Only offer "open the session's window" when we actually know where it is.
-    win.webContents.send('clippy-event', {
-      kind: 'can-open',
-      value: Boolean(tracker.terminalFor(key) || tmuxRecordFor(key)),
-    });
-    // A buddy whose session Clippy started wears a mark, so "mine" and "one I
-    // happened to notice" are not the same thing at a glance.
-    const owned = tmuxRecordFor(key);
-    if (owned) {
-      win.webContents.send('clippy-event', {
-        kind: 'ownership',
-        owned: true,
-        host: owned.host,
-        tmux: owned.name,
-      });
-    }
-    // Which way to face when there is nothing else to say.
-    const buddy = buddies.get(key);
-    if (buddy) {
-      buddy.side = null;
-      sendSide(buddy);
-    }
+
+  // Everything said to this window goes through here, so that saying it before
+  // the page is listening is not the same as not saying it. See src/outbox.js:
+  // a window is created and told about a held card in the same tick, and that
+  // card used to be dropped on the floor.
+  const outbox = createOutbox({
+    send: (channel, payload) => {
+      if (!win.isDestroyed()) win.webContents.send(channel, payload);
+    },
+    onDrop: (n) => console.warn(`clippy: dropped ${n} message(s) for a window that never loaded`),
   });
+
+  win.webContents.on('did-finish-load', () => {
+    const loaded = buddies.get(windowKey);
+    // The shared window is often re-dressed for another session before it has
+    // finished loading, and the query string it was opened with is then a
+    // session ago. Whoever it is wearing now is who it should look like.
+    if (loaded && loaded.sessionId !== key) sendIdentity(loaded);
+    // Which way to face when there is nothing else to say.
+    if (loaded) {
+      loaded.side = null;
+      sendSide(loaded);
+    }
+    outbox.open();
+  });
+  // A reload (a crash recovery, a devtools refresh) means the page that was
+  // listening is on its way out; hold anything said in between for the new one.
+  win.webContents.on('did-start-loading', () => outbox.close());
   win.on('closed', () => {
-    buddies.get(key)?.dock?.poll?.cancel();
-    buddies.delete(key);
+    buddies.get(windowKey)?.dock?.poll?.cancel();
+    buddies.delete(windowKey);
   });
   // Every reposition we do ourselves goes through placeBuddy, which records
   // exactly where it put the window. A `moved` that lands anywhere else is
@@ -682,19 +800,31 @@ function buddyFor(key, name = '', agent = '', identityKey = key) {
   // or the perch anchor, until you explicitly ask him to go somewhere (go to
   // terminal, unperch).
   win.on('moved', () => {
-    const b = buddies.get(key);
+    const b = buddies.get(windowKey);
     if (!b) return;
     const [x, y] = win.getPosition();
     const placed = b.lastPlaced;
     if (placed && x === placed.x && y === placed.y) return;
     b.dragged = true;
+    // Carried by hand: wherever he was put is where he now lives, so the
+    // anchor follows rather than pulling him back.
+    const dragged = anchorPointOf(b, { ...win.getBounds(), x, y });
+    if (dragged) b.anchorAt = dragged;
   });
 
   const buddy = {
     win,
+    out: outbox,
     slot,
     name: identity.name,
     sessionId: key,
+    // Bumped by every show/hide request. An async perch that resolves after
+    // something else has changed its mind checks this before putting a window
+    // on screen — see showBuddy.
+    visibilityTurn: 0,
+    // In 'one' mode, which session this window is currently wearing. Equal to
+    // sessionId for a window of its own, and moved by wearIdentity otherwise.
+    showing: key,
     identityKey,
     agent: agent || 'claude',
     pinned: false,
@@ -703,18 +833,151 @@ function buddyFor(key, name = '', agent = '', identityKey = key) {
     lastPlaced: { x, y }, // matches the constructor's own placement, above
     // Cast once, when this session first reports in, and only re-cast when you
     // give the project a buddy by hand.
-    character: characterFor(
-      settings,
-      identity.name,
-      key,
-      [...buddies.values()]
-        .filter((other) => other.name === identity.name)
-        .map((other) => other.character)
-    ),
+    // The shared buddy wears one face whoever it speaks for; a per-session
+    // buddy is cast against its siblings so two agents in one project differ.
+    character: sharesSoloWindow(key)
+      ? soloCharacter()
+      : characterFor(
+          settings,
+          identity.name,
+          key,
+          [...buddies.values()]
+            .filter((other) => other.name === identity.name)
+            .map((other) => other.character)
+        ),
   };
-  buddies.set(key, buddy);
+  buddies.set(windowKey, buddy);
+  // Said now rather than from the load handler, so that everything this window
+  // needs in order to look right is already ahead of the first card in the
+  // queue. Before the outbox these had to wait for did-finish-load, which is
+  // also why a card sent in this same tick had nothing to arrive behind.
+  primeWindow(buddy, key);
   pushSettingsState();
   return buddy;
+}
+
+/**
+ * What a brand-new window needs to know before anything happens in it: how it
+ * looks, whether there is somewhere to send the user, and whose session it is.
+ */
+function primeWindow(buddy, key) {
+  post(buddy, 'clippy-settings', settingsPayload(buddy));
+  sendCanOpen(buddy, key);
+  // A buddy whose session Clippy started wears a mark, so "mine" and "one I
+  // happened to notice" are not the same thing at a glance.
+  const owned = tmuxRecordFor(key);
+  if (owned) {
+    send(buddy, { kind: 'ownership', owned: true, host: owned.host, tmux: owned.name });
+  }
+}
+
+/**
+ * Tell a window whether there is anywhere to send the user, and what to call
+ * it. "go to terminal" is the wrong noun for a session in the ChatGPT app or
+ * one in a tmux pane, and the button is the one thing on a card that moves you
+ * somewhere — so the label travels with the fact rather than being guessed in
+ * the renderer.
+ */
+function sendCanOpen(buddy, key) {
+  const source = sourceFor(key);
+  send(buddy, {
+    kind: 'can-open',
+    // Named so a card already on screen can tell whether this is about *it*:
+    // resolving the owning app takes a moment, so the first card of a session
+    // is often built before we know what to call the place it came from.
+    sessionId: key,
+    value: Boolean(tracker.terminalFor(key) || tmuxRecordFor(key)),
+    source: { kind: source.kind, name: source.name, goLabel: source.goLabel },
+  });
+}
+
+/**
+ * Where this session lives, in words. Resolving the owning app means a walk up
+ * the process table, so the answer is kept on the session's terminal record —
+ * it cannot change without the terminal record changing too.
+ */
+function sourceFor(key) {
+  const term = tracker.terminalFor(key);
+  return describeSource({
+    program: term?.program || '',
+    app: term?.app || null,
+    tmux: tmuxRecordFor(key),
+  });
+}
+
+/**
+ * Make the shared window wear one session's face.
+ *
+ * Only in 'one' mode, and only when the session actually changes — the two
+ * pushes below re-cast the artwork and re-letter the name plate, which is not
+ * something to do on every tool event. Identity goes first because the clip
+ * sprites are drawn per session colour, so the character has to be applied
+ * against the colour it is about to wear.
+ */
+function wearIdentity(buddy, sessionId, name = '', agent = '') {
+  if (buddy.showing === sessionId) return buddy;
+  buddy.showing = sessionId;
+  // What "this buddy" means for approve, go-to-terminal and the token panel:
+  // the agent it is speaking for right now.
+  buddy.sessionId = sessionId;
+  const label = name || tracker.cwdFor(sessionId).split('/').pop() || buddy.name;
+  buddy.name = label;
+  if (agent) buddy.agent = agent;
+  // The manager keeps its own face. One buddy you learn the look of beats a
+  // paperclip that turns into a fox mid-sentence; which agent it is speaking
+  // for is said by the name plate and by the card, in words.
+  buddy.character = soloCharacter();
+
+  // A window that hasn't finished loading drops anything sent to it, and the
+  // shared one is routinely re-dressed in the same tick it was created. The
+  // did-finish-load handler replays this, so skipping here is not skipping.
+  if (!buddy.win.isDestroyed() && !buddy.win.webContents.isLoading()) sendIdentity(buddy);
+
+  // A session arriving in 'one' mode makes no new window, so the settings
+  // window would otherwise never hear about it: every other push happens on
+  // the creation path this deliberately skips.
+  pushSettingsState();
+  return buddy;
+}
+
+/** Tell a window which session it is wearing: name, colour, pet, and artwork. */
+function sendIdentity(buddy) {
+  const solo = buddies.get(SOLO_KEY) === buddy;
+  // The shared buddy is one character with one name and one colour, whoever it
+  // happens to be speaking for; a per-session buddy *is* its session.
+  const identityKey = solo ? SOLO_KEY : buddy.sessionId;
+  const identity = identityFor(identityKey, buddy.name);
+  post(buddy, 'clippy-identity', {
+    // The plate's big line is who you are talking to; underneath it, `name` is
+    // the project it is telling you about.
+    name: buddy.name,
+    color: solo ? identityFor(SOLO_KEY, 'clippy').color : identity.color,
+    agent: buddy.agent,
+    pet: petNameOf(buddy),
+  });
+  // Colour first, then artwork: the clips are drawn per session colour.
+  post(buddy, 'clippy-settings', settingsPayload(buddy));
+}
+
+/**
+ * The buddy's own name.
+ *
+ * The shared buddy is one animal with one name whoever it is speaking for, so
+ * it is named after the shared window rather than after the session it happens
+ * to be wearing. Everything that shows a pet name has to agree, or the plate
+ * and the chat end up introducing two different creatures.
+ */
+function petNameOf(buddy) {
+  if (!buddy) return '';
+  if (buddies.get(SOLO_KEY) === buddy) return petNameFor(SOLO_KEY);
+  return petNameFor(buddy.identityKey || buddy.sessionId);
+}
+
+/** The face the shared buddy wears: the one you chose, or Clippy's own pick. */
+function soloCharacter() {
+  const chosen = settings.soloCharacter;
+  if (chosen && characterIds().includes(chosen)) return chosen;
+  return characterFor(settings, 'clippy', SOLO_KEY);
 }
 
 /** Which buddy does this renderer belong to? */
@@ -723,20 +986,47 @@ function buddyForSender(sender) {
   return [...buddies.values()].find((b) => b.win === win) || null;
 }
 
-/** Send an event to one session's Clippy, creating its window if needed. */
+/**
+ * Send an event to one session's Clippy, creating its window if needed.
+ *
+ * Every event carries where it came from. That matters most in 'one' mode,
+ * where a single window shows cards from several agents: the card has to say
+ * whose it is, and the button on it has to name the app *that* session lives
+ * in rather than whichever one the window happened to hear about last.
+ */
 function sendTo(sessionId, event) {
   if (!sessionId) return null;
   const buddy = buddyFor(sessionId, event?.name, event?.agent);
-  buddy.win.webContents.send('clippy-event', event);
+  const source = sourceFor(sessionId);
+  send(buddy, {
+    ...event,
+    sessionId,
+    source: { kind: source.kind, name: source.name, goLabel: source.goLabel },
+  });
   return buddy;
 }
 
 function closeBuddy(key) {
-  const buddy = buddies.get(key);
+  const buddy = buddyOf(key);
   if (!buddy) return;
-  buddy.dock?.poll?.cancel();
   unwatchSpawned(key);
-  buddies.delete(key);
+
+  // The shared window belongs to every session, so one of them ending is not
+  // a reason to take it away — it stays for the others and simply stops
+  // wearing this one's face. It only goes when the last session does.
+  if (buddies.get(SOLO_KEY) === buddy) {
+    const survivor = successorFor(tracker.list(), key);
+    if (survivor) {
+      if (buddy.showing === key) wearIdentity(buddy, survivor.sessionId, survivor.name, survivor.agent);
+      pushSettingsState();
+      return;
+    }
+    buddies.delete(SOLO_KEY);
+  } else {
+    buddies.delete(key);
+  }
+
+  buddy.dock?.poll?.cancel();
   if (!buddy.win.isDestroyed()) buddy.win.destroy();
   pushSettingsState();
 }
@@ -747,20 +1037,14 @@ function closeBuddy(key) {
  * hide-again rules leave it alone until they hide it themselves.
  */
 function showBuddy(key, { pin = false, mode = 'full' } = {}) {
-  const buddy = buddies.get(key);
+  const buddy = buddyOf(key);
   if (!buddy || buddy.win.isDestroyed()) return;
+  const turn = ++buddy.visibilityTurn;
   if (pin) buddy.pinned = true;
   if (!buddy.win.isVisible() && settings.appearanceSound) {
-    const play = () => {
-      if (!buddy.win.isDestroyed()) {
-        buddy.win.webContents.send('clippy-event', {
-          kind: 'appearance',
-          sound: settings.appearanceSound,
-        });
-      }
-    };
-    if (buddy.win.webContents.isLoading()) buddy.win.webContents.once('did-finish-load', play);
-    else play();
+    // The outbox holds this until the page can hear it, so a window that has
+    // only just been created still gets its entrance rather than a silent one.
+    send(buddy, { kind: 'appearance', sound: settings.appearanceSound });
   }
 
   // Perched or not, Clippy is a small paperclip until there's a card or a
@@ -776,7 +1060,12 @@ function showBuddy(key, { pin = false, mode = 'full' } = {}) {
   // move instead of popping up first and jumping afterwards; if we can't find
   // the window (old hooks, no permission), fall back to the corner.
   perchOn(key, { auto: true, mode }).then((perched) => {
-    if (perched || buddy.win.isDestroyed()) return;
+    // Measuring a window takes long enough for the answer to arrive after
+    // someone changed their mind — the user hid this buddy, the card was
+    // answered in the terminal, the session ended. Showing it now would be a
+    // window appearing for a reason that has already passed, which is exactly
+    // the "it pops up out of nowhere" complaint.
+    if (perched || buddy.win.isDestroyed() || buddy.visibilityTurn !== turn) return;
     placeBuddy(buddy, mode);
     buddy.win.showInactive();
   });
@@ -784,8 +1073,10 @@ function showBuddy(key, { pin = false, mode = 'full' } = {}) {
 
 /** Slip back out of sight once the moment has passed. */
 function hideBuddy(key, { unpin = false } = {}) {
-  const buddy = buddies.get(key);
+  const buddy = buddyOf(key);
   if (!buddy || buddy.win.isDestroyed()) return;
+  // Whatever a perch measurement in flight was going to do, this outranks it.
+  buddy.visibilityTurn++;
   if (unpin) {
     buddy.pinned = false;
     undock(buddy);
@@ -820,10 +1111,19 @@ function hideBuddy(key, { unpin = false } = {}) {
 function placeBuddy(buddy, mode, wantHeight, wantWidth) {
   if (buddy.win.isDestroyed()) return;
   // Mid-stroll the walk owns the window's position; whoever wants it back
-  // calls stopWalking first.
-  if (buddy.walk) return;
+  // calls stopWalking first. Remember what was asked for, though — a card
+  // arriving mid-walk still needs its room, and stopWalking replays this.
+  if (buddy.walk) {
+    buddy.walk.missedPlacement = { mode, wantHeight, wantWidth };
+    return;
+  }
   buddy.mode = mode;
-  if (Number.isFinite(wantHeight) && wantHeight > 0) buddy.wantHeight = wantHeight;
+  // The two modes have their own measured heights: a full window is as tall as
+  // its card, a compact one as tall as the buddy and his name plate.
+  if (Number.isFinite(wantHeight) && wantHeight > 0) {
+    if (mode === 'compact') buddy.compactHeight = wantHeight;
+    else buddy.wantHeight = wantHeight;
+  }
   // Unlike the height, an explicit 0 resets the width: the wide window belongs
   // to the plan card and goes away with it.
   if (Number.isFinite(wantWidth)) buddy.wantWidth = wantWidth > 0 ? wantWidth : 0;
@@ -838,7 +1138,9 @@ function placeBuddy(buddy, mode, wantHeight, wantWidth) {
         Math.min(Math.max(WIN_W, buddy.wantWidth || WIN_W), workArea.width - WIN_GAP * 2)
       );
   const height = compact
-    ? compactH
+    ? // Hug what the renderer actually drew, but never grow past the box the
+      // size setting allows — the constant stays the ceiling, not the floor.
+      Math.round(Math.min(compactH, buddy.compactHeight || compactH))
     : Math.round(
         // A full window is never smaller than the bare buddy needs.
         Math.max(compactH, Math.min(buddy.wantHeight || WIN_H, workArea.height - WIN_GAP * 2))
@@ -855,12 +1157,133 @@ function placeBuddy(buddy, mode, wantHeight, wantWidth) {
       )
     : homeBounds(buddy.slot, width, height);
 
-  setBuddyBounds(buddy, { ...spot, width, height });
-  buddy.win.webContents.send('clippy-event', {
-    kind: 'dock',
-    docked: Boolean(buddy.dock),
-    compact,
-  });
+  setBuddyBounds(buddy, holdTheBuddyStill(buddy, { ...spot, width, height }, workArea));
+  send(buddy, { kind: 'dock', docked: Boolean(buddy.dock), compact });
+}
+
+/**
+ * Grow the window around the buddy, instead of taking him with it.
+ *
+ * The window is much wider with a panel open than without one — 342px against
+ * 190 — and it used to be anchored by an edge, so opening anything slid the
+ * buddy 76px sideways. He jumped out from under the pointer that had just
+ * clicked him, hover and leave fired in the wake of it, and the whole thing
+ * read as the app twitching rather than answering.
+ *
+ * So the fixed point is *him*, not a corner of the window: the renderer says
+ * where he stands inside the layout it just measured (`anchorIn`), and
+ * whatever the placement rules picked is shifted so that point lands where he
+ * already was. The window may end up further left, right, up or down; he does
+ * not move at all.
+ *
+ * The first placement has nothing to hold still — that is when his spot is
+ * decided — and an explicit move (a drag, a perch, "organize") is a request
+ * to put him somewhere else, so both re-anchor rather than resist.
+ */
+/**
+ * Where the buddy's middle sits inside a window of this size.
+ *
+ * The renderer reports offsets rather than a point (see buddyAnchor in
+ * clippy.js) — an offset from the centre, and a height above the foot of the
+ * content — because at the moment it measures, the resize it is asking for
+ * has not happened. Resolving them here, against the size actually chosen, is
+ * the whole trick. One function so the two callers cannot drift apart, which
+ * they promptly did the first time this was written twice.
+ */
+function anchorInside(buddy, size) {
+  if (!buddy?.anchorIn) return null;
+  return {
+    x: size.width / 2 + buddy.anchorIn.dx,
+    y: size.height - buddy.anchorIn.fromBottom,
+  };
+}
+
+/**
+ * Keep the *buddy* inside the work area — not the window he stands in.
+ *
+ * The window is much taller than he is, and because the stage is bottom-aligned
+ * that slack sits above his head: invisible, but it is what a clamp on the
+ * window's top edge actually stops. So dragging him upwards halted with his
+ * head some way below the menu bar, by a margin that changed with his size and
+ * with whatever the renderer last measured — which is why it read as
+ * "sometimes I can move him higher".
+ *
+ * Clamping on his own box lets the window hang above the work area while he
+ * himself stays on screen, which is the thing anybody actually cares about.
+ * Falls back to clamping the window when we have not been told his size yet.
+ */
+function keepBuddyOnScreen(bounds, workArea, buddy) {
+  const clamp = (v, lo, hi) => Math.round(Math.max(lo, Math.min(hi, v)));
+  const inside = anchorInside(buddy, bounds);
+
+  /**
+   * Where this edge may sit, on one axis.
+   *
+   * The window comes first: it holds the card, and half a card off the side of
+   * the display is unreadable. Clamping on the *buddy* instead — which is what
+   * this did at first, so he could be carried right up to the menu bar — let a
+   * 542px window sit 223px off the left edge with most of the panel outside the
+   * screen. He is 96px wide and the window around him five times that.
+   *
+   * He still reaches the top: the dead space that used to sit above his head (a
+   * hidden button row, and slack meant for a panel's shadow) is gone, so the
+   * window's own top edge is now a pixel above him and clamping the window puts
+   * him against the menu bar anyway.
+   *
+   * Only when the window cannot fit at all does the buddy set the limit — then
+   * something must hang off, and he is the part worth keeping, because he is
+   * how you reach any of it.
+   */
+  const fit = (pos, size, start, span, centre, half) => {
+    const lo = start;
+    const hi = start + span - size;
+    if (lo <= hi) return clamp(pos, lo, hi);
+    if (!Number.isFinite(centre) || !half) return Math.round(lo);
+    return clamp(pos, start - (centre - half), start + span - (centre + half));
+  };
+
+  return {
+    ...bounds,
+    x: fit(bounds.x, bounds.width, workArea.x, workArea.width, inside?.x, buddy.anchorIn?.halfW),
+    y: fit(bounds.y, bounds.height, workArea.y, workArea.height, inside?.y, buddy.anchorIn?.halfH),
+  };
+}
+
+/** Where he is standing on screen, for a window at these bounds. */
+function anchorPointOf(buddy, bounds) {
+  const inside = anchorInside(buddy, bounds);
+  return inside ? { x: Math.round(bounds.x + inside.x), y: Math.round(bounds.y + inside.y) } : null;
+}
+
+function holdTheBuddyStill(buddy, bounds, workArea) {
+  const inWindow = anchorInside(buddy, bounds);
+  if (!inWindow) return bounds;
+  const where = (b) => anchorPointOf(buddy, { ...b, width: bounds.width, height: bounds.height });
+  if (!buddy.anchorAt || buddy.rehome) {
+    buddy.rehome = false;
+    buddy.anchorAt = where(bounds);
+    return bounds;
+  }
+
+  const shifted = keepBuddyOnScreen(
+    {
+      ...bounds,
+      x: Math.round(buddy.anchorAt.x - inWindow.x),
+      y: Math.round(buddy.anchorAt.y - inWindow.y),
+    },
+    workArea,
+    buddy
+  );
+  // Clamping at a screen edge means he could not stay exactly where he was;
+  // remember where he actually ended up, or every later resize would keep
+  // trying to drag him back off the display.
+  buddy.anchorAt = where(shifted);
+  return shifted;
+}
+
+/** The next placement decides his spot afresh, rather than preserving it. */
+function rehome(buddy) {
+  if (buddy) buddy.rehome = true;
 }
 
 /* ---------------- Perching on a session's terminal window ---------------- */
@@ -876,7 +1299,7 @@ function placeBuddy(buddy, mode, wantHeight, wantWidth) {
  * @returns {Promise<boolean>} did we manage to perch?
  */
 async function perchOn(key, { raise = false, auto = false, mode = null } = {}) {
-  const buddy = buddies.get(key);
+  const buddy = buddyOf(key);
   if (!buddy || buddy.win.isDestroyed()) return false;
 
   // A detached tmux pane has no window to sit on. Said out loud only when the
@@ -894,7 +1317,7 @@ async function perchOn(key, { raise = false, auto = false, mode = null } = {}) {
       buddy.dock.auto = false; // now it's a perch you asked for
       buddy.pinned = true;
       buddy.dragged = false; // "go to terminal" means go back to the perch
-      const bounds = await revealTarget(buddy, key);
+      const { bounds } = await revealTarget(buddy, key);
       if (bounds) {
         buddy.dock.bounds = bounds;
         placeBuddy(buddy, buddy.mode || 'compact');
@@ -927,7 +1350,7 @@ async function perchOn(key, { raise = false, auto = false, mode = null } = {}) {
   }
 
   try {
-    const bounds = raise ? await revealTarget(buddy, key) : await measureTarget(buddy, key);
+    const { bounds } = raise ? await revealTarget(buddy, key) : await measureTarget(buddy, key);
     if (!bounds) {
       if (!auto) {
         // The app is running but shows no windows at all — either it really has
@@ -949,6 +1372,7 @@ async function perchOn(key, { raise = false, auto = false, mode = null } = {}) {
 
     const dock = { target: buddy.target, bounds, misses: 0, lastError: '', auto, poll: null };
     buddy.dock = dock;
+    rehome(buddy); // the perch decides where he sits, not where he was
     if (!auto) buddy.pinned = true; // asked for by hand -> stays until dismissed
     if (raise) buddy.dragged = false; // asked to go to the terminal -> that's where he goes
     // A held card needs the full window; a quiet perch is just the paperclip.
@@ -995,7 +1419,7 @@ async function perchOn(key, { raise = false, auto = false, mode = null } = {}) {
  * because riding along is what a perch is.
  */
 async function raiseTerminal(key) {
-  const buddy = buddies.get(key);
+  const buddy = buddyOf(key);
   if (!buddy || buddy.win.isDestroyed()) return false;
 
   // A session Clippy started has no window of its own — it has a tmux session,
@@ -1019,11 +1443,15 @@ async function raiseTerminal(key) {
   }
 
   try {
-    const bounds = await revealTarget(buddy, key);
+    const { bounds, activated } = await revealTarget(buddy, key);
     if (!bounds) {
-      tellBuddy(key, "I couldn't find that session's window — is the terminal still open?", {
-        sticky: true,
-      });
+      // The app came forward but we could not pick its window: that needs
+      // Accessibility, and an agent app like ChatGPT or Claude is one most
+      // people have never granted it to. It is in front of them now, so saying
+      // "I couldn't find it" would contradict what they can see.
+      if (activated) return true;
+      const where = sourceFor(key);
+      tellBuddy(key, `I couldn't find ${where.label} — is it still open?`, { sticky: true });
       return false;
     }
     // A perched buddy follows his window, so tell the perch where it ended up
@@ -1071,7 +1499,7 @@ const TYPE_SETTLE_MS = 450;
  * Clippy message.
  */
 async function sendPromptToTerminal(key, text) {
-  const buddy = buddies.get(key);
+  const buddy = buddyOf(key);
   const prompt = String(text || '').trim();
   if (!buddy || !prompt) return false;
 
@@ -1085,9 +1513,12 @@ async function sendPromptToTerminal(key, text) {
     return false;
   }
   try {
-    const bounds = await revealTarget(buddy, key);
+    // Typing needs the *window*, not just the app: keystrokes go wherever
+    // focus actually landed, so an app we could only bring forward is not
+    // good enough here — unlike "go to", which is done the moment it is up.
+    const { bounds } = await revealTarget(buddy, key);
     if (!bounds) {
-      tellBuddy(key, "I couldn't find that session's window to type into — is the terminal still open?", {
+      tellBuddy(key, `I couldn't find ${sourceFor(key).label} to type into — is it still open?`, {
         sticky: true,
       });
       return false;
@@ -1209,7 +1640,7 @@ function isRunning(pid) {
 
 /** Keep up with a window that the user moved, resized, or closed. */
 async function followWindow(key, expectedDock = null) {
-  const buddy = buddies.get(key);
+  const buddy = buddyOf(key);
   if (
     !buddy ||
     !buddy.dock ||
@@ -1245,6 +1676,7 @@ async function followWindow(key, expectedDock = null) {
     return;
   }
   buddy.dock.misses = 0;
+  rehome(buddy); // riding a window means going where it goes
   const same =
     bounds.x === buddy.dock.bounds.x &&
     bounds.y === buddy.dock.bounds.y &&
@@ -1259,6 +1691,7 @@ async function followWindow(key, expectedDock = null) {
 /** Back to a free-floating Clippy in its own corner of the screen. */
 function undock(buddy) {
   if (!buddy?.dock) return;
+  rehome(buddy); // letting go sends him back to his own corner
   stopWalking(buddy);
   buddy.dock.poll?.cancel();
   buddy.dock = null;
@@ -1279,11 +1712,12 @@ function undock(buddy) {
 async function revealTarget(buddy, key, { measureOnly = false } = {}) {
   const hint = path.basename(tracker.cwdFor(key) || '') || buddy.name;
   let lastError = null;
+  let activated = false;
 
   for (const fresh of [false, true]) {
     if (fresh) buddy.target = null;
     const term = tracker.terminalFor(key);
-    if (!term) return null;
+    if (!term) return { bounds: null, activated };
 
     try {
       // The project name goes along for the ride: an editor with several
@@ -1291,17 +1725,21 @@ async function revealTarget(buddy, key, { measureOnly = false } = {}) {
       // pick the right one instead of guessing.
       buddy.target ||= await resolveTarget(term, hint);
       if (!buddy.target) continue;
-      const bounds = measureOnly
-        ? await windowBounds(buddy.target)
-        : await revealWindow(buddy.target);
-      if (bounds) return bounds;
+      if (measureOnly) {
+        const bounds = await windowBounds(buddy.target);
+        if (bounds) return { bounds, activated };
+      } else {
+        const shown = await revealWindow(buddy.target);
+        activated = activated || shown.activated;
+        if (shown.bounds) return { bounds: shown.bounds, activated };
+      }
     } catch (err) {
       lastError = err;
     }
   }
 
   if (lastError) throw lastError;
-  return null;
+  return { bounds: null, activated };
 }
 
 const measureTarget = (buddy, key) => revealTarget(buddy, key, { measureOnly: true });
@@ -1319,7 +1757,7 @@ const measureTarget = (buddy, key) => revealTarget(buddy, key, { measureOnly: tr
  * stopWalking and takes over.
  */
 function pointAtPrompt(key) {
-  const buddy = buddies.get(key);
+  const buddy = buddyOf(key);
   if (!buddy || buddy.win.isDestroyed() || !buddy.dock || !buddy.win.isVisible()) return;
   if (buddy.mode !== 'compact') return; // a card is up; that's the louder hint
   stopWalking(buddy);
@@ -1379,10 +1817,16 @@ function stopWalking(buddy) {
   if (!buddy?.walk) return;
   clearInterval(buddy.walk.timer);
   clearTimeout(buddy.walk.hold);
+  const missed = buddy.walk.missedPlacement;
   buddy.walk = null;
   // No heading: the stroll is over, so he stands the way his art is drawn.
   send(buddy, { kind: 'walk', facing: null });
   send(buddy, { kind: 'point', on: false });
+  // A card that arrived mid-stroll asked for a window size it never got: the
+  // walk owns the geometry while it runs, so placeBuddy could only decline.
+  // Declining used to be the end of it, which left the buddy standing at the
+  // old size with a card drawn outside its own window.
+  if (missed) placeBuddy(buddy, missed.mode, missed.wantHeight, missed.wantWidth);
 }
 
 /**
@@ -1394,9 +1838,22 @@ function hintAtTerminal(key) {
   setTimeout(() => pointAtPrompt(key), 400);
 }
 
+/**
+ * Say something to a buddy's window on any channel.
+ *
+ * Everything main says to a renderer goes through here. The outbox holds
+ * anything said before the page is listening and delivers it the moment it is
+ * — which is the normal path, not an edge case, since a window is routinely
+ * created and told about a card in the same tick.
+ */
+function post(buddy, channel, payload) {
+  if (!buddy || buddy.win.isDestroyed()) return;
+  buddy.out.post(channel, payload);
+}
+
 /** Send straight to a buddy we already have in hand. */
 function send(buddy, event) {
-  if (buddy && !buddy.win.isDestroyed()) buddy.win.webContents.send('clippy-event', event);
+  post(buddy, 'clippy-event', event);
 }
 
 /**
@@ -1408,10 +1865,10 @@ function send(buddy, event) {
  * about it, so they now sit there until dismissed.
  */
 function tellBuddy(key, message, { sticky = false, fix = null } = {}) {
-  const buddy = buddies.get(key);
+  const buddy = buddyOf(key);
   if (!buddy || buddy.win.isDestroyed()) return;
   placeBuddy(buddy, 'full');
-  buddy.win.webContents.send('clippy-event', { kind: 'info', message, sticky, fix });
+  send(buddy, { kind: 'info', message, sticky, fix });
   buddy.win.showInactive();
 }
 
@@ -1545,25 +2002,29 @@ function watchSpawned(record) {
     onTurns: (turns, meta) => {
       const said = lastSaid(turns);
       if (said) record.lastSay = said;
+      const directReply = Boolean(
+        record.awaitingReply && (turns || []).some((turn) => turn.role === 'assistant' && turn.text)
+      );
+      if (directReply) {
+        record.awaitingReply = false;
+        record.lastDirectReplyAt = Date.now();
+      }
       // Kept because a remote transcript cannot be re-read from here: for an
       // SSH session this is the only copy of what it has been saying.
       record.recentTurns = [...(record.recentTurns || []), ...turns].slice(-FEED_TURNS);
-      const buddy = buddies.get(buddyKeyFor(record));
-      if (!buddy || buddy.win.isDestroyed()) return;
-      buddy.win.webContents.send('clippy-event', {
+      send(buddyOf(buddyKeyFor(record)), {
         kind: 'transcript',
         turns,
         // A first read is the backlog, not news — the buddy files it away
         // rather than announcing it.
         cold: Boolean(meta && meta.cold),
+        directReply,
         source: record.host ? `via ${record.host}` : `tmux · ${record.name}`,
       });
     },
     onStatus: (status) => {
-      const buddy = buddies.get(buddyKeyFor(record));
-      if (!buddy || buddy.win.isDestroyed()) return;
       // Quietly: a flaky connection must not make a paperclip bounce.
-      buddy.win.webContents.send('clippy-event', {
+      send(buddyOf(buddyKeyFor(record)), {
         kind: 'transcript-status',
         state: status.state,
         host: record.host,
@@ -1651,12 +2112,56 @@ function unadoptBuddy(sessionId) {
   return true;
 }
 
-/** Type into a spawned session's pane. No window, no keystrokes, no permission. */
-async function sendToSpawned(buddy, record, prompt) {
+const CHAT_SEND_READY_ATTEMPTS = 1200; // two minutes at the startup helper's 100ms interval
+
+/** Deliver one queued prompt once the owned pane is genuinely ready for it. */
+async function deliverToSpawned(buddy, record, prompt) {
   try {
     const bin = await tmux.findTmux();
-    await tmux.sendPrompt(bin, record.paneId || `=${record.name}`, prompt);
+    const target = record.paneId || `=${record.name}`;
+    const isChat =
+      !record.host && canonicalPath(record.cwd) === canonicalPath(chatWorkspace(os.homedir()));
+
+    // A restored chat from an older Clippy may still be parked at Claude's
+    // trust screen. This folder is ours, so finish preparing it before typing.
+    // The same wait is the chat queue: while an answer is still being written,
+    // do not paste into a TUI that will ignore Return and strand the text.
+    if (isChat) {
+      tellBuddy(buddy.sessionId, `Queued for ${tmux.SPAWNABLE[record.agent].label} — waiting for its prompt…`);
+      const prepared = await prepareAgentWorkspace({
+        capture: () => tmux.capturePane(bin, target, { lines: 40 }),
+        confirmTrust: () => tmux.pressEnter(bin, target),
+        continueWithoutHooks: () => tmux.pressKeys(bin, target, 'Down', 'Down', 'Enter'),
+        dismissSurvey: () => tmux.pressKeys(bin, target, '0'),
+        attempts: CHAT_SEND_READY_ATTEMPTS,
+      });
+      if (!prepared.ready) {
+        tellBuddy(
+          buddy.sessionId,
+          `${tmux.SPAWNABLE[record.agent].label} never returned to its prompt, so I did not send that message. ` +
+            'Attach a terminal from my menu to see what it needs.',
+          { sticky: true }
+        );
+        return false;
+      }
+    } else if (
+      ['trust', 'hooks'].includes(
+        paneStartupState(await tmux.capturePane(bin, target, { lines: 40 }))
+      )
+    ) {
+      tellBuddy(
+        buddy.sessionId,
+        `${tmux.SPAWNABLE[record.agent].label} needs you to trust this project before I can send that. ` +
+          'Attach a terminal from my menu to choose.',
+        { sticky: true }
+      );
+      return false;
+    }
+
+    await tmux.sendPrompt(bin, target, prompt, { clearFirst: isChat });
+    record.awaitingReply = true;
     pokeWatch(buddy.sessionId);
+    tellBuddy(buddy.sessionId, `Sent to ${tmux.SPAWNABLE[record.agent].label} — waiting for a reply…`);
     return true;
   } catch (err) {
     console.warn('clippy: could not send to tmux:', err.message);
@@ -1665,6 +2170,20 @@ async function sendToSpawned(buddy, record, prompt) {
     });
     return false;
   }
+}
+
+/**
+ * Type into a spawned session's pane. Chat prompts serialize per pane, so two
+ * quick sends cannot paste over each other or land while the agent is busy.
+ */
+function sendToSpawned(buddy, record, prompt) {
+  const previous = record.sendQueue || Promise.resolve();
+  const sending = previous.catch(() => false).then(() => deliverToSpawned(buddy, record, prompt));
+  record.sendQueue = sending;
+  sending.finally(() => {
+    if (record.sendQueue === sending) delete record.sendQueue;
+  });
+  return sending;
 }
 
 /**
@@ -1707,7 +2226,6 @@ async function attachSpawned(buddy, record) {
 // Claude Code asks whether you trust a folder the first time it runs in one,
 // and that prompt swallows whatever is typed at it — so a first prompt sent
 // from the buddy would vanish without explanation.
-const TRUST_PROMPT = /trust the files in this folder|yes, i trust this folder/i;
 // Long enough for the TUI to have drawn something, short enough to still be
 // ahead of the user typing their first prompt.
 const TRUST_CHECK_MS = 6000;
@@ -1733,9 +2251,10 @@ async function warnIfAwaitingTrust(bin, record, label) {
 /**
  * The window for starting an agent somewhere.
  *
- * The tray handles the common case — an agent in a folder — with a native
- * picker. This exists for the case a menu cannot express: an SSH target needs a
- * host *and* a path typed in, and Electron has no text-input dialog.
+ * The tray handles the one-click chat case and project folders directly. This
+ * window presents those choices together and covers the case a menu cannot
+ * express: an SSH target needs a host *and* a path typed in, and Electron has
+ * no text-input dialog.
  */
 function openNewAgentWindow() {
   if (newAgentWin && !newAgentWin.isDestroyed()) {
@@ -1782,7 +2301,14 @@ function offerTmuxInstall() {
 }
 
 /** Start an agent in a folder (or on another machine) and give it a buddy. */
-async function spawnAgent({ path: rawCwd = '', host = '', remotePath = '', agent } = {}) {
+async function spawnAgent({
+  path: rawCwd = '',
+  host = '',
+  remotePath = '',
+  agent,
+  remember = true,
+  autoTrust = false,
+} = {}) {
   const kind = tmux.SPAWNABLE[agent] ? agent : settings.defaultAgent;
   // The agent will record its *resolved* working directory, and Claude Code
   // derives its transcript directory from that — so a path through a symlink
@@ -1830,6 +2356,14 @@ async function spawnAgent({ path: rawCwd = '', host = '', remotePath = '', agent
   try {
     pane = await tmux.newSession(bin, { name, cwd: host ? os.homedir() : cwd, command });
     if (!pane) throw new Error('tmux did not report a pane');
+    if (autoTrust) {
+      await prepareAgentWorkspace({
+        capture: () => tmux.capturePane(bin, pane.paneId, { lines: 40 }),
+        confirmTrust: () => tmux.pressEnter(bin, pane.paneId),
+        continueWithoutHooks: () => tmux.pressKeys(bin, pane.paneId, 'Down', 'Down', 'Enter'),
+        dismissSurvey: () => tmux.pressKeys(bin, pane.paneId, '0'),
+      });
+    }
   } catch (err) {
     await tmux.killSession(bin, name).catch(() => {});
     dialog.showMessageBox({
@@ -1852,7 +2386,7 @@ async function spawnAgent({ path: rawCwd = '', host = '', remotePath = '', agent
     panePid: pane.panePid,
     createdAt: Date.now(),
   });
-  rememberRecentProject({ path: cwd, host, remotePath, agent: kind });
+  if (remember) rememberRecentProject({ path: cwd, host, remotePath, agent: kind });
   saveSpawned();
 
   const buddy = buddyFor(buddyKeyFor(record), label, kind, record.name);
@@ -1866,6 +2400,24 @@ async function spawnAgent({ path: rawCwd = '', host = '', remotePath = '', agent
   warnIfAwaitingTrust(bin, record, label).catch(() => {});
   updateTray();
   return record;
+}
+
+/** Start a subscription-backed agent in Clippy's private, persistent chat folder. */
+async function spawnChat(agent) {
+  let cwd;
+  try {
+    cwd = ensureChatWorkspace(os.homedir());
+  } catch (err) {
+    dialog.showMessageBox({
+      type: 'warning',
+      message: 'Could not create the Clippy chat folder',
+      detail: err.message,
+      buttons: ['OK'],
+    });
+    return null;
+  }
+  // A conversation is not a project, so do not crowd the recent-project list.
+  return spawnAgent({ path: cwd, agent, remember: false, autoTrust: true });
 }
 
 /**
@@ -1900,6 +2452,81 @@ async function restoreSpawned() {
   }
   saveSpawned();
   updateTray();
+}
+
+/**
+ * This buddy's pet model, made on demand.
+ *
+ * Shared by the chat and by routing — routing used to require that you had
+ * already talked to the pet at least once, which made "just tell Clippy" work
+ * only for people who had happened to say hello first.
+ */
+function chatFor(buddy) {
+  if (!buddy.chat) {
+    buddy.chat = new PetChat({
+      // Read fresh every turn: the model and the status move under the pet
+      // while you're talking to it.
+      context: () => ({
+        pet: petNameOf(buddy),
+        character: allCharacters().find((c) => c.id === buddy.character)?.label || 'desk buddy',
+        project: buddy.name,
+        cwd: tracker.cwdFor(buddy.sessionId),
+        agent: agentDisplayName(buddy.agent),
+        model: tracker.modelFor(buddy.sessionId),
+        status: tracker.statusFor(buddy.sessionId),
+      }),
+    });
+  }
+  return buddy.chat;
+}
+
+/* ---------------- Reading something at length ---------------- */
+
+// Card titles worth putting on a reader's header, kept beside the whole
+// messages they belong to and pruned by the same cap.
+const readerTitles = new Map();
+
+let readerWin = null;
+
+/**
+ * A plain window for a long message.
+ *
+ * One at a time, reused: opening a second card's text replaces what is in it
+ * rather than littering the desktop with paperclip windows. Deliberately not
+ * always-on-top and not tied to the buddy — the point is that it can be left
+ * open, dragged to another display, and read while the buddy gets on with
+ * whatever else it is doing.
+ */
+function openReader(payload) {
+  if (!readerWin || readerWin.isDestroyed()) {
+    readerWin = new BrowserWindow({
+      width: 620,
+      height: 640,
+      minWidth: 340,
+      minHeight: 240,
+      show: false,
+      title: payload.title || 'Clippy',
+      titleBarStyle: 'hiddenInset',
+      backgroundColor: '#f9f6ef',
+      webPreferences: {
+        preload: path.join(__dirname, 'preload-reader.js'),
+        contextIsolation: true,
+        nodeIntegration: false,
+      },
+    });
+    readerWin.on('closed', () => {
+      readerWin = null;
+    });
+    readerWin.loadFile(path.join(__dirname, 'renderer', 'reader.html'));
+  }
+  const win = readerWin;
+  const send = () => {
+    if (!win.isDestroyed()) win.webContents.send('clippy-reader-text', payload);
+  };
+  if (win.webContents.isLoading()) win.webContents.once('did-finish-load', send);
+  else send();
+  win.show();
+  win.focus();
 }
 
 /* ---------------- Token usage (right-click) ---------------- */
@@ -1948,7 +2575,7 @@ async function collectUsage(key) {
     usageCache.set(agent, cached);
   }
   return {
-    name: buddies.get(key)?.name || '',
+    name: buddyOf(key)?.name || '',
     agent,
     // The percentages Claude Code itself cached from /usage — the real
     // allowance, shown first whenever it exists.
@@ -1986,6 +2613,9 @@ function trayMenu() {
 
   return Menu.buildFromTemplate([
     { label: 'Settings…', click: () => openSettingsWindow() },
+    // Straight to the panel: the deep-link already exists, and burying feedback
+    // three scrolls into a settings window is how you never hear any.
+    { label: 'Send feedback…', click: () => openSettingsWindow('feedback') },
     { type: 'separator' },
     {
       label: buddies.size ? `Show all (${buddies.size})` : 'No sessions yet',
@@ -2066,12 +2696,17 @@ async function pickFolderAndSpawn(agent) {
   await spawnAgent({ path: filePaths[0], agent });
 }
 
-/** The "New agent" submenu: pick an agent and a folder, or reopen a recent one. */
+/** The "New agent" submenu: chat immediately, pick a project, or reopen a recent one. */
 function newAgentMenu() {
   const recents = settings.recentProjects.slice(0, 8);
   return [
     ...Object.entries(tmux.SPAWNABLE).map(([id, { label }]) => ({
-      label: `${label} in a folder…`,
+      label: `Chat with ${label}`,
+      click: () => spawnChat(id),
+    })),
+    { type: 'separator' },
+    ...Object.entries(tmux.SPAWNABLE).map(([id, { label }]) => ({
+      label: `${label} in a project…`,
       click: () => pickFolderAndSpawn(id),
     })),
     ...(recents.length
@@ -2157,6 +2792,12 @@ function globalSettingsMenu() {
       type: 'checkbox',
       checked: settings.autoPerch,
       click: (item) => setSetting('autoPerch', item.checked),
+    },
+    {
+      label: "Stay quiet when I'm already in that window",
+      type: 'checkbox',
+      checked: settings.quietWhenFocused,
+      click: (item) => setSetting('quietWhenFocused', item.checked),
     },
     { type: 'separator' },
     {
@@ -2410,22 +3051,60 @@ function emitPassive(reaction, { osNotification = true } = {}) {
     // A session Clippy started outlives the agent inside it: the pane drops to
     // a shell, so the buddy stays and goes back to waiting to be adopted.
     if (!unadoptBuddy(reaction.sessionId)) closeBuddy(reaction.sessionId);
-  } else {
-    sendTo(reaction.sessionId, { ...reaction, counts: tracker.counts() });
-    // Show only when Claude is done or wants something; ambient chatter (tool
-    // activity, session start, the user typing again) puts Clippy away.
-    const action = windowActionFor(reaction.kind);
-    if (action === 'show') showBuddy(reaction.sessionId);
-    else if (action === 'hide') hideBuddy(reaction.sessionId);
+    return;
   }
 
-  if (reaction.kind === 'attention' && osNotification) {
-    notify(
-      reaction.urgency === 'urgent' ? `📎 ${reaction.agentName} needs you!` : '📎 Clippy',
-      reaction.message,
-      { silent: reaction.urgency !== 'urgent', sessionId: reaction.sessionId }
-    );
+  // The event always goes to the window, whether or not anything pops up: it
+  // is what keeps the badge, the feed and the activity line honest about a
+  // session the user happens to be watching directly.
+  sendTo(reaction.sessionId, { ...reaction, counts: tracker.counts() });
+
+  // "Still waiting for your reply" about a question Clippy answered a moment
+  // ago. Codex leaves its picker on screen after a hook resolves the call, so
+  // the CLI still looks as though it is asking and says so — and relaying that
+  // sends the user to a terminal to answer something already answered.
+  if (reaction.kind === 'attention' && nudgeIsStale(reaction.sessionId)) {
+    console.log(`clippy: not relaying "${reaction.name}" waiting — its question was just answered here`);
+    return;
   }
+
+  // Show only when Claude is done or wants something; ambient chatter (tool
+  // activity, session start, the user typing again) puts Clippy away.
+  const action = windowActionFor(reaction.kind);
+  if (action === 'hide') {
+    hideBuddy(reaction.sessionId);
+    return;
+  }
+  if (action !== 'show') return;
+
+  surface(reaction.sessionId, {
+    notification:
+      reaction.kind === 'attention' && osNotification
+        ? {
+            title:
+              reaction.urgency === 'urgent' ? `📎 ${reaction.agentName} needs you!` : '📎 Clippy',
+            body: reaction.message,
+            opts: { silent: reaction.urgency !== 'urgent', sessionId: reaction.sessionId },
+          }
+        : null,
+  });
+}
+
+/**
+ * Put a buddy on screen, and optionally notify — unless the user is already
+ * looking at the window it is about.
+ *
+ * The check is a couple of milliseconds against a shared, briefly-cached probe,
+ * so this is a promise only because asking the window server is. Nothing waits
+ * on it but the popping-up itself.
+ */
+function surface(key, { notification = null, mode = 'full' } = {}) {
+  return lookingAtIt(key).then((focused) => {
+    if (focused) return false;
+    showBuddy(key, { mode });
+    if (notification) notify(notification.title, notification.body, notification.opts);
+    return true;
+  });
 }
 
 /* ---------------- "read all": the rest of a message that didn't fit ----------
@@ -2447,11 +3126,13 @@ const WHOLE_MESSAGE_CAP = 40;
 const REVIEW_RECAP_CHARS = 600;
 const wholeMessages = new Map(); // requestId -> { sessionId, text }
 
-function rememberWhole(requestId, sessionId, text) {
+function rememberWhole(requestId, sessionId, text, title = '') {
   if (!text) return;
   wholeMessages.set(requestId, { sessionId, text });
+  if (title) readerTitles.set(requestId, title);
   for (const key of [...wholeMessages.keys()].slice(0, wholeMessages.size - WHOLE_MESSAGE_CAP)) {
     wholeMessages.delete(key);
+    readerTitles.delete(key);
   }
 }
 
@@ -2462,6 +3143,17 @@ function rememberWhole(requestId, sessionId, text) {
  */
 async function handlePermissionRequest(payload, ctx) {
   if (!settings.approvals) return {};
+
+  // Already looking at the window that is asking? Then hand the question back
+  // to it. Returning {} lets Claude Code put its own prompt up in the terminal
+  // the user is typing in — which is both faster to answer and impossible to
+  // miss. Holding it here instead would cover that window with a card asking
+  // the same thing.
+  if (await lookingAtIt(payload?.session_id || 'unknown')) {
+    tracker.handle('PermissionRequest', null, payload);
+    updateTray();
+    return {};
+  }
 
   const reaction = tracker.handle('PermissionRequest', null, payload);
   const agentName = reaction.agentName;
@@ -2475,7 +3167,7 @@ async function handlePermissionRequest(payload, ctx) {
   );
   ctx.onClose(() => broker.resolve(id, 'cancel'));
 
-  rememberWhole(id, reaction.sessionId, fullDetail);
+  rememberWhole(id, reaction.sessionId, fullDetail, title);
   sendTo(reaction.sessionId, {
     ...reaction,
     counts: tracker.counts(),
@@ -2528,10 +3220,32 @@ async function handlePermissionRequest(payload, ctx) {
  */
 let reviewSeq = 0;
 const pendingReviews = new Map(); // requestId -> sessionId
+const DIRECT_REPLY_REVIEW_GRACE_MS = 15_000;
 
 async function handleStop(payload) {
   const reaction = tracker.handle('Stop', null, payload);
   const agentName = reaction.agentName;
+
+  // A prompt sent from an owned buddy should finish in that same chat UI. The
+  // transcript watcher shows the reply itself; a Stop review card would race
+  // it, often recapping the previous turn and then covering the real answer.
+  const owned = tmuxRecordFor(reaction.sessionId);
+  const directReply = Boolean(
+    owned &&
+      (owned.awaitingReply || Date.now() - Number(owned.lastDirectReplyAt || 0) < DIRECT_REPLY_REVIEW_GRACE_MS)
+  );
+  if (directReply) {
+    updateTray();
+    pokeWatch(reaction.sessionId);
+    return {};
+  }
+
+  // Watching that window when it finished: the answer is already on screen, so
+  // a review card would be recapping something the user just read.
+  if (await lookingAtIt(reaction.sessionId)) {
+    updateTray();
+    return {};
+  }
 
   // Review feedback is typed into the session's terminal, and an OpenClaw
   // session has no terminal window to type into. Plain nudge instead.
@@ -2558,7 +3272,7 @@ async function handleStop(payload) {
 
   const id = `review-${++reviewSeq}`;
   pendingReviews.set(id, reaction.sessionId);
-  rememberWhole(id, reaction.sessionId, whole === recap ? '' : whole);
+  rememberWhole(id, reaction.sessionId, whole === recap ? '' : whole, `${agentName} finished`);
   sendTo(reaction.sessionId, {
     ...reaction,
     kind: 'review',
@@ -2628,6 +3342,10 @@ async function handleQuestion(payload, ctx) {
     : [];
   updateTray();
 
+  // Sitting in that window already: let its own picker appear rather than
+  // putting the same question on top of it.
+  if (await lookingAtIt(reaction.sessionId)) return {};
+
   // Answering turned off, or a malformed question -> surface only.
   if (!settings.answerQuestions || questions.length === 0) {
     surfaceQuestion(reaction, title, detail);
@@ -2644,7 +3362,7 @@ async function handleQuestion(payload, ctx) {
   );
   ctx.onClose(() => broker.resolve(id, 'cancel'));
 
-  rememberWhole(id, reaction.sessionId, fullDetail);
+  rememberWhole(id, reaction.sessionId, fullDetail, title);
   sendTo(reaction.sessionId, {
     ...reaction,
     kind: 'answer',
@@ -2681,6 +3399,13 @@ async function handleQuestion(payload, ctx) {
   if (reply.hookSpecificOutput) {
     tracker.setStatus(reaction.sessionId, WORKING);
     updateTray();
+    justAnswered.set(reaction.sessionId, Date.now());
+    // Codex draws its own picker for request_user_input and leaves it on
+    // screen when a hook answers the call for it. The agent has the answer and
+    // carries on — the widget is simply stale — but the session then reports
+    // itself as waiting, and Clippy used to relay that as "still waiting for
+    // your reply", pointing at a question that had already been answered.
+    dismissCodexPicker(reaction.sessionId, payload.agent);
     hideBuddy(reaction.sessionId); // answered here — the agent carries on
   } else if (action === 'dismiss' || action === 'cancel') {
     // Waved away, or the terminal went out from under us — nothing to show.
@@ -2693,6 +3418,52 @@ async function handleQuestion(payload, ctx) {
   return reply;
 }
 
+/**
+ * Sessions whose question Clippy has just answered.
+ *
+ * Codex leaves its picker up after a PreToolUse hook resolves the call, so the
+ * CLI looks as if it is still asking and duly notifies us that it is waiting.
+ * Repeating that back — "still waiting for your reply", with a button to go and
+ * answer it — is Clippy nagging about the very thing it just did.
+ */
+const justAnswered = new Map();
+
+/** How long a nudge about an answered question stays suppressed. */
+const ANSWERED_QUIET_MS = 90 * 1000;
+
+function nudgeIsStale(sessionId) {
+  const at = justAnswered.get(sessionId);
+  if (!at) return false;
+  if (Date.now() - at < ANSWERED_QUIET_MS) return true;
+  justAnswered.delete(sessionId);
+  return false;
+}
+
+/**
+ * Close the picker Codex left behind, when we are allowed to.
+ *
+ * Only for a session Clippy started itself: there we own the tmux pane and can
+ * send a key without touching anyone's focus or needing Accessibility. Escape
+ * is what a person would press — the tool call is already resolved, so
+ * cancelling the widget is exactly right and cannot lose an answer.
+ *
+ * Any other Codex session keeps its stale picker; nothing here can reach it
+ * safely, which is what the quiet window above is for.
+ */
+function dismissCodexPicker(sessionId, agent) {
+  if (agent !== 'codex') return;
+  const record = tmuxRecordFor(sessionId);
+  if (!record) return;
+  const target = record.paneId || `=${record.name}`;
+  tmux
+    .findTmux()
+    .then((bin) => bin && tmux.pressKeys(bin, target, 'Escape'))
+    .catch(() => {
+      // A pane that has gone away is not worth a word: the answer already
+      // reached the agent, which is the part that mattered.
+    });
+}
+
 /** Read-only fallback: show the question, tell the user to answer in the terminal. */
 function surfaceQuestion(reaction, title, detail, { osNotification = true } = {}) {
   // No walk here: the read-only card is the hint while it's up. Clippy points
@@ -2703,15 +3474,17 @@ function surfaceQuestion(reaction, title, detail, { osNotification = true } = {}
     counts: tracker.counts(),
     title,
     detail,
-    message: `${reaction.agentName} is asking in “${reaction.name}” — answer in your terminal.`,
+    message: `${reaction.agentName} is asking in ${sourceFor(reaction.sessionId).label} — answer there.`,
   });
-  showBuddy(reaction.sessionId);
-  if (osNotification) {
-    notify(`📎 ${reaction.agentName} is asking you`, `${reaction.name}: ${title}`, {
-      silent: false,
-      sessionId: reaction.sessionId,
-    });
-  }
+  surface(reaction.sessionId, {
+    notification: osNotification
+      ? {
+          title: `📎 ${reaction.agentName} is asking you`,
+          body: `${reaction.name}: ${title}`,
+          opts: { silent: false, sessionId: reaction.sessionId },
+        }
+      : null,
+  });
 }
 
 /**
@@ -2734,10 +3507,105 @@ function noteTerminal(payload, ctx) {
     // name — see adoptSpawned. Deliberately not awaited: the hook response
     // must not wait on a process-table sweep.
     adoptSpawned(sessionId).catch(() => {});
-    const buddy = buddies.get(sessionId);
-    if (buddy && !buddy.win.isDestroyed()) {
-      buddy.win.webContents.send('clippy-event', { kind: 'can-open', value: true });
-    }
+    // Which app owns this session is a walk up the process table, so it is done
+    // once here rather than on every card — and the answer is what names the
+    // button that takes you there.
+    learnSourceApp(sessionId, term);
+  }
+}
+
+/**
+ * Work out which app a session is actually running in, and tell its buddy.
+ *
+ * This is what makes "go to terminal" say the truth: a session in the ChatGPT
+ * app, in Claude (which is where a Cowork session lives), or in Ghostty each
+ * get their own name on the button, and pressing it goes to that app rather
+ * than to a terminal that was never involved.
+ *
+ * Deliberately not awaited by the hook path — it walks the process table and
+ * asks the app bundle for its id, and no hook should wait on either. The
+ * button is offered immediately from what we already know; the name gets
+ * better a moment later.
+ */
+async function learnSourceApp(sessionId, term) {
+  const now = buddyOf(sessionId);
+  if (now) sendCanOpen(now, sessionId);
+  const app = await appFor(term);
+  if (!app) return;
+  const later = buddyOf(sessionId);
+  if (later) sendCanOpen(later, sessionId);
+}
+
+/**
+ * The app a session's terminal belongs to — resolved once, then kept.
+ *
+ * Kept on the terminal record rather than in a map of its own: it cannot go
+ * stale without the terminal record going stale too, and the two are replaced
+ * together. The in-flight promise is kept as well, so the several things that
+ * want this during a session's first moments share one walk up the process
+ * table instead of each starting their own.
+ */
+function appFor(term) {
+  if (!term || !term.pid) return Promise.resolve(null);
+  // Terminal.app and iTerm2 are driven by name and tty rather than by pid, so
+  // there is no app to resolve — frontmost.js matches those by bundle id.
+  if (term.program === TERMINAL_APP || term.program === ITERM_APP) return Promise.resolve(null);
+  if (term.app !== undefined) return Promise.resolve(term.app);
+  term.appLookup ||= appForPid(term.pid)
+    .then((app) => {
+      term.app = app || null;
+      return term.app;
+    })
+    .catch(() => {
+      term.app = null;
+      return null;
+    });
+  return term.appLookup;
+}
+
+/* ---------------- Staying out of the way ---------------- */
+
+/**
+ * One shared look at what is in front, reused across a burst of hooks.
+ * See src/frontmost.js for why this uses lsappinfo rather than AppleScript.
+ */
+const focusProbe = createFocusProbe();
+
+/**
+ * Is the user already looking at the window this session is asking from?
+ *
+ * If they are, Clippy has nothing to add: the agent's own prompt is right
+ * there on the screen they are typing on, and a paperclip popping up over it —
+ * plus a notification about a question three inches from the cursor — is the
+ * app being in the way of the thing it exists to help with.
+ *
+ * Answers false whenever it cannot tell. Being wrong that way shows a buddy
+ * that was not strictly needed; being wrong the other way loses the message.
+ */
+async function lookingAtIt(key) {
+  if (!settings.quietWhenFocused) return false;
+  // A session in a tmux pane has no window of its own to be looking at.
+  if (tmuxRecordFor(key)) return false;
+  const term = tracker.terminalFor(key);
+  if (!term) return false;
+  try {
+    // Both at once: which app this session belongs to is a walk up the process
+    // table, and it has to be known *before* deciding, or the first hook of a
+    // session — the one most likely to arrive while you are sitting in that
+    // very window — could never be recognised as one to stay quiet for.
+    const [{ front, focusedTty }, app] = await Promise.all([
+      focusProbe.current(),
+      appFor(term),
+    ]);
+    return looksFocused({
+      front,
+      app,
+      program: term.program || '',
+      tty: term.tty || '',
+      focusedTty,
+    });
+  } catch {
+    return false;
   }
 }
 
@@ -2779,13 +3647,17 @@ function handleHookEvent(eventName, kind, payload, ctx) {
  * Code shows nothing, same as when the app isn't running at all.
  */
 function statuslineFor(payload = {}, cols = 0) {
-  const sessionId = payload.session_id || '';
-  if (!tracker.has(sessionId)) return '';
-  const link = `http://127.0.0.1:${PORT}/focus?session=${encodeURIComponent(sessionId)}`;
-  const clip = `\x1b]8;;${link}\x07📎\x1b]8;;\x07`;
-  // The emoji is two cells wide; keep one more free so the line never wraps.
-  const pad = Math.max(0, Math.floor(cols) - 3);
-  return `${' '.repeat(pad)}${clip}`;
+  // Nothing. The clip used to sit at the right edge of Claude Code's input box
+  // as a link to this session's buddy, but the prompt bar belongs to the agent
+  // you are talking to — Clippy is already on screen, and a second one down
+  // there was clutter in the one place you are trying to type.
+  //
+  // Kept as a function rather than deleted: the statusline hook is installed in
+  // people's settings already, and answering it with an empty line is what
+  // makes it disappear without them having to reinstall anything.
+  void payload;
+  void cols;
+  return '';
 }
 
 /* ---------------- App lifecycle ---------------- */
@@ -2894,11 +3766,202 @@ function sweepStaleSessions() {
   updateTray();
 }
 
+/**
+ * Stand down, now.
+ *
+ * `app.quit()` is a *request*: it unwinds asynchronously, and everything after
+ * it — the rest of this module, and the whole `whenReady` handler — still
+ * runs. A copy that had already lost the menu bar went on to bind the hook
+ * port, which then starved the copy that won and left the user with no Clippy
+ * at all. Refusing to run has to mean refusing to touch anything.
+ */
+function standDown(why) {
+  console.error(`clippy: ${why}`);
+  app.exit(0);
+}
+
 // A second instance can't bind the port anyway; failing fast beats racing.
 if (!app.requestSingleInstanceLock()) {
-  console.error('clippy: another Clippy is already running — quitting this one.');
-  app.quit();
+  standDown('another Clippy is already running — quitting this one.');
 }
+
+/**
+ * …and again, machine-wide.
+ *
+ * The lock above is scoped to the user-data directory, so a copy started with
+ * `--user-data-dir` — a dev build, a packaged app beside a checkout — walks
+ * straight past it and puts a second paperclip in the menu bar. Two Clippys
+ * both answer the same hooks and both pop up, and nothing on screen says which
+ * is which. CLIPPY_ALLOW_MULTIPLE=1 is the way out, for when that is genuinely
+ * what you want.
+ */
+function claimTheMenuBar() {
+  if (allowsMultiple()) return true;
+  const file = lockPath(os.homedir());
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+  } catch {
+    // Unwritable directory: nothing to claim with, and refusing to start over
+    // it would be worse than the duplicate it is meant to prevent.
+    return true;
+  }
+
+  // Two attempts, and no more: create-or-fail, and if that finds a lock left by
+  // something dead, clear it and try the same create once again. A loop here
+  // would be two copies taking turns deleting each other's claim.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    claimedAt = Date.now();
+    try {
+      claimAtomically(file, writeLock(process.pid, claimedAt));
+      onQuit(releaseTheMenuBar(file));
+      return true;
+    } catch (err) {
+      if (err.code !== 'EEXIST') {
+        console.warn('clippy: could not claim the menu bar lock:', err.message);
+        return true; // can't claim it, but that is no reason not to run
+      }
+    }
+
+    // Somebody holds it. Alive, and it is theirs; dead, and it is litter.
+    let raw = null;
+    try {
+      raw = fs.readFileSync(file, 'utf8');
+    } catch {
+      raw = null; // vanished between the two calls — go round and take it
+    }
+    const holder = holderOf(raw, isRunning);
+    if (holder) {
+      console.error(
+        `clippy: another Clippy (pid ${holder}) already has the menu bar. ` +
+          'Set CLIPPY_ALLOW_MULTIPLE=1 to run a second on purpose.'
+      );
+      return false;
+    }
+    try {
+      fs.rmSync(file, { force: true });
+    } catch {
+      // Someone else cleared it first; the next create settles who won.
+    }
+  }
+
+  // Both attempts lost the race to a copy that is still alive.
+  console.error('clippy: another Clippy took the menu bar first.');
+  return false;
+}
+
+/**
+ * Create the lock, with its contents already in it, or fail.
+ *
+ * `writeFileSync(..., 'wx')` is two steps wearing one name: the file appears
+ * empty, and only then does the content arrive. Another copy reading in that
+ * gap sees a lock it cannot parse, calls it litter from a crash, deletes it and
+ * claims the menu bar for itself — which is how four simultaneous starts left
+ * one Clippy running and no lock file at all to stop a fifth.
+ *
+ * Writing somewhere else and hard-linking it into place closes that gap: the
+ * name never exists in a half-written state, and `link` fails with EEXIST if
+ * somebody got there first. So an EEXIST here always means a *complete* lock,
+ * and "cannot parse it" once again means what it says.
+ *
+ * @throws {NodeJS.ErrnoException} EEXIST when the menu bar is already claimed
+ */
+function claimAtomically(file, contents) {
+  const scratch = `${file}.${process.pid}`;
+  fs.writeFileSync(scratch, contents);
+  try {
+    fs.linkSync(scratch, file);
+  } finally {
+    try {
+      fs.rmSync(scratch, { force: true });
+    } catch {
+      // A leftover scratch file is untidy, never harmful — it is named after a
+      // pid and is not the lock.
+    }
+  }
+}
+
+/**
+ * Give the lock back, but only if it is still ours.
+ *
+ * A copy quitting late must never delete the claim a healthy one has since
+ * written — that is how the file went missing while a Clippy was running, and
+ * a missing file is an open door for the next start.
+ */
+function releaseTheMenuBar(file) {
+  return () => {
+    try {
+      if (holderOf(fs.readFileSync(file, 'utf8'), () => true) === 0) {
+        fs.rmSync(file, { force: true });
+      }
+    } catch {
+      // already gone, or never ours to remove
+    }
+  };
+}
+
+const onQuit = (fn) => {
+  app.on('will-quit', fn);
+  process.on('exit', fn);
+};
+
+// When this copy claimed the menu bar. Kept so the claim can be re-asserted
+// with its *original* time: whoever got there first keeps it, and rewriting
+// the timestamp on every heartbeat would make this copy look newer than a
+// rival that actually arrived later.
+let claimedAt = 0;
+
+/**
+ * How often to check we still hold the menu bar.
+ *
+ * Rare on purpose — this is a file read, and the thing it guards against
+ * (a lock that went missing) is not urgent, only persistent.
+ */
+const DEFEND_EVERY_MS = 30_000;
+
+/**
+ * Keep hold of the menu bar, rather than only taking it once.
+ *
+ * Claiming at startup and never looking again was the gap behind "I restarted
+ * it and now there are two": the lock is a file, and once it goes missing —
+ * a copy quitting late, a crash between read and write, someone clearing
+ * Application Support — the running Clippy stops defending anything and the
+ * next start walks in beside it. Nothing tells the user; they just get two
+ * paperclips answering the same hooks.
+ *
+ * See `defend` in src/single-instance.js for the three-way decision. Ties go
+ * to the older claim, so two copies can never both leave or both stay.
+ */
+function defendTheMenuBar() {
+  if (allowsMultiple() || !claimedAt) return;
+  const file = lockPath(os.homedir());
+  let raw = null;
+  try {
+    raw = fs.readFileSync(file, 'utf8');
+  } catch {
+    raw = null;
+  }
+
+  const what = defend(raw, isRunning, { pid: process.pid, at: claimedAt });
+  if (what === 'keep') return;
+
+  if (what === 'yield') {
+    console.error(
+      'clippy: another Clippy claimed the menu bar first — quitting this one so there is only ever one.'
+    );
+    app.quit();
+    return;
+  }
+
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, writeLock(process.pid, claimedAt));
+  } catch {
+    // Unwritable is not worth a dialog: we are still the one running.
+  }
+}
+
+if (!claimTheMenuBar()) standDown('this copy does not have the menu bar.');
+setInterval(defendTheMenuBar, DEFEND_EVERY_MS).unref?.();
 app.on('second-instance', () => {
   for (const b of buddies.values()) showBuddy(b.sessionId, { pin: true });
 });
@@ -2929,6 +3992,34 @@ app.whenReady().then(async () => {
   });
   // "read all" on a card that ends in an ellipsis. Only ever hands a window
   // the rest of its own session's message.
+  /**
+   * Open a message in a window of its own.
+   *
+   * A card is a glance; a plan is a page. The card used to grow instead —
+   * "read all" made the same floating panel taller until it ran out of screen,
+   * and it still could not be moved to a second display or left open beside
+   * the work it describes. This is an ordinary window: resizable, movable,
+   * closable, not always-on-top, and it carries text and nothing else, so a
+   * window left open somewhere can never answer a hook by accident.
+   */
+  ipcMain.on('clippy-open-reader', (e, requestId, mine) => {
+    const buddy = buddyForSender(e.sender);
+    if (!buddy) return;
+    const id = String(requestId || '');
+    const held = wholeMessages.get(id);
+    if (held && held.sessionId !== buddy.sessionId) return;
+    // Main only keeps a copy of what it had to *cut*. Most messages arrive
+    // whole and are never stored, so the card's own copy is the text — and is
+    // the only one for anything main never truncated.
+    const text = (held && held.text) || String(mine?.text || '');
+    if (!text) return;
+    openReader({
+      title: readerTitles.get(id) || String(mine?.title || '') || 'From the agent',
+      where: buddy.name,
+      text,
+    });
+  });
+
   ipcMain.handle('clippy-card-full', (e, requestId) => {
     const buddy = buddyForSender(e.sender);
     const held = buddy && wholeMessages.get(String(requestId || ''));
@@ -2950,6 +4041,7 @@ app.whenReady().then(async () => {
       agents: Object.entries(tmux.SPAWNABLE).map(([id, { label }]) => ({ id, label })),
       defaultAgent: settings.defaultAgent,
       recentProjects: settings.recentProjects,
+      chatWorkspace: chatWorkspace(os.homedir()),
     });
   });
 
@@ -2964,6 +4056,12 @@ app.whenReady().then(async () => {
   });
 
   ipcMain.handle('clippy-newagent-start', async (_e, target) => {
+    if (target?.mode === 'chat') {
+      const record = await spawnChat(target?.agent);
+      if (!record) return { error: 'That chat session could not be started.' };
+      closeNewAgentWindow();
+      return { ok: true };
+    }
     const host = String(target?.host || '').trim();
     const record = await spawnAgent({
       path: String(target?.path || '').trim(),
@@ -3011,8 +4109,19 @@ app.whenReady().then(async () => {
     // The renderer knows whether it has anything on screen, and how tall that
     // is; main owns where the window goes and how big it may get.
     const buddy = buddyForSender(e.sender);
-    const { mode, height, width } = typeof payload === 'string' ? { mode: payload } : payload || {};
+    const { mode, height, width, anchor } =
+      typeof payload === 'string' ? { mode: payload } : payload || {};
     if (buddy && (mode === 'full' || mode === 'compact')) {
+      // Where the buddy stands inside the window it is asking for. Kept so the
+      // resize can grow the window around him rather than move him.
+      if (anchor && Number.isFinite(anchor.dx) && Number.isFinite(anchor.fromBottom)) {
+        buddy.anchorIn = {
+          dx: Number(anchor.dx),
+          fromBottom: Number(anchor.fromBottom),
+          halfW: Number(anchor.halfW) || 0,
+          halfH: Number(anchor.halfH) || 0,
+        };
+      }
       placeBuddy(buddy, mode, Number(height), Number(width));
     }
   });
@@ -3026,6 +4135,7 @@ app.whenReady().then(async () => {
       e.sender.send('clippy-settings-state', settingsState());
     }
   });
+  ipcMain.on('clippy-settings-new-agent', () => openNewAgentWindow());
   ipcMain.on('clippy-open-settings', () => openSettingsWindow());
   ipcMain.handle('clippy-settings-install-pet', async (_e, url) => {
     // The "add a pet" box takes a pasted link only — local folders stay a CLI
@@ -3093,6 +4203,23 @@ app.whenReady().then(async () => {
     const { sessionId, size } = payload || {};
     assignSize(String(sessionId || ''), String(size || ''));
   });
+  /**
+   * Feedback from the settings window.
+   *
+   * Main does the posting rather than the renderer: the endpoint would
+   * otherwise have to be opened up in the window's CSP, and the one outbound
+   * call carrying user words would live in the least sandboxed process. What
+   * goes out is built by src/feedback.js and nothing else is added here — the
+   * version is the only thing main contributes.
+   */
+  ipcMain.handle('clippy-settings-feedback', async (_e, input) => {
+    return sendFeedback({
+      rating: input && input.rating,
+      message: input && input.message,
+      appVersion: app.getVersion(),
+    });
+  });
+
   ipcMain.handle('clippy-settings-check-updates', () => {
     // The repo root: from a checkout that's this file's parent; inside the
     // packaged app it's Contents/Resources/app, which has no .git — and the
@@ -3114,8 +4241,17 @@ app.whenReady().then(async () => {
     // drag did before.
     const buddy = buddyForSender(e.sender);
     if (!buddy || buddy.win.isDestroyed()) return;
-    const [x, y] = buddy.win.getPosition();
-    buddy.win.setPosition(x + Math.round(Number(dx) || 0), y + Math.round(Number(dy) || 0));
+    const at = buddy.win.getBounds();
+    const wanted = {
+      ...at,
+      x: at.x + Math.round(Number(dx) || 0),
+      y: at.y + Math.round(Number(dy) || 0),
+    };
+    // He may be carried until his own edge meets the edge of the screen — the
+    // window is welcome to hang off it — but never past that and out of reach.
+    const { workArea } = screen.getDisplayMatching(at);
+    const spot = keepBuddyOnScreen(wanted, workArea, buddy);
+    buddy.win.setPosition(spot.x, spot.y);
     // Carried across the middle of the screen: where he'll settle has changed.
     sendSide(buddy);
   });
@@ -3149,27 +4285,39 @@ app.whenReady().then(async () => {
     if (drive && typeof text === 'string' && text.trim()) drive.prompt(text.trim());
   });
   ipcMain.on('clippy-drive-stop', stopDriveSession);
+  /**
+   * "Who is this for?" — the routing half of talking to the buddy.
+   *
+   * Answers with a *proposal*, never a delivery. Nothing reaches an agent until
+   * the user presses send on what comes back, because a prompt typed into a
+   * session becomes work in somebody's repository and cannot be recalled.
+   */
+  ipcMain.handle('clippy-delegate', async (e, text) => {
+    const buddy = buddyForSender(e.sender);
+    if (!buddy) return { agent: null };
+    const roster = tracker.list().map((s) => ({
+      sessionId: s.sessionId,
+      name: s.name,
+      agent: s.agent,
+      cwd: s.cwd || '',
+      status: s.status,
+      reachable: Boolean(tmuxRecordFor(s.sessionId) || tracker.terminalFor(s.sessionId)),
+    }));
+    if (!routable(roster).length) return { agent: null };
+
+    const asked = await chatFor(buddy).ask(routingPrompt(roster, text));
+    if (asked.error) return { agent: null, error: asked.error };
+    const { agent, why } = parseChoice(asked.text, roster);
+    if (!agent) return { agent: null };
+    return { agent: { sessionId: agent.sessionId, name: agent.name, agent: agent.agent }, why };
+  });
+
   ipcMain.handle('clippy-pet-say', async (e, text) => {
     // The 💬 button under the buddy: a word with the pet itself. Nothing here
     // touches the watched session — see src/pet-chat.js for why it can't.
     const buddy = buddyForSender(e.sender);
     if (!buddy) return { error: 'no session for this window' };
-    if (!buddy.chat) {
-      buddy.chat = new PetChat({
-        // Read fresh every turn: the model and the status move under the pet
-        // while you're talking to it.
-        context: () => ({
-          pet: petNameFor(buddy.identityKey || buddy.sessionId),
-          character: allCharacters().find((c) => c.id === buddy.character)?.label || 'desk buddy',
-          project: buddy.name,
-          cwd: tracker.cwdFor(buddy.sessionId),
-          agent: agentDisplayName(buddy.agent),
-          model: tracker.modelFor(buddy.sessionId),
-          status: tracker.statusFor(buddy.sessionId),
-        }),
-      });
-    }
-    return buddy.chat.say(typeof text === 'string' ? text : '');
+    return chatFor(buddy).say(typeof text === 'string' ? text : '');
   });
   ipcMain.on('clippy-sandbox-fire', (_e, id) => {
     if (!SANDBOX) return;
@@ -3179,10 +4327,45 @@ app.whenReady().then(async () => {
     if (id === '__clear__') return clearGallery();
     playStory(String(id || ''));
   });
-  ipcMain.on('clippy-send-prompt', (e, text) => {
-    // The prompt composer: type what you wrote into the session's terminal.
+  ipcMain.on('clippy-send-prompt', (e, text, to) => {
+    // The prompt composer: type what you wrote into a session's terminal.
     const buddy = buddyForSender(e.sender);
-    if (buddy && typeof text === 'string') sendPromptToTerminal(buddy.sessionId, text);
+    if (!buddy || typeof text !== 'string') return;
+    // A shared buddy can address any live session, not only the one it is
+    // currently wearing — but only a session that actually exists.
+    const target = to && tracker.list().some((s) => s.sessionId === to) ? to : buddy.sessionId;
+    sendPromptToTerminal(target, text);
+  });
+
+  /** Who is running, for the chat panel's "who am I talking to" row. */
+  ipcMain.handle('clippy-agents', (e) => {
+    const buddy = buddyForSender(e.sender);
+    return {
+      // Whose face the window is wearing right now, so the panel can preselect.
+      showing: buddy ? buddy.sessionId : '',
+      pet: petNameOf(buddy),
+      agents: tracker.list().map((s) => ({
+        sessionId: s.sessionId,
+        name: s.name,
+        agent: s.agent,
+        status: s.status,
+        // The folder itself, not just its last component: two agents in
+        // ~/work/api and ~/side/api are both "api", and picking the wrong one
+        // means typing into the wrong session.
+        cwd: s.cwd || '',
+        // Its face and colour, so the chat can wear them while you are talking
+        // to it — the buddy you are addressing should look like that agent, not
+        // like the one whose window you happen to be typing in.
+        // `buddies.get`, not `buddyOf`: the latter falls back to the shared
+        // window, which would report the manager's face for every agent and
+        // make them all look identical in the one place they must not.
+        character: buddies.get(s.sessionId)?.character || characterFor(settings, s.name, s.sessionId),
+        color: identityFor(s.sessionId, s.name).color,
+        // Typing at an agent needs somewhere to type: a tmux pane we own, or a
+        // terminal window we can find.
+        reachable: Boolean(tmuxRecordFor(s.sessionId) || tracker.terminalFor(s.sessionId)),
+      })),
+    };
   });
 
   // The hook server still comes up in development mode — a real session can
@@ -3223,3 +4406,4 @@ app.whenReady().then(async () => {
 
 // Menu-bar style app: keep running with every window hidden/closed.
 app.on('window-all-closed', () => {});
+

@@ -159,7 +159,7 @@ export const initialState: ClippyState = {
       id: "a3",
       sessionId: "nori",
       title: "Edited file",
-      detail: "app/(tabs)/index.tsx",
+      detail: "app/index.tsx",
       time: "1m",
       icon: "create",
       tone: "neutral",
@@ -227,4 +227,55 @@ export function resolvePending(
     ],
     toast: session ? `${session.petName}: ${title.toLowerCase()}` : title,
   }
+}
+
+/**
+ * The one agent the app is currently about.
+ *
+ * The screen shows a single waiting agent at a time, so "which one" has to be
+ * a decision made in exactly one place. Oldest first: the thing that has been
+ * blocked longest is the thing most worth unblocking, and answering in a
+ * stable order means an agent can never be starved by newer arrivals.
+ */
+export function focusOf(state: ClippyState): { item: PendingItem; session: Session } | null {
+  const item = state.pending[state.pending.length - 1] ?? null
+  if (!item) return null
+  const session = sessionFor(state, item.sessionId)
+  return session ? { item, session } : null
+}
+
+/** Requests the demo can produce, so "an agent needs you" is reachable on a device. */
+const INCOMING: Array<Omit<PendingItem, "id" | "createdAt">> = [
+  {
+    sessionId: "nori",
+    kind: "permission",
+    eyebrow: "Permission request",
+    title: "Nori wants to install a dependency",
+    detail: "Adding zod to validate the relay payloads.",
+    command: "npm install zod",
+  },
+  {
+    sessionId: "orbit",
+    kind: "question",
+    eyebrow: "Question",
+    title: "Should retries back off exponentially?",
+    detail: "The relay currently retries three times, evenly spaced.",
+    options: ["Exponential", "Keep it even", "Don't retry"],
+  },
+  {
+    sessionId: "biscuit",
+    kind: "review",
+    eyebrow: "Finished your turn",
+    title: "Biscuit rebuilt the iOS app",
+    detail: "Cleaned the build folder, rebuilt, and the app launches on the simulator.",
+  },
+]
+
+/** Push the next demo request onto the queue, as though a Mac had just relayed it. */
+export function receiveNext(state: ClippyState, at: number): ClippyState {
+  const template = INCOMING[state.pending.length % INCOMING.length]
+  const item: PendingItem = { ...template, id: `incoming-${at}`, createdAt: "now" }
+  // Newest first, which is the order the rest of this list is already in — and
+  // what keeps focusOf() taking the oldest rather than whatever just arrived.
+  return { ...state, pending: [item, ...state.pending] }
 }

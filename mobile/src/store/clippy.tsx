@@ -1,8 +1,11 @@
-import React, { createContext, useContext, useMemo, useReducer } from "react"
+import React, { createContext, useContext, useEffect, useMemo, useReducer, useRef } from "react"
 
+import { clearDelivered, notifyWaiting, setBadge } from "@/notifications"
 import {
   initialState,
+  receiveNext,
   resolvePending,
+  sessionFor,
   type ClippyState,
 } from "@/store/model"
 
@@ -13,6 +16,7 @@ type Action =
   | { type: "prompt"; sessionId: string; text: string }
   | { type: "toggle"; key: ToggleKey }
   | { type: "toast"; value: string | null }
+  | { type: "incoming"; at: number }
   | { type: "clearAll" }
 
 function reducer(state: ClippyState, action: Action): ClippyState {
@@ -22,7 +26,7 @@ function reducer(state: ClippyState, action: Action): ClippyState {
     case "prompt": {
       const text = action.text.trim()
       if (!text) return state
-      const session = state.sessions.find((candidate) => candidate.id === action.sessionId)
+      const session = sessionFor(state, action.sessionId)
       return {
         ...state,
         sessions: state.sessions.map((candidate) =>
@@ -49,8 +53,10 @@ function reducer(state: ClippyState, action: Action): ClippyState {
       return { ...state, [action.key]: !state[action.key] }
     case "toast":
       return { ...state, toast: action.value }
+    case "incoming":
+      return receiveNext(state, action.at)
     case "clearAll":
-      return { ...state, pending: [], toast: "Inbox cleared" }
+      return { ...state, pending: [], toast: "All caught up" }
   }
 }
 
@@ -61,12 +67,42 @@ type StoreValue = {
   toggle: (key: ToggleKey) => void
   clearToast: () => void
   clearAll: () => void
+  receive: () => void
 }
 
 const StoreContext = createContext<StoreValue | null>(null)
 
 export function ClippyProvider({ children }: { children: React.ReactNode }) {
   const [state, dispatch] = useReducer(reducer, initialState)
+
+  /**
+   * Notify on arrival, not on every render.
+   *
+   * The ids already announced live in a ref rather than in state: this has to
+   * survive a re-render without causing one, and something announced once must
+   * never be announced again — including after the queue shifts underneath it
+   * when an earlier item is resolved.
+   */
+  const announced = useRef<Set<string>>(new Set())
+  useEffect(() => {
+    if (!state.notifications) return
+    for (const item of state.pending) {
+      if (announced.current.has(item.id)) continue
+      announced.current.add(item.id)
+      // What the app opens with is history, not news. Announcing the fixtures
+      // would mean a notification storm every launch.
+      if (!item.id.startsWith("incoming-")) continue
+      const session = sessionFor(state, item.sessionId)
+      if (session) void notifyWaiting(item, session)
+    }
+  }, [state, state.pending, state.notifications])
+
+  // The badge says exactly what the screen would: how many are still waiting.
+  useEffect(() => {
+    if (state.pending.length === 0) void clearDelivered()
+    else void setBadge(state.pending.length)
+  }, [state.pending.length])
+
   const value = useMemo<StoreValue>(
     () => ({
       state,
@@ -75,6 +111,7 @@ export function ClippyProvider({ children }: { children: React.ReactNode }) {
       toggle: (key) => dispatch({ type: "toggle", key }),
       clearToast: () => dispatch({ type: "toast", value: null }),
       clearAll: () => dispatch({ type: "clearAll" }),
+      receive: () => dispatch({ type: "incoming", at: Date.now() }),
     }),
     [state],
   )

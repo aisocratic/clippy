@@ -5,9 +5,8 @@ By [AI Socratic](https://aisocratic.org).
 **[Download the latest Apple-silicon DMG](https://github.com/AISocratic/clippy/releases/latest/download/Clippy-for-Claude-Code.dmg)** · [Compatibility](docs/COMPATIBILITY.md) · [Troubleshooting](docs/TROUBLESHOOTING.md) · [Privacy](docs/PRIVACY.md)
 
 Current packaged release: **Apple silicon, macOS 11+**. Intel users can build
-from source. The public `v0.1.0` DMG is ad-hoc signed, so it requires
-right-click → **Open** on first launch; signed/notarized release packaging is
-now enforced by `npm run package:release` once Apple credentials are configured.
+from source. The official `v0.3.1` release and later are Developer ID signed
+and Apple-notarized; they should open normally without a Gatekeeper bypass.
 
 **One little Clippy per Claude Code or Codex session**, living on your MacBook, each one
 knowing what its session is doing right now — and letting you **answer it right
@@ -51,18 +50,28 @@ until you hide it).
 And it shows up **where the session lives**: when a buddy has something to say
 it appears on that session's own terminal/editor window — top-right corner,
 following the window as you move it — rather than in a corner of the screen.
-Every card carries a **go to terminal ↗** button that brings that window to the
-front, so you land in the right session instead of hunting for it.
+Every card carries a button that brings that window to the front, so you land in
+the right session instead of hunting for it — and it is named after whatever
+that session actually lives in: **go to Ghostty ↗**, **go to ChatGPT ↗**,
+**go to Claude ↗**, or **attach a terminal ↗** for a tmux session Clippy
+started. Each card also says who is asking, as *project · agent · app*, which is
+what tells two sessions of the same agent apart.
+
+And when you are **already in that window**, Clippy says nothing at all: the
+agent's own prompt is right there on the screen you are typing on, so a held
+question is handed straight back to it rather than answered here. Turn it off
+under 📎 → *Stay quiet when I'm already in that window*.
 
 Clippy is a **small buddy** by default and only grows a window when there's
 something to read — as tall as that thing needs, no more. **Click him** and he
 goes straight to the useful thing: a message you haven't seen yet, or — when
-there's nothing waiting — one panel that answers "how is this session doing,
-and what now?": what the agent is doing right now, how much context and
-allowance it has spent (`660k left of 1.0M · 340k used (34%)` over a progress
-bar, plus real allowance bars for the rolling 5-hour block, the week, and
-Opus's own week once you tell Clippy your plan), and a box to type the next
-prompt into — he raises that session's terminal and types it in for you.
+there's nothing waiting — one panel that answers "how is this session doing?":
+what the agent is doing right now, and how much context and allowance it has
+spent (`660k left of 1.0M · 340k used (34%)` over a progress bar, with **▾** for
+real allowance bars covering the rolling 5-hour block, the week, and Opus's own
+week once you tell Clippy your plan). It is a panel of numbers and nothing else
+— **💬** is where you type, whether that's to the buddy or, picking its name
+from the row above, into that session's own terminal.
 **Right-click** for everything else — the same stats, Settings, and hide.
 **Double-click** just says hi back, for about a second. The built-in buddies are
 all drawn in code: Clippy, the cat, and Clod are generated pixel art; Orbit and
@@ -290,7 +299,7 @@ port first wins.
   tool yet, so there is no picker in the terminal to look at. Releasing it is
   what makes one appear.) If answering from Clippy is off — or the question
   arrives malformed — you get a read-only card with the question and a
-  **go to terminal ↗** button instead.
+  **go to …↗** button instead, named after the app it is waiting in.
 - **Review card**: when Claude finishes, the card shows what it just said and
   waits as long as you like — the chat is already free. **Looks good** puts
   Clippy away; type what's missing and **Send feedback** and your note is
@@ -366,7 +375,8 @@ port first wins.
   quick menu — per-session actions (show, perch, open window), Drive mode, every
   on/off switch under *Quick settings* (permission requests, questions, review on
   finish, perch), and quit.
-- **go to terminal ↗** (on every card) and **open session ↗** (hover below
+- **go to …↗** (on every card, named after that session's own app) and
+  **open session ↗** (hover below
   Clippy) both raise that session's window and keep Clippy perched on it as a
   small happy paperclip until you send it away. The menu bar can perch it
   again.
@@ -534,9 +544,16 @@ time; nothing under Docs changes anything.
   own follows the default under **Buddies**.
 - **Sounds** — the only noise Clippy makes: a short cue when a hidden buddy
   appears, off until you pick one. Nothing plays for a buddy already on screen.
-- **Buddies** — every character with all nine of its animations playing side by
-  side (the same layout as the test bench's workbench), and the default size
-  picker (per-project sizes live beside each session above).
+- **Buddies** — **On screen**: *one each*, a buddy per session side by side, or
+  *one for all*, a single buddy that stands in for every agent — for when three
+  agents means three paperclips and you'd rather it didn't. The one buddy keeps
+  **the face you pick** whoever it is speaking for, so there is one look to
+  learn; the name under its feet and the card say which agent it is talking
+  about. Its 💬 chat then has a row of everyone running: talk to the buddy, or
+  pick an agent and type straight into its session. Then every
+  character with all nine of its animations playing side by side (the same
+  layout as the test bench's workbench), and the default size picker
+  (per-project sizes live beside each session above).
   **Every live session gets its own available buddy**, chosen from the cast by
   session id, so parallel agents in the same repo do not match. Nothing to
   configure — click a character here to make it the first choice for projects
@@ -547,8 +564,17 @@ time; nothing under Docs changes anything.
   installs, and joins the cast on the spot.
 - **Updates** — which copy you're running (checkout vs packaged app, version,
   commit), and a button that compares it with the tip of `main` on GitHub.
-  Like the pet downloads above, it's a deliberate, user-initiated request —
-  the app never talks to anything but localhost on its own.
+  Like the pet downloads above, it's a deliberate, user-initiated request.
+  Along with **Feedback** below, these are the only times Clippy talks to
+  anything but localhost — and never on its own.
+- **Feedback** — a thumb and a box, going privately to the people who make
+  Clippy. Not a review and not a testimonial: it lands in AI Socratic's own
+  database and nothing written there is shown on the website or anywhere
+  public. It's the only thing Clippy ever sends that came from you, it goes
+  only when you press send, and it carries nothing but the
+  thumb, your words, and the build number — no project names, no paths, no
+  code, and nothing that says who you are (`src/feedback.js` is the whole
+  payload, and a test holds it to that).
 - **Clippy's features** — the one page under **Docs**, and the full catalogue:
   what triggers each behaviour, which hook it rides on, what you see, and — for
   anything that answers on your behalf — **the exact JSON Claude Code receives**

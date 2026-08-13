@@ -13,6 +13,8 @@ const agentRow = document.getElementById('agent-row');
 const folder = document.getElementById('folder');
 const host = document.getElementById('host');
 const remotePath = document.getElementById('remote-path');
+const chatWorkspace = document.getElementById('chat-workspace');
+const recentFolders = document.getElementById('recent-folders');
 const errorEl = document.getElementById('error');
 const startBtn = document.getElementById('start');
 
@@ -23,12 +25,13 @@ function setError(message) {
   errorEl.classList.toggle('hidden', !message);
 }
 
-/** Grey out the half of the form that isn't being used, without hiding it. */
+/** Grey out the places that are not being used, without hiding them. */
 function syncEnabled() {
-  const ssh = placeNow() === 'ssh';
-  folder.closest('.indent').classList.toggle('off', ssh);
-  host.closest('.indent').classList.toggle('off', !ssh);
-  (ssh ? host : folder).focus({ preventScroll: true });
+  const place = placeNow();
+  document.getElementById('project-fields').classList.toggle('off', place !== 'local');
+  document.getElementById('ssh-fields').classList.toggle('off', place !== 'ssh');
+  startBtn.textContent = place === 'chat' ? 'Start chatting' : 'Start';
+  (place === 'ssh' ? host : place === 'local' ? folder : startBtn).focus({ preventScroll: true });
 }
 
 window.newAgentAPI.onState((state) => {
@@ -47,15 +50,20 @@ window.newAgentAPI.onState((state) => {
     agentRow.appendChild(label);
   }
 
-  // Open on the last place you started something, since starting another one
-  // there is much the likelier reason to be here.
-  const recent = (state.recentProjects || [])[0];
-  if (recent && recent.host) {
-    form.querySelector('input[value="ssh"]').checked = true;
-    host.value = recent.host;
-    remotePath.value = recent.remotePath || '';
-  } else if (recent) {
-    folder.value = recent.path || '';
+  chatWorkspace.textContent = String(state.chatWorkspace || '~/Clippy').replace(/^\/Users\/[^/]+/, '~');
+  recentFolders.replaceChildren();
+  const recents = state.recentProjects || [];
+  for (const recent of recents.filter((entry) => entry.path && !entry.host)) {
+    const option = document.createElement('option');
+    option.value = recent.path;
+    recentFolders.appendChild(option);
+  }
+  const localRecent = recents.find((entry) => entry.path && !entry.host);
+  const remoteRecent = recents.find((entry) => entry.host);
+  if (localRecent) folder.value = localRecent.path;
+  if (remoteRecent) {
+    host.value = remoteRecent.host;
+    remotePath.value = remoteRecent.remotePath || '';
   }
   syncEnabled();
 });
@@ -81,16 +89,19 @@ document.getElementById('cancel').addEventListener('click', () => window.newAgen
 
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
-  const ssh = placeNow() === 'ssh';
+  const place = placeNow();
+  const ssh = place === 'ssh';
   const agent = form.querySelector('input[name="agent"]:checked')?.value || 'claude';
 
   if (ssh && !host.value.trim()) return setError('Which host?');
-  if (!ssh && !folder.value.trim()) return setError('Which folder?');
+  if (place === 'local' && !folder.value.trim()) return setError('Which folder?');
 
   setError('');
   startBtn.disabled = true;
   const result = await window.newAgentAPI.start(
-    ssh
+    place === 'chat'
+      ? { agent, mode: 'chat' }
+      : ssh
       ? { agent, host: host.value.trim(), remotePath: remotePath.value.trim() }
       : { agent, path: folder.value.trim() }
   );

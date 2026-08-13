@@ -12,9 +12,14 @@ contextBridge.exposeInMainWorld('clippyAPI', {
   drivePrompt: (text) => ipcRenderer.send('clippy-drive-prompt', text),
   driveStop: () => ipcRenderer.send('clippy-drive-stop'),
   // The prompt composer: raise this session's terminal and type this into it.
-  sendPrompt: (text) => ipcRenderer.send('clippy-send-prompt', text),
+  // `to` names which session it goes to; without it, this buddy's own.
+  sendPrompt: (text, to) => ipcRenderer.send('clippy-send-prompt', text, to),
+  // Who else is running, so one buddy can speak for all of them.
+  agents: () => ipcRenderer.invoke('clippy-agents'),
   // A word with the buddy itself, which goes nowhere near that terminal.
   petSay: (text) => ipcRenderer.invoke('clippy-pet-say', text),
+  // "Who is this for?" — a proposal, never a delivery. See src/delegate.js.
+  delegate: (text) => ipcRenderer.invoke('clippy-delegate', text),
   // Raise this session's terminal window and perch on it. `point: true` also
   // walks Clippy down to that session's prompt when he gets there — for when
   // the answer has to be typed on that line.
@@ -32,10 +37,15 @@ contextBridge.exposeInMainWorld('clippyAPI', {
   fix: (what) => ipcRenderer.send('clippy-fix', what),
   // Grow to fit a card (as tall as its contents need), or shrink back to a
   // bare paperclip.
-  setMode: (mode, height, width) => ipcRenderer.send('clippy-mode', { mode, height, width }),
+  setMode: (mode, height, width, anchor) =>
+    ipcRenderer.send('clippy-mode', { mode, height, width, anchor }),
   identity: () => ipcRenderer.invoke('clippy-session-identity'),
   // The rest of a message the card had to cut — see "read all".
   cardFull: (requestId) => ipcRenderer.invoke('clippy-card-full', requestId),
+  // Open a long message in a window of its own — see openReader in main.
+  // `mine` is what the card already holds, for the common case where main
+  // never had to cut the message and so kept no copy of it.
+  openReader: (id, mine) => ipcRenderer.send('clippy-open-reader', id, mine),
   context: () => ipcRenderer.invoke('clippy-context'),
   usage: () => ipcRenderer.invoke('clippy-usage'),
   // What a session Clippy started has been saying, for the panel that

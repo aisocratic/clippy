@@ -52,10 +52,24 @@
     setSetting: (key, value) => post('set-setting', { key, value }),
     drivePrompt: (text) => post('drive-prompt', { text }),
     driveStop: () => post('drive-stop'),
-    sendPrompt: (text) => post('send-prompt', { text }),
+    sendPrompt: (text, to) => post('send-prompt', { text, to }),
+    // The bench has no sessions; the panel still needs a shape to lay out.
+    agents: async () => {
+      post('agents');
+      return {
+        showing: 'bench',
+        pet: 'Bench',
+        agents: [
+          { sessionId: 'bench', name: 'bench', agent: 'claude', status: 'working', reachable: true },
+          { sessionId: 'other', name: 'other-project', agent: 'codex', status: 'waiting', reachable: false },
+        ],
+      };
+    },
     // In the app the pet's reply comes back from main over IPC invoke. The
     // bench has no model to ask, so it logs the question in the panel and
     // answers in character itself — enough to lay out the panel against.
+    // The bench has no sessions, so nothing is ever routable.
+    delegate: async () => ({ agent: null }),
     petSay: async (text) => {
       post('pet-say', { text });
       return { text: `(bench) “${String(text || '').slice(0, 48)}” — you say the nicest things.` };
@@ -70,12 +84,15 @@
         '(bench) …and here is the rest of it. '.repeat(24)
       }`;
     },
+    // The app opens the whole message in a window of its own; the bench has no
+    // second window, so this only records the ask.
+    openReader: (id, mine) => post('open-reader', { id, mine }),
     openWindow: (opts) => post('open-window', opts || {}),
     pointAtPrompt: () => post('point'),
     openSettings: () => post('open-settings'),
     openExternal: (url) => post('open-external', { url }),
     fix: (what) => post('fix', { what }),
-    setMode: (mode, height) => post('mode', { mode, height }),
+    setMode: (mode, height, width, anchor) => post('mode', { mode, height, width, anchor }),
     identity: async () => ({
       name: new URLSearchParams(location.search).get('name') || 'session',
       agent: new URLSearchParams(location.search).get('agent') === 'codex' ? 'codex' : 'claude',

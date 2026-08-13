@@ -15,6 +15,9 @@
       "bundleIdentifier": "dev.aisocratic.clippy.mobile",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
+      },
+      "entitlements": {
+        "aps-environment": "development"
       }
     },
     "android": {
@@ -39,6 +42,13 @@
           "imageWidth": 180,
           "backgroundColor": "#F7F1E7",
           "resizeMode": "contain"
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/notification-icon.png",
+          "color": "#F2C94C"
         }
       ]
     ],

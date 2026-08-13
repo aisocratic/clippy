@@ -17,6 +17,7 @@
     <a class="rail-link" href="#sounds">Sounds</a>
     <a class="rail-link" href="#buddies">Buddies</a>
     <a class="rail-link" href="#updates">Updates</a>
+    <a class="rail-link" href="#feedback">Feedback</a>
     <p class="rail-group">Docs</p>
     <a class="rail-link" href="#actions">Clippy&#39;s features</a>
     <div id="rail-meta">
@@ -30,11 +31,23 @@
   <main id="page">
     <section id="sessions" class="panel">
       <header class="panel-head">
-        <h1>Sessions</h1>
+        <div class="heading-row">
+          <h1>Sessions</h1>
+          <button id="btn-new-agent" class="panel-action"><span aria-hidden="true">+</span> New agent</button>
+        </div>
         <p>Every Claude Code or Codex session that has reported in. Click one to bring its buddy
            to the front.</p>
       </header>
       <div id="access" class="access hidden"></div>
+
+      <div class="field-row">
+        <div class="field">
+          <label>On screen</label>
+          <div id="buddy-mode" class="segmented"></div>
+        </div>
+        <p class="field-note" id="buddy-mode-note"></p>
+      </div>
+
       <div id="session-list" class="sessions"></div>
     </section>
 
@@ -62,11 +75,12 @@
       <header class="panel-head">
         <div class="heading-row">
           <h1>Buddies</h1>
-          <button id="btn-add-buddy" class="add-buddy"><span aria-hidden="true">+</span> Add a buddy</button>
+          <button id="btn-add-buddy" class="panel-action"><span aria-hidden="true">+</span> Add a buddy</button>
         </div>
-        <p>One buddy per coding-agent session, in the colour of that session. Every
-           live session gets its own available face from the cast, including sessions
-           running side by side in the same project.</p>
+        <p>Every character in the cast, with all nine of its animations playing side by
+           side. Which buddy a session gets is picked beside it under
+           <a href="#sessions">Sessions</a>; this is where you set the default size and
+           add new ones.</p>
       </header>
 
       <div class="field-row">
@@ -89,8 +103,9 @@
       <header class="panel-head">
         <h1>Updates</h1>
         <p>No auto-updater and no phoning home — checking is a button, and updating is
-           <code>git pull</code>. This is the only place Clippy ever talks to something
-           that isn't localhost, and only when you ask it to.</p>
+           <code>git pull</code>. This and <a href="#feedback">Feedback</a> are the only
+           two places Clippy talks to anything that isn't localhost, and both only when
+           you ask them to.</p>
       </header>
 
       <div class="update-box">
@@ -109,6 +124,57 @@
         <p><b>Updating the installed app:</b> pull the checkout, run
            <code>npm run package</code>, and replace the app in Applications with the fresh
            <code>dist/</code> build.</p>
+      </div>
+    </section>
+
+    <section id="feedback" class="panel">
+      <header class="panel-head">
+        <h1>Feedback</h1>
+        <p>How is Clippy going? This goes <b>privately to the people who make Clippy</b>
+           &mdash; straight to the AI Socratic team's inbox, and nowhere else. It isn't a
+           review, it isn't published, and nothing you write here appears on the website
+           or anywhere public.</p>
+        <p>It's also the only thing Clippy ever sends that came from you. It leaves only
+           when you press send, and it carries nothing but the thumb, your words, and
+           which build you're on &mdash; no project names, no paths, no code, and nothing
+           that says who you are.</p>
+      </header>
+
+      <div class="feedback-box">
+        <div class="thumbs" role="radiogroup" aria-label="How is Clippy going?">
+          <button id="thumb-up" class="thumb" role="radio" aria-checked="false">
+            <span class="thumb-mark" aria-hidden="true">&#128077;</span>
+            <span>Going well</span>
+          </button>
+          <button id="thumb-down" class="thumb" role="radio" aria-checked="false">
+            <span class="thumb-mark" aria-hidden="true">&#128078;</span>
+            <span>Not really</span>
+          </button>
+        </div>
+
+        <!-- Everything below appears once a thumb is picked: asking for words
+             before knowing which way it went is a bigger ask than it looks. -->
+        <div id="feedback-rest" class="hidden">
+          <label class="feedback-label" for="feedback-text">
+            <span id="feedback-prompt">What happened?</span>
+            <span id="feedback-count" class="feedback-count"></span>
+          </label>
+          <textarea id="feedback-text" rows="5" spellcheck="true"
+                    placeholder="What were you doing, and what did Clippy do?"></textarea>
+
+          <!-- Says where it goes before the button that sends it. Clippy sends
+               nothing anywhere on its own, so pressing send has to be a choice
+               made knowing the destination, not a surprise afterwards. -->
+          <p class="consent-note">
+            <b>Send feedback</b> sends this to the AI Socratic team at
+            <b>aisocratic.org</b>. They'll read it; nobody else will.
+          </p>
+
+          <div class="feedback-actions">
+            <button id="btn-send-feedback" class="primary">Send feedback</button>
+            <span id="feedback-result" class="update-result"></span>
+          </div>
+        </div>
       </div>
     </section>
 

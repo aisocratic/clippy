@@ -16,12 +16,10 @@ export default function RootLayout() {
           screenOptions={{
             headerShown: false,
             contentStyle: { backgroundColor: colors.paper },
-            animation: "slide_from_right",
           }}
         >
+          {/* One screen, so there is nothing to navigate between. */}
           <Stack.Screen name="index" />
-          <Stack.Screen name="(tabs)" />
-          <Stack.Screen name="session/[id]" />
         </Stack>
         <Toast />
       </ClippyProvider>

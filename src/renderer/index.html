@@ -8,17 +8,32 @@
 <body>
   <div id="stage">
     <div id="card" class="hidden">
+      <!-- (x) on a held card never answers it. It hands the decision back to
+           the agent, which then asks wherever it normally would — so closing
+           this is always safe, and never silently an "allow". -->
+      <button class="panel-x" id="btn-card-x" title="Close" aria-label="Close">×</button>
       <div id="card-head">
+        <!-- Several agents waiting at once: step through them without
+             answering any. Each keeps its own deadline and its own half-typed
+             reason while you look at the others. -->
+        <span id="card-pager" class="hidden">
+          <button id="card-prev" class="pager" title="Previous card (←)" aria-label="Previous card">‹</button>
+          <button id="card-next" class="pager" title="Next card (→)" aria-label="Next card">›</button>
+        </span>
         <span id="card-queue" class="hidden"></span>
         <button id="btn-goto" class="dim hidden"
                 title="Bring this session's terminal window to the front">go to terminal ↗</button>
       </div>
+      <!-- Which agent, in which project, in which window. One buddy can answer
+           for several sessions at once, so "who is asking" cannot be left to
+           the name plate under its feet — it belongs on the card itself. -->
+      <div id="card-where" class="hidden"></div>
       <div id="card-title"></div>
       <div id="card-detail" class="markdown hidden"></div>
       <!-- Only when there is more of the message than the card is showing:
            either it was cut before it got here, or it doesn't fit the box. -->
       <button id="btn-card-more" class="dim hidden"
-              title="Show the whole message — the window grows to fit it">read all</button>
+              title="Open the whole message in a window you can resize and leave open">read it all ↗</button>
       <div id="card-options" class="hidden"></div>
       <textarea id="card-input" rows="2" spellcheck="false"></textarea>
       <div id="card-actions">
@@ -28,7 +43,6 @@
         <button id="btn-good" class="good">Looks good</button>
         <button id="btn-feedback" class="bad">Send feedback</button>
         <button id="btn-submit" class="good">Submit answer</button>
-        <button id="btn-dismiss" class="dim">Dismiss</button>
       </div>
       <div id="card-countdown"><div id="card-countdown-fill"></div></div>
     </div>
@@ -49,6 +63,7 @@
     <!-- What a session Clippy started has been saying, read from its own
          transcript. Separate from #drive, which belongs to Drive mode. -->
     <div id="feed" class="hidden">
+      <button class="panel-x" id="feed-close" title="Close" aria-label="Close">×</button>
       <div id="feed-head">
         <span id="feed-title">recent messages</span>
         <span id="feed-src" class="dim"></span>
@@ -58,13 +73,13 @@
     </div>
 
     <div id="qcard" class="hidden">
+      <button class="panel-x" id="btn-qok" title="Close" aria-label="Close">×</button>
       <div id="qcard-head"><span id="qcard-tag">asking you</span></div>
       <div id="qcard-title"></div>
       <div id="qcard-detail" class="markdown hidden"></div>
       <div id="qcard-actions">
         <button id="btn-qgoto" class="good hidden"
                 title="Bring this session's terminal window to the front, where the picker is waiting">go to terminal ↗</button>
-        <button id="btn-qok" class="dim">Answer in terminal ✓</button>
       </div>
     </div>
 
@@ -74,52 +89,67 @@
          allowance bars, the plan note, and a box to keep talking to it), and
          ▴ folds it back. Never a second window. -->
     <div id="usage" class="hidden collapsed">
+      <!-- Top-right, like any window: (x) closes, and the fold sits under it.
+           Both used to live at the foot of the panel, which put "close" beside
+           the actions and left every popup closing somewhere different. -->
+      <div class="panel-tools">
+        <button class="panel-x" id="btn-usage-close" title="Close" aria-label="Close">×</button>
+        <button id="btn-usage-size"
+                title="Show more: what this session has spent, and on what">▾</button>
+      </div>
       <!-- No name row here: the RPG plate under the buddy already carries the
            pet's name and the folder · model line under it. -->
       <div id="usage-status"></div>
       <div id="usage-recap" class="hidden"></div>
       <div id="usage-bar"><div id="usage-bar-fill"></div></div>
       <div id="usage-context"></div>
+      <!-- Nothing to type into. ▾ answers "how is this session doing" and that
+           is all it does; a box for talking to the agent sitting inside a panel
+           of numbers meant two different jobs shared one window, and you could
+           not open the numbers without also being offered the box. Talking has
+           its own button under the buddy (💬), which is where it lives. -->
       <div id="usage-detail">
         <div id="usage-bars"></div>
         <div id="usage-note"></div>
-        <!-- The placeholder has one line to live on now, so the hint that used
-             to ride along with it moved to the tooltip. -->
-        <textarea id="usage-input" rows="1" spellcheck="false"
-                  title="Typed into this session's terminal — Enter sends it"
-                  placeholder="Chat here"></textarea>
-      </div>
-      <div id="usage-actions">
-        <button id="btn-usage-close" class="dim">Close</button>
-        <!-- One button, two directions: it grows this same panel into the full
-             view and shrinks it back again. Never a second window. Plain: the
-             colour on a button means "this is the answer", and unfolding a
-             panel isn't answering anything. -->
-        <button id="btn-usage-size"
-                title="Show more: the allowance bars, and a box to talk to this agent">▾</button>
-        <!-- Only once there is something to send — see #usage.composing. -->
-        <button id="btn-usage-send" class="good">Send ↵</button>
       </div>
     </div>
 
     <!-- The 💬 button under the buddy opens this: a word with the *pet*, which
          never reaches the session it is sitting on. -->
+    <!-- Who the chat is addressed to. Outside the panel on purpose: with one
+         buddy standing in for every agent this is a row of its own, not a
+         header crowding the top of the card. -->
+    <div id="pet-to" class="hidden" role="radiogroup" aria-label="Send to"></div>
+
     <div id="pet" class="hidden">
+      <button class="panel-x" id="pet-close" title="Close" aria-label="Close">×</button>
       <div id="pet-head">
         <span id="pet-who">your pet</span>
-        <button id="pet-close" class="dim">close</button>
       </div>
       <div id="pet-log"></div>
-      <textarea id="pet-input" rows="1" spellcheck="false"
-                title="Goes to your pet, never to the coding session — Enter sends it"
-                placeholder="Say hi"></textarea>
+      <!-- Type @ and this opens: every agent running, each named by its folder
+           with the path and harness under it, because two projects called "api"
+           are told apart by where they are and not by what they are called. -->
+      <div id="pet-picker" class="hidden" role="listbox" aria-label="Agents"></div>
+      <!-- Who this is going to, beside the box you are typing it into. The row
+           of pills above says the same thing, but you are not looking up there
+           while you type — and typing into the wrong agent's session is not a
+           mistake you can take back. -->
+      <div id="pet-row">
+        <button id="pet-to-chip" class="hidden" title="Talk to your buddy instead"></button>
+        <textarea id="pet-input" rows="1" spellcheck="false"
+                  title="Enter sends it — to your pet, or to the agent you picked above"
+                  placeholder="Say hi"></textarea>
+      </div>
     </div>
 
     <div id="bubble" class="hidden">
+      <!-- (x) is "got it": reading the message and closing it are one act, and
+           two ways to do one thing is what made these popups inconsistent. -->
+      <button class="panel-x" id="btn-ok" title="Got it" aria-label="Got it">×</button>
       <div id="bubble-text" class="markdown"></div>
       <div id="bubble-actions">
         <button id="btn-fix" class="good hidden">Open Settings ↗</button>
-        <button id="btn-ok">Got it</button>
         <button id="btn-snooze">Snooze 5m</button>
       </div>
     </div>
@@ -144,18 +174,6 @@
       <button id="menu-hide" class="menu-item dim"><span class="mi">×</span>Hide Clippy</button>
     </div>
 
-    <!-- The two things that don't need the menu — put this buddy away, or say
-         something to it. Words rather than glyphs, because a × and a speech
-         bubble at 10px are a guess and "hide" and "chat" are not.
-
-         This row does not stay here. With nothing open it floats above the
-         buddy's head and only while the pointer is on him; the moment a panel
-         opens, that panel owns the space and placeControls (clippy.js) moves
-         this node inside it, where it becomes the panel's own footer. -->
-    <div id="controls">
-      <button id="btn-hide" title="Hide (Clippy keeps running in the menu bar)">hide</button>
-      <button id="btn-chat" title="Chat with your pet — this never reaches the coding session">chat</button>
-    </div>
 
     <div id="clippy">
       <!-- Generated characters animate inside GIFs built by `npm run make-buddies`;
@@ -177,6 +195,32 @@
       <span id="pointer-arrow">▼</span>
     </div>
 
+    <!-- Everything the buddy can do, in one row that never moves.
+         It used to be two word-buttons floating over his head that a panel
+         would then adopt as its own footer — so the same controls lived in a
+         different place depending on what was open, and the rest (stats,
+         recent messages, settings) were only reachable by knowing to
+         right-click. One row, one home, under his feet: it appears when you
+         point at him or while a panel is up, and every item is one click.
+         Labelled as well as drawn, because a glyph at 10px is a guess. -->
+    <div id="controls" role="toolbar" aria-label="Buddy actions">
+      <button id="btn-chat" class="act" title="Chat — talk to your buddy, or through it to an agent">
+        <span class="act-icon" aria-hidden="true">💬</span><span class="act-label">chat</span>
+      </button>
+      <button id="btn-stats" class="act" title="How this session is doing: state, context and spend">
+        <span class="act-icon" aria-hidden="true">📊</span><span class="act-label">stats</span>
+      </button>
+      <button id="btn-messages" class="act hidden" title="What this session has been saying">
+        <span class="act-icon" aria-hidden="true">📜</span><span class="act-label">log</span>
+      </button>
+      <button id="btn-settings" class="act" title="Clippy's settings">
+        <span class="act-icon" aria-hidden="true">⚙</span><span class="act-label">settings</span>
+      </button>
+      <button id="btn-hide" class="act" title="Hide (Clippy keeps running in the menu bar)">
+        <span class="act-icon" aria-hidden="true">×</span><span class="act-label">hide</span>
+      </button>
+    </div>
+
     <!-- The buddy's name plate — under its feet, no card around it, just text
          the drop shadow keeps legible over whatever wallpaper it lands on: the
          pet's name, and under it the folder it is watching and the model that
@@ -187,6 +231,11 @@
     </div>
 
     <div id="activity" class="hidden"></div>
+    <!-- The last few things this buddy actually did — "allowed npm run build",
+         "handed a question back", "finished: …". The activity line above says
+         what is happening *now* and forgets it the moment it changes; this is
+         what happened, so you can look away and still find out. -->
+    <div id="deeds" class="hidden"></div>
     <div id="statusline">waiting for sessions…</div>
   </div>
   <script src="vector-buddies.js"></script>

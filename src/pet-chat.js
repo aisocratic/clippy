@@ -87,6 +87,8 @@ function conversationPrompt(history, text) {
 /** Pull the assistant's words out of whatever the SDK streamed back. Pure. */
 function replyText(messages) {
   const parts = [];
+  let failure = '';
+  let failed = false;
   for (const msg of messages) {
     if (!msg || typeof msg !== 'object') continue;
     if (msg.type === 'assistant') {
@@ -94,11 +96,25 @@ function replyText(messages) {
       for (const b of Array.isArray(blocks) ? blocks : []) {
         if (b.type === 'text' && b.text) parts.push(b.text);
       }
-    } else if (msg.type === 'result' && !parts.length && typeof msg.result === 'string') {
-      parts.push(msg.result);
+    } else if (msg.type === 'result') {
+      // `is_error` is the only honest signal here: a refusal to serve arrives
+      // wearing the assistant's own voice — a spend limit comes back as an
+      // assistant text block reading "Credit balance is too low", and the
+      // result alongside it still says subtype "success". Taken at face value
+      // that becomes the pet's own words, which is how a billing problem ends
+      // up looking like a small animal saying something strange to you.
+      if (msg.is_error === true || /error/i.test(String(msg.subtype || ''))) {
+        failed = true;
+        failure = failure || String(msg.result || msg.subtype || '').trim();
+      } else if (!parts.length && typeof msg.result === 'string') {
+        parts.push(msg.result);
+      }
     }
   }
-  return parts.join(' ').replace(/\s+/g, ' ').trim();
+  const text = parts.join(' ').replace(/\s+/g, ' ').trim();
+  // When the turn failed, whatever was "said" is the explanation, not a reply.
+  if (failed) return { text: '', error: failure || text };
+  return { text, error: '' };
 }
 
 class PetChat {
@@ -126,6 +142,50 @@ class PetChat {
    * @returns {Promise<{text?: string, error?: string}>} never throws: the panel
    *   shows whatever comes back, and a missing SDK is a sentence, not a crash.
    */
+  /**
+   * Ask the pet model a question that is not conversation.
+   *
+   * Used for routing (src/delegate.js): the same small model, but no persona,
+   * no history and nothing kept afterwards — this is a decision, not a chat,
+   * and it must not leave the pet talking as if it had been asked something.
+   *
+   * @returns {Promise<{text?: string, error?: string}>}
+   */
+  async ask(prompt) {
+    const question = String(prompt || '').trim();
+    if (!question) return { error: 'nothing to decide' };
+    if (this.busy) return { error: 'still thinking about the last one…' };
+    this.busy = true;
+    const messages = [];
+    let thrown = null;
+    try {
+      const runQuery = await this._loadRunQuery();
+      for await (const msg of runQuery({
+        prompt: question,
+        options: {
+          model: PET_MODEL,
+          allowedTools: [],
+          settingSources: [],
+          maxTurns: 1,
+        },
+      })) {
+        messages.push(msg);
+      }
+    } catch (err) {
+      thrown = err;
+    } finally {
+      this.busy = false;
+    }
+
+    // Same order as say(): what the SDK *said* went wrong beats the exit code
+    // it left behind. "Credit balance is too low" is worth reading; "process
+    // exited with code 1" is what that looked like before this.
+    const { text, error } = replyText(messages);
+    if (text) return { text };
+    if (error) return { error: error.slice(0, 200) };
+    return { error: String((thrown && thrown.message) || thrown || 'no answer').slice(0, 200) };
+  }
+
   async say(text) {
     const said = String(text || '').trim();
     if (!said) return { error: 'say something first' };
@@ -162,7 +222,7 @@ class PetChat {
     // The answer first, even when the stream fell over on the way out: the SDK
     // can hand over a perfectly good reply and *then* exit non-zero, and the
     // pet saying nothing because of that is a worse bug than the tidy one.
-    const reply = replyText(messages);
+    const { text: reply, error: failed } = replyText(messages);
     if (reply) {
       this.history.push({ role: 'user', text: said }, { role: 'pet', text: reply });
       // Keep the tail only — the prompt already ignores the rest.
@@ -172,6 +232,9 @@ class PetChat {
       return { text: reply };
     }
 
+    // The SDK reported why there is no answer — a spend limit, a rate limit,
+    // an auth problem. Say that, rather than letting it wear the pet's voice.
+    if (failed) return { error: failed.slice(0, 200) };
     if (!thrown) return { error: 'the pet had nothing to say' };
     const message = String((thrown && thrown.message) || thrown);
     // The one failure worth explaining, because it has a fix.

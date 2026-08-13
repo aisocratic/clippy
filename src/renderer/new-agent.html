@@ -18,21 +18,36 @@
     <fieldset id="where">
       <legend>Where</legend>
       <label class="choice">
-        <input type="radio" name="place" value="local" checked />
-        <span>On this machine</span>
+        <input type="radio" name="place" value="chat" checked />
+        <span class="choice-copy">
+          <strong>Just chat</strong>
+          <small>Use <code id="chat-workspace">~/Clippy</code>, created automatically.</small>
+        </span>
       </label>
-      <div class="indent">
+
+      <label class="choice">
+        <input type="radio" name="place" value="local" />
+        <span class="choice-copy">
+          <strong>Work in a project</strong>
+          <small>Give the agent access to a specific folder.</small>
+        </span>
+      </label>
+      <div id="project-fields" class="indent off">
         <div class="row">
-          <input id="folder" type="text" spellcheck="false" placeholder="/Users/you/projects/thing" />
+          <input id="folder" type="text" list="recent-folders" spellcheck="false" placeholder="/Users/you/projects/thing" />
+          <datalist id="recent-folders"></datalist>
           <button id="browse" type="button">Choose…</button>
         </div>
       </div>
 
       <label class="choice">
         <input type="radio" name="place" value="ssh" />
-        <span>Over SSH</span>
+        <span class="choice-copy">
+          <strong>Over SSH</strong>
+          <small>Run in a folder on another machine.</small>
+        </span>
       </label>
-      <div class="indent">
+      <div id="ssh-fields" class="indent off">
         <div class="row">
           <input id="host" type="text" spellcheck="false" placeholder="you@box" />
           <input id="remote-path" type="text" spellcheck="false" placeholder="~/projects/thing" />
@@ -48,7 +63,7 @@
 
     <div id="actions">
       <button id="cancel" type="button" class="dim">Cancel</button>
-      <button id="start" type="submit" class="good">Start</button>
+      <button id="start" type="submit" class="good">Start chatting</button>
     </div>
   </form>
   <script src="new-agent.js"></script>

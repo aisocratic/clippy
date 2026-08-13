@@ -51,8 +51,9 @@ const QUESTION_TOOL = 'AskUserQuestion';
 // (approve/deny a permission request, answer a multiple-choice question).
 // Everything else is fire-and-forget. There is deliberately no
 // SessionStart hook: a session announces itself with its first real activity.
-// In the terminal Clippy is only the statusline's small 📎 (see
-// statuslineCommand below), nothing more.
+// Clippy draws nothing in the terminal at all: it used to put a small 📎 in
+// Claude Code's statusline, and the prompt bar turned out to be the one place
+// you do not want a second thing competing for your eye while you type.
 const SPECS = [
   { event: 'Notification', matcher: 'permission_prompt' },
   { event: 'Notification', matcher: 'idle_prompt' },
@@ -128,24 +129,6 @@ function isOurs(hook) {
     (command.includes(MARKER) || command.includes(LEGACY_MARKER));
 }
 
-/**
- * Claude Code's statusline: the one line rendered under the input box. Ours is
- * deliberately tiny — a 📎 tucked against the right edge, and nothing else.
- * The command ships the session JSON to the app whole, plus the terminal's
- * width (read from the controlling tty; 0 when unknowable) so the app can pad
- * the clip to the right edge. The response is the finished ANSI line, with an
- * OSC 8 hyperlink that opens this session's buddy. App not running -> empty
- * stdout -> Claude Code shows nothing; -f also swallows HTTP errors so an
- * older app's 404 never lands under the input box.
- */
-function statuslineCommand(port) {
-  return (
-    `cols=$(stty size </dev/tty 2>/dev/null | awk '{print $2}'); ` +
-    `curl -sf --connect-timeout 1 -m 2 -X POST "http://127.0.0.1:${port}/statusline?cols=\${cols:-0}" ` +
-    `-H 'Content-Type: application/json' --data-binary @- 2>/dev/null || true ${MARKER}`
-  );
-}
-
 /** Remove all clippy hooks from a settings object (mutates + returns it). */
 function uninstallHooks(settings) {
   // A statusline we claimed goes back to being free; one the user wrote
@@ -194,8 +177,13 @@ function installHooks(settings, port = DEFAULT_PORT) {
   // Claude Code renders exactly one statusline, so a user's own stays theirs:
   // we only claim the slot when it's empty (uninstallHooks above already
   // cleared a previous install of ours).
-  if (!settings.statusLine) {
-    settings.statusLine = { type: 'command', command: statuslineCommand(port) };
+  // Clippy no longer claims the statusline: the prompt bar belongs to the
+  // agent you are typing at, and the app draws nothing there any more (see
+  // statuslineFor). One we installed previously is taken back out, so nobody
+  // is left running a curl on every keystroke to render an empty line. One the
+  // user wrote themselves is never touched.
+  if (isOurs(settings.statusLine)) {
+    delete settings.statusLine;
   }
   return settings;
 }
@@ -266,7 +254,7 @@ function checkDrift(settings, port = DEFAULT_PORT) {
   // No statusline at all means an install older than this build; one the user
   // wrote themselves is respected, so it never counts as drift.
   if (!settings.statusLine) {
-    drift.missing.push('statusLine (the 📎 under the input box)');
+    // Not missing any more — Clippy stopped putting anything there.
   } else if (isOurs(settings.statusLine)) {
     const command = String(settings.statusLine.command);
     if (!command.includes(`127.0.0.1:${port}/`)) drift.wrongPort = true;
@@ -546,7 +534,6 @@ module.exports = {
   checkOpenclawDrift,
   defaultAgents,
   hookCommand,
-  statuslineCommand,
   SPECS,
   CODEX_SPECS,
   OPENCLAW_EVENTS,

@@ -79,15 +79,17 @@ test('the pet only remembers the last few exchanges', () => {
 });
 
 test('the reply is the assistant text, or the result when there is none', () => {
+  // Returns both halves: what the pet said, and why it didn't. They come back
+  // in the same SDK field, so they have to be told apart somewhere.
   assert.equal(
     replyText([
       { type: 'assistant', message: { content: [{ type: 'text', text: 'woof' }] } },
       { type: 'result', result: 'woof' },
-    ]),
+    ]).text,
     'woof'
   );
-  assert.equal(replyText([{ type: 'result', result: 'just this' }]), 'just this');
-  assert.equal(replyText([null, { type: 'system' }]), '');
+  assert.equal(replyText([{ type: 'result', result: 'just this' }]).text, 'just this');
+  assert.deepEqual(replyText([null, { type: 'system' }]), { text: '', error: '' });
 });
 
 test('saying something gets an answer back, and the pet remembers it', async () => {
@@ -180,4 +182,36 @@ test('a model that says nothing at all does not become an empty bubble', async (
   const { error, text } = await chat.say('hello?');
   assert.equal(text, undefined);
   assert.match(error, /nothing to say/);
+});
+
+test('an API failure is not mistaken for something the pet said', () => {
+  // The SDK puts the answer and the reason there is no answer in the same
+  // field. Read carelessly, a billing problem becomes the pet's own words.
+  const failed = replyText([
+    { type: 'result', subtype: 'error_during_execution', is_error: true, result: 'Credit balance is too low' },
+  ]);
+  assert.equal(failed.text, '');
+  assert.equal(failed.error, 'Credit balance is too low');
+
+  // A plain result is still the answer when nothing else spoke.
+  const plain = replyText([{ type: 'result', result: 'hello there' }]);
+  assert.deepEqual(plain, { text: 'hello there', error: '' });
+
+  // The shape that actually comes back when the account cannot pay: the
+  // refusal arrives as an assistant text block, and the result beside it still
+  // claims subtype "success". Only is_error tells the truth, so it has to win
+  // over the words — those words *are* the error.
+  const billing = replyText([
+    { type: 'assistant', message: { content: [{ type: 'text', text: 'Credit balance is too low' }] } },
+    { type: 'result', subtype: 'success', is_error: true, result: 'Credit balance is too low' },
+  ]);
+  assert.equal(billing.text, '');
+  assert.equal(billing.error, 'Credit balance is too low');
+
+  // A healthy turn is untouched by any of that.
+  const fine = replyText([
+    { type: 'assistant', message: { content: [{ type: 'text', text: 'meow' }] } },
+    { type: 'result', subtype: 'success', is_error: false, result: 'meow' },
+  ]);
+  assert.deepEqual(fine, { text: 'meow', error: '' });
 });

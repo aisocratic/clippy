@@ -438,6 +438,11 @@ window.addEventListener('message', async (e) => {
       setDocked(true);
       break;
 
+    case 'delegate':
+      // In the app this asks the pet model which agent a message is for.
+      log('in', 'delegate', 'the bench has no agents to route to');
+      break;
+
     case 'pet-say':
       // Note where this does *not* go: the pet chat never reaches the session.
       log('in', 'petSay', `to the pet, not the session: ${p.text}`);
@@ -446,6 +451,17 @@ window.addEventListener('message', async (e) => {
     case 'card-full':
       // In the app this fetches the part of the message the card had to cut.
       log('in', 'cardFull', `the rest of ${p.requestId}`);
+      break;
+
+    case 'open-reader':
+      // In the app this opens the whole message in a window of its own; the
+      // bench has no second window to open, so it just says so.
+      log('in', 'openReader', `read ${p.id} in its own window`);
+      break;
+
+    case 'agents':
+      // In the app this is the live session list; the bench has none.
+      log('in', 'agents', 'who is running');
       break;
 
     case 'feed':
