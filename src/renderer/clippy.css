@@ -304,6 +304,12 @@ body.solo #who {
   opacity: 1;
 }
 
+/* The shared main buddy is identified by its own name only. Session buddies
+   keep the project and model line so several agents remain scannable. */
+body.solo #who-sub {
+  display: none;
+}
+
 #who-pet,
 #who-sub {
   max-width: 100%;

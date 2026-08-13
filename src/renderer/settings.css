@@ -96,6 +96,45 @@ button:disabled {
   opacity: 0.45;
 }
 
+/* Every picker is the same compact, outlined control as the app's buttons.
+   Native select chrome otherwise gives the sound picker and the session
+   pickers visibly different borders, arrows, and focus states. */
+select {
+  appearance: none;
+  min-height: 31px;
+  padding: 5px 30px 5px 10px;
+  border: 1.5px solid var(--ink);
+  border-radius: 8px;
+  background-color: #ffffff;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--ink) 50%),
+    linear-gradient(135deg, var(--ink) 50%, transparent 50%);
+  background-position:
+    calc(100% - 14px) 13px,
+    calc(100% - 9px) 13px;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+  color: var(--text);
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 700;
+  line-height: 1.3;
+  transition: background-color 0.12s ease, box-shadow 0.12s ease, transform 0.08s ease;
+}
+
+select:hover:not(:disabled) {
+  background-color: var(--surface-2);
+}
+
+select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+select:disabled {
+  opacity: 0.45;
+}
+
 /* ---------- Rail ---------- */
 
 #rail {
@@ -376,12 +415,6 @@ button:disabled {
 .sound-setting select,
 .draw-tools input {
   min-width: 150px;
-  padding: 6px 9px;
-  border: 1.5px solid var(--ink);
-  border-radius: 8px;
-  background: #fff;
-  color: var(--text);
-  font: inherit;
 }
 
 .cast {
@@ -886,13 +919,6 @@ button:disabled {
 .session-pick {
   flex: none;
   max-width: 190px;
-  padding: 4px 7px;
-  border-radius: 8px;
-  border: 1.5px solid var(--ink);
-  background: #ffffff;
-  color: var(--text);
-  font: inherit;
-  font-size: 11.5px;
 }
 
 .session .dot {

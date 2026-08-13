@@ -271,7 +271,23 @@ function soloRow() {
   pick.value = state.soloCharacter || '';
   pick.addEventListener('change', () => set('soloCharacter', pick.value));
 
-  row.append(dot, show, status, art, pick);
+  const sizePick = document.createElement('select');
+  sizePick.className = 'session-pick session-size';
+  sizePick.title = 'How big the main buddy is drawn';
+  const autoSize = document.createElement('option');
+  autoSize.value = '';
+  autoSize.textContent = `Default (${SIZE_LABEL[state.size] || state.size})`;
+  sizePick.appendChild(autoSize);
+  for (const size of state.sizes) {
+    const option = document.createElement('option');
+    option.value = size.id;
+    option.textContent = SIZE_LABEL[size.id] || size.id;
+    sizePick.appendChild(option);
+  }
+  sizePick.value = solo.size || '';
+  sizePick.addEventListener('change', () => set('soloSize', sizePick.value));
+
+  row.append(dot, show, status, art, pick, sizePick);
   return row;
 }
 

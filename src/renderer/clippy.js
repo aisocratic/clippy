@@ -342,6 +342,7 @@ function applyIdentity() {
   const buddyName = character?.label || 'Buddy';
   const harness = HARNESS_NAMES[me.agent] || HARNESS_NAMES.claude;
   const model = shortModel(me.model);
+  const solo = document.body.classList.contains('solo');
   // The pet's own name leads; under it, the folder this session is in and the
   // model spending in it. The model goes on in full — `gpt-5.6-sol`, not the
   // `claude-` stripped label the panels use — because on the plate it is the
@@ -351,16 +352,18 @@ function applyIdentity() {
   // for one on another machine. Both are "mine", which is worth knowing before
   // you wonder why it has no terminal window.
   const owned = me.owned ? (me.host ? `⇅ ${me.host} · ` : '⧉ ') : '';
-  whoSub.textContent = owned + (me.model ? `${me.name} · ${me.model}` : me.name);
-  // The one that answers for all of them wears a crown, so which buddy is in
-  // charge is obvious without reading anything.
-  whoPet.textContent = document.body.classList.contains('solo') ? `👑 ${me.pet}` : me.pet;
+  // The shared main buddy is a stable companion, not a session label: only
+  // its own name belongs on its plate. A session buddy names itself, project,
+  // and model so parallel agents remain distinguishable at a glance.
+  whoSub.textContent = solo ? '' : owned + (me.model ? `${me.name} · ${me.model}` : me.name);
   const where = me.owned
     ? me.host
       ? ` in tmux over ${me.host}`
       : ` in tmux (${me.tmux || 'started by Clippy'})`
     : '';
-  whoEl.title = `${me.pet} the ${buddyName}, on “${me.name}”${where} — running ${harness} with ${model}`;
+  whoEl.title = solo
+    ? `${me.pet} the ${buddyName}`
+    : `${me.pet} the ${buddyName}, on “${me.name}”${where} — running ${harness} with ${model}`;
 }
 
 // Hook payloads identify the harness, while its transcript is the reliable
@@ -2463,6 +2466,10 @@ function handleEvent(evt) {
     case 'question': {
       // Surface-only fallback for disabled or malformed questions.
       showQuestion(evt);
+      break;
+    }
+    case 'open-usage': {
+      showUsage();
       break;
     }
     case 'request-closed': {

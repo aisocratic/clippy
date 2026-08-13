@@ -116,6 +116,11 @@ const broker = new DecisionBroker({ hardCapMs: 100_000 });
 let drive = null; // the active Clippy-driven (Agent SDK) session, if any
 let tray = null;
 let trayTextFallback = false; // the icon failed to render; the 📎 title stands in
+// A card can only hold the hook for a short time. Keep its destination here
+// after that hand-off so "I came back later" never turns into "where did that
+// approval go?". This is intentionally runtime-only: once Clippy restarts it
+// cannot know whether the terminal prompt is still live.
+const attentionInbox = new Map(); // requestId -> { sessionId, name, agentName, title, state }
 let hookDrift = null; // set when the installed hooks are older than this build
 let hooksAbsent = false; // no agent has any Clippy hooks — a fresh (DMG) install
 
@@ -145,6 +150,9 @@ const settings = {
   // In 'one' mode, the face the single buddy always wears. '' means "let
   // Clippy pick" — the same casting a session would have got.
   soloCharacter: '',
+  // The one buddy can be a different size from the session buddies. '' keeps
+  // it on the global default, which is also how existing settings files behave.
+  soloSize: '',
   size: 'medium', // the size a project gets when it hasn't picked one
   arrangeEdge: '', // screen edge new buddies line up on; '' = the classic corner
   // …and the sessions Clippy starts itself (see spawnAgent).
@@ -161,6 +169,7 @@ const CHOICES = {
   appearanceSound: () => ['', 'pop', 'chime', 'chirp'],
   buddyMode: () => ['each', 'one'],
   soloCharacter: () => ['', ...characterIds()],
+  soloSize: () => ['', ...Object.keys(SIZES)],
   defaultAgent: () => Object.keys(tmux.SPAWNABLE),
   attachTerminal: () => Object.keys(ATTACH_APPS),
 };
@@ -314,6 +323,12 @@ function setSetting(key, value) {
   // for a new height once it has re-measured, but this keeps the bare buddy
   // from sitting in the wrong box in the meantime.
   if (key === 'size') replaceAll();
+  // The shared buddy has its own optional size. Re-lay only that window so
+  // changing it never makes a desk full of session buddies jump around.
+  if (key === 'soloSize') {
+    const solo = buddies.get(SOLO_KEY);
+    if (solo && !solo.win.isDestroyed()) placeBuddy(solo, solo.mode || 'compact');
+  }
   // A different face for the shared buddy is a look, not a rebuild — but the
   // window is holding the old one until it is told.
   if (key === 'soloCharacter') {
@@ -341,7 +356,7 @@ function settingsPayload(buddy) {
     ...(buddy
       ? {
           character: buddy.character,
-          size: sizeFor(settings, buddy.name, buddy.sessionId),
+          size: sizeForBuddy(buddy),
           // Is *this* window the one that speaks for everybody? Not the same
           // question as "is the mode 'one'": buddies that already existed when
           // the mode changed keep their own windows and are not the manager.
@@ -377,7 +392,15 @@ function recast() {
  * project now: two sessions side by side can be XS and large at once.
  */
 function compactSize(buddy) {
-  return SIZES[sizeFor(settings, buddy?.name || '', buddy?.sessionId || '')].win;
+  return SIZES[sizeForBuddy(buddy)].win;
+}
+
+/** The manager in one-buddy mode has its own optional size; everyone else is per-session. */
+function sizeForBuddy(buddy) {
+  if (buddy && buddies.get(SOLO_KEY) === buddy && SIZES[settings.soloSize]) {
+    return settings.soloSize;
+  }
+  return sizeFor(settings, buddy?.name || '', buddy?.sessionId || '');
 }
 
 /** Re-lay every buddy — the size setting changed under them. */
@@ -487,6 +510,7 @@ function settingsState() {
       character: soloCharacter(),
       pet: petNameFor(SOLO_KEY),
       color: identityFor(SOLO_KEY, 'clippy').color,
+      size: settings.soloSize || '',
       // Who it is speaking for at the moment, if anyone.
       showing: buddies.get(SOLO_KEY)?.name || '',
     },
@@ -1009,6 +1033,7 @@ function sendTo(sessionId, event) {
 function closeBuddy(key) {
   const buddy = buddyOf(key);
   if (!buddy) return;
+  forgetAttentionForSession(key);
   unwatchSpawned(key);
 
   // The shared window belongs to every session, so one of them ending is not
@@ -1138,9 +1163,15 @@ function placeBuddy(buddy, mode, wantHeight, wantWidth) {
         Math.min(Math.max(WIN_W, buddy.wantWidth || WIN_W), workArea.width - WIN_GAP * 2)
       );
   const height = compact
-    ? // Hug what the renderer actually drew, but never grow past the box the
-      // size setting allows — the constant stays the ceiling, not the floor.
-      Math.round(Math.min(compactH, buddy.compactHeight || compactH))
+    ? // The configured compact size is a safe fallback, not a clipping ceiling.
+      // The renderer includes the selected art, name plate, and controls in its
+      // measurement; preserve all of it unless the display itself is shorter.
+      Math.round(
+        Math.min(
+          workArea.height - WIN_GAP * 2,
+          Math.max(compactH, buddy.compactHeight || compactH)
+        )
+      )
     : Math.round(
         // A full window is never smaller than the bare buddy needs.
         Math.max(compactH, Math.min(buddy.wantHeight || WIN_H, workArea.height - WIN_GAP * 2))
@@ -2591,11 +2622,60 @@ async function collectUsage(key) {
 
 /* ---------------- Tray ---------------- */
 
+/** A short, stable label for a menu item that needs the user's attention. */
+function attentionLabel(item) {
+  const subject = String(item.title || (item.kind === 'question' ? 'a question' : 'an approval'))
+    .replace(/\s+/g, ' ')
+    .trim();
+  const prefix = item.state === 'terminal' ? '↗ Answer in terminal' : '📎 Open in Clippy';
+  const who = item.name || item.agentName || 'this session';
+  return `${prefix} — ${who}: ${subject.slice(0, 88)}${subject.length > 88 ? '…' : ''}`;
+}
+
+function attentionItems() {
+  return [...attentionInbox.values()].sort((a, b) => b.updatedAt - a.updatedAt);
+}
+
+function rememberAttention(item) {
+  attentionInbox.set(item.id, { ...item, state: 'clippy', updatedAt: Date.now() });
+  updateTray();
+}
+
+function forgetAttention(id) {
+  if (attentionInbox.delete(id)) updateTray();
+}
+
+function moveAttentionToTerminal(id) {
+  const item = attentionInbox.get(id);
+  if (!item) return;
+  attentionInbox.set(id, { ...item, state: 'terminal', updatedAt: Date.now() });
+  updateTray();
+}
+
+function forgetAttentionForSession(sessionId) {
+  let changed = false;
+  for (const [id, item] of attentionInbox) {
+    if (item.sessionId !== sessionId) continue;
+    attentionInbox.delete(id);
+    changed = true;
+  }
+  if (changed) updateTray();
+}
+
+/** Show a session, already opened to the context and usage summary. */
+function showUsageFor(key) {
+  if (!buddyOf(key)) return;
+  sendTo(key, { kind: 'open-usage' });
+  showBuddy(key, { pin: true });
+}
+
 function trayMenu() {
+  const attention = attentionItems();
   const sessionItems = [...buddies.values()].map((b) => ({
     label: b.name,
     submenu: [
       { label: 'Show Clippy', click: () => showBuddy(b.sessionId, { pin: true }) },
+      { label: 'Context & usage', click: () => showUsageFor(b.sessionId) },
       {
         label: tmuxRecordFor(b.sessionId)
           ? 'Attach in Terminal'
@@ -2612,6 +2692,19 @@ function trayMenu() {
   }));
 
   return Menu.buildFromTemplate([
+    ...(attention.length
+      ? [
+          { label: `Needs attention (${attention.length})`, enabled: false },
+          ...attention.map((item) => ({
+            label: attentionLabel(item),
+            click: () => {
+              if (item.state === 'terminal') openSessionWindow(item.sessionId, { point: true });
+              else showBuddy(item.sessionId, { pin: true });
+            },
+          })),
+          { type: 'separator' },
+        ]
+      : []),
     { label: 'Settings…', click: () => openSettingsWindow() },
     // Straight to the panel: the deep-link already exists, and burying feedback
     // three scrolls into a settings window is how you never hear any.
@@ -2625,7 +2718,7 @@ function trayMenu() {
       },
     },
     {
-      label: 'Hide all',
+      label: 'Hide all until next update',
       enabled: buddies.size > 0,
       click: () => {
         for (const b of buddies.values()) hideBuddy(b.sessionId, { unpin: true });
@@ -2848,22 +2941,31 @@ function createTray() {
 function updateTray() {
   if (!tray) return;
   const { total, waiting } = tracker.counts();
-  // The count beside the clip is how many buddies are open — three sessions
-  // read "3", not the number that happen to be waiting. Who is waiting on you
-  // is the tooltip's job (the buddies themselves already bounce for it).
-  const clip = trayTextFallback ? '📎' : '';
-  tray.setTitle(total > 0 ? `${clip} ${total}` : clip);
-  tray.setToolTip(
-    waiting > 0
-      ? `Clippy — ${total} open session${total === 1 ? '' : 's'}, ${waiting} waiting on you`
-      : 'Clippy for Claude Code + Codex — click for settings'
-  );
+  const attention = attentionItems();
+  const terminalAnswers = attention.filter((item) => item.state === 'terminal').length;
+  // The dot is deliberately present even with no sessions: the clip is an app
+  // icon, while ● says the hook server is awake and ready to hear one. The
+  // number beside it remains the number of active sessions, not just whichever
+  // ones happen to be waiting.
+  const clip = trayTextFallback ? '📎 ' : '';
+  tray.setTitle(total > 0 ? `${clip}● ${total}` : `${clip}●`);
+  const sessions = `${total} open session${total === 1 ? '' : 's'}`;
+  const waitingText = waiting > 0 ? `, ${waiting} waiting on you` : '';
+  const attentionText = attention.length
+    ? ` — ${attention.length} need${attention.length === 1 ? 's' : ''} attention${
+        terminalAnswers ? ` (${terminalAnswers} in terminal)` : ''
+      }`
+    : '';
+  tray.setToolTip(`Clippy is on — ${sessions}${waitingText}${attentionText}. Right-click for sessions.`);
 }
 
-function notify(title, body, { silent = true, sessionId } = {}) {
+function notify(title, body, { silent = true, sessionId, open = 'buddy' } = {}) {
   if (!Notification.isSupported()) return;
   const n = new Notification({ title, body, silent });
-  n.on('click', () => showBuddy(sessionId, { pin: true }));
+  n.on('click', () => {
+    if (open === 'terminal') openSessionWindow(sessionId, { point: true });
+    else showBuddy(sessionId, { pin: true });
+  });
   n.show();
 }
 
@@ -3045,6 +3147,12 @@ function clearGallery() {
 /* ---------------- Hook handling ---------------- */
 
 function emitPassive(reaction, { osNotification = true } = {}) {
+  // Once the agent is moving again, an old terminal hand-off is no longer a
+  // recovery path. Removing it here also covers terminal-native approvals,
+  // which do not necessarily emit another UserPromptSubmit hook.
+  if (reaction.kind === 'activity' || reaction.kind === 'clear' || reaction.kind === 'remove') {
+    forgetAttentionForSession(reaction.sessionId);
+  }
   updateTray();
 
   if (reaction.kind === 'remove') {
@@ -3167,6 +3275,14 @@ async function handlePermissionRequest(payload, ctx) {
   );
   ctx.onClose(() => broker.resolve(id, 'cancel'));
 
+  rememberAttention({
+    id,
+    sessionId: reaction.sessionId,
+    name: reaction.name,
+    agentName,
+    kind: isPlan ? 'plan' : 'approval',
+    title,
+  });
   rememberWhole(id, reaction.sessionId, fullDetail, title);
   sendTo(reaction.sessionId, {
     ...reaction,
@@ -3189,6 +3305,8 @@ async function handlePermissionRequest(payload, ctx) {
 
   const { action, message, timedOut } = await promise;
 
+  if (action === 'pass' || timedOut) moveAttentionToTerminal(id);
+  else forgetAttention(id);
   if (action === 'allow' || action === 'deny') {
     tracker.setStatus(reaction.sessionId, WORKING);
   }
@@ -3208,7 +3326,16 @@ async function handlePermissionRequest(payload, ctx) {
     counts: tracker.counts(),
   });
   // The prompt is in the terminal now — go stand on it.
-  if (action === 'pass' || timedOut) hintAtTerminal(reaction.sessionId);
+  if (action === 'pass' || timedOut) {
+    hintAtTerminal(reaction.sessionId);
+    if (timedOut) {
+      notify('📎 Approval moved to the terminal', `${reaction.name}: ${title}`, {
+        silent: false,
+        sessionId: reaction.sessionId,
+        open: 'terminal',
+      });
+    }
+  }
   return toHookResponse('PermissionRequest', action, message);
 }
 
@@ -3221,6 +3348,19 @@ async function handlePermissionRequest(payload, ctx) {
 let reviewSeq = 0;
 const pendingReviews = new Map(); // requestId -> sessionId
 const DIRECT_REPLY_REVIEW_GRACE_MS = 15_000;
+
+/**
+ * A review holds no hook open, so `hideBuddy` cannot see it through the
+ * DecisionBroker. Before putting a buddy away after a review, look across the
+ * window it belongs to: in one-buddy mode that includes cards from every
+ * session wearing the shared window.
+ */
+function buddyStillHasCards(sessionId) {
+  const buddy = buddyOf(sessionId);
+  if (!buddy) return false;
+  if ([...pendingReviews.values()].some((sid) => buddyOf(sid) === buddy)) return true;
+  return broker.list().some((entry) => buddyOf(entry.meta.sessionId) === buddy);
+}
 
 async function handleStop(payload) {
   const reaction = tracker.handle('Stop', null, payload);
@@ -3293,7 +3433,7 @@ async function handleStop(payload) {
   return {};
 }
 
-/** A review card's button: "Looks good" hides, feedback becomes a prompt. */
+/** A review card's button: "Looks good" closes this card; feedback becomes a prompt. */
 async function resolveReview(id, action, message) {
   const sessionId = pendingReviews.get(id);
   if (!sessionId) return false;
@@ -3303,10 +3443,14 @@ async function resolveReview(id, action, message) {
     updateTray();
     // Typing into the terminal has its own failure messages (no window, no
     // accessibility) — only put Clippy away once the prompt actually landed.
-    if (await sendPromptToTerminal(sessionId, message.trim())) hideBuddy(sessionId);
+    if (await sendPromptToTerminal(sessionId, message.trim()) && !buddyStillHasCards(sessionId)) {
+      hideBuddy(sessionId);
+    }
     return true;
   }
-  hideBuddy(sessionId); // "Looks good" — the agent already stopped
+  // The renderer removed only this card and paged to the next one. Do not hide
+  // that next card just because the completed review itself held no hook open.
+  if (!buddyStillHasCards(sessionId)) hideBuddy(sessionId);
   return true;
 }
 
@@ -3362,6 +3506,14 @@ async function handleQuestion(payload, ctx) {
   );
   ctx.onClose(() => broker.resolve(id, 'cancel'));
 
+  rememberAttention({
+    id,
+    sessionId: reaction.sessionId,
+    name: reaction.name,
+    agentName: reaction.agentName,
+    kind: 'question',
+    title,
+  });
   rememberWhole(id, reaction.sessionId, fullDetail, title);
   sendTo(reaction.sessionId, {
     ...reaction,
@@ -3382,6 +3534,8 @@ async function handleQuestion(payload, ctx) {
 
   const { action, message, timedOut } = await promise;
 
+  if (action === 'pass' || timedOut) moveAttentionToTerminal(id);
+  else forgetAttention(id);
   sendTo(reaction.sessionId, {
     kind: 'request-closed',
     requestId: id,
@@ -3414,6 +3568,13 @@ async function handleQuestion(payload, ctx) {
     // Nobody answered in Clippy — the picker is now up in the terminal, so
     // leave the question on screen as a read-only reminder of where to go.
     surfaceQuestion(reaction, title, detail, { osNotification: false });
+    if (timedOut) {
+      notify('📎 Question moved to the terminal', `${reaction.name}: ${title}`, {
+        silent: false,
+        sessionId: reaction.sessionId,
+        open: 'terminal',
+      });
+    }
   }
   return reply;
 }
@@ -3629,8 +3790,10 @@ function handleHookEvent(eventName, kind, payload, ctx) {
 
   if (eventName === 'UserPromptSubmit' || eventName === 'SessionEnd') {
     // The user moved on in the terminal — pending cards for this session are moot.
-    broker.cancelBySession(payload.session_id || 'unknown');
-    closeReviewsFor(payload.session_id || 'unknown');
+    const sessionId = payload.session_id || 'unknown';
+    broker.cancelBySession(sessionId);
+    closeReviewsFor(sessionId);
+    forgetAttentionForSession(sessionId);
   }
 
   const reaction = tracker.handle(eventName, kind, payload);
@@ -4406,4 +4569,3 @@ app.whenReady().then(async () => {
 
 // Menu-bar style app: keep running with every window hidden/closed.
 app.on('window-all-closed', () => {});
-

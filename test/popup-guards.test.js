@@ -152,3 +152,73 @@ test('a panel is never pushed off the screen to keep the buddy on it', () => {
   assert.match(body, /if \(lo <= hi\) return clamp\(pos, lo, hi\);/);
   assert.match(body, /centre - half/, 'the buddy-based range should remain as the fallback');
 });
+
+test('a compact buddy can grow past its fallback size instead of clipping its own controls', () => {
+  const main = read('src', 'main.js');
+  const fn = main.slice(main.indexOf('function placeBuddy('));
+  const body = fn.slice(0, fn.indexOf('\n}\n') + 3);
+  assert.match(body, /Math\.max\(compactH, buddy\.compactHeight \|\| compactH\)/);
+  assert.match(body, /workArea\.height - WIN_GAP \* 2/);
+});
+
+test('the main buddy has an independent size picker and a name-only plate', () => {
+  const main = read('src', 'main.js');
+  const settings = read('src', 'renderer', 'settings.js');
+  const renderer = read('src', 'renderer', 'clippy.js');
+  const styles = read('src', 'renderer', 'clippy.css');
+
+  assert.match(main, /soloSize: ''/);
+  assert.match(main, /soloSize: \(\) => \['', \.\.\.Object\.keys\(SIZES\)\]/);
+  assert.match(settings, /set\('soloSize', sizePick\.value\)/);
+  assert.match(renderer, /whoSub\.textContent = solo \? ''/);
+  assert.match(styles, /body\.solo #who-sub\s*\{\s*display: none/s);
+});
+
+test('all settings select boxes share one custom control treatment', () => {
+  const styles = read('src', 'renderer', 'settings.css');
+  assert.match(styles, /select\s*\{[\s\S]*appearance: none/);
+  assert.match(styles, /select:focus-visible\s*\{[\s\S]*outline: 2px solid var\(--accent\)/);
+});
+
+test('an expired card remains recoverable from the menu bar, without reviving stale buttons', () => {
+  const main = read('src', 'main.js');
+  const renderer = read('src', 'renderer', 'clippy.js');
+
+  // The hook must not be held forever, but losing the card must not lose the
+  // route back to the terminal prompt it handed off to.
+  assert.match(main, /const attentionInbox = new Map\(\)/);
+  assert.match(main, /function moveAttentionToTerminal\(id\)/);
+  const permission = main.slice(main.indexOf('async function handlePermissionRequest('));
+  const question = main.slice(main.indexOf('async function handleQuestion('));
+  assert.match(permission.slice(0, 2600), /rememberAttention\(/);
+  assert.match(question.slice(0, 2600), /rememberAttention\(/);
+  assert.match(permission.slice(0, 4200), /moveAttentionToTerminal\(id\)/);
+  assert.match(question.slice(0, 4200), /moveAttentionToTerminal\(id\)/);
+
+  // The recovery action opens the terminal rather than offering an approval
+  // whose original hook promise has already expired.
+  const menu = main.slice(main.indexOf('function trayMenu('), main.indexOf('function recentLabel('));
+  assert.match(menu, /item\.state === 'terminal'\) openSessionWindow\(item\.sessionId, \{ point: true \}\)/);
+  assert.match(main, /Clippy is on —/);
+  assert.match(renderer, /case 'open-usage':\s*\{\s*showUsage\(\)/s);
+});
+
+test('signing off one review leaves the next queued card on screen', () => {
+  const main = read('src', 'main.js');
+  const renderer = read('src', 'renderer', 'clippy.js');
+  const review = main.slice(main.indexOf('async function resolveReview('));
+
+  // A review is not in the broker, so the explicit cross-window check is what
+  // keeps a second review (or an approval) visible after the selected card is
+  // dismissed. This matters in both one-buddy and one-per-session modes.
+  assert.match(main, /function buddyStillHasCards\(sessionId\)/);
+  assert.match(main, /pendingReviews\.values\(\).*buddyOf\(sid\) === buddy/s);
+  assert.match(main, /broker\.list\(\).*buddyOf\(entry\.meta\.sessionId\) === buddy/s);
+  assert.match(review.slice(0, 1300), /if \(!buddyStillHasCards\(sessionId\)\) hideBuddy\(sessionId\)/);
+
+  // The renderer independently drops only the selected id, then remains at
+  // the same queue position where paging had placed the user.
+  const decide = renderer.slice(renderer.indexOf('function decide('));
+  assert.match(decide.slice(0, 900), /requests\.delete\(activeRequestId\)/);
+  assert.match(decide.slice(0, 900), /showNextRequest\(rest\[Math\.min\(at, rest\.length - 1\)\]/);
+});
