@@ -120,6 +120,37 @@ class DecisionBroker {
  * Returns null when there's nothing usable, so callers fall back to `{}`
  * (i.e. let the terminal picker handle it) instead of sending junk to Claude.
  */
+/**
+ * The same answers, but keeping a multi-select as a list.
+ *
+ * `normalizeAnswers` joins them with commas, because Claude's `updatedInput`
+ * wants one string per question. Codex wants `answers: ["A", "B"]` — joining
+ * there produced a single option labelled `"A, B"`, which matches nothing it
+ * offered, so a multi-select answered in Clippy arrived as gibberish.
+ *
+ * @returns {Record<string, string[]>|null}
+ */
+function normalizeAnswerLists(raw) {
+  let obj = raw;
+  if (typeof raw === 'string') {
+    try {
+      obj = JSON.parse(raw);
+    } catch {
+      return null;
+    }
+  }
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return null;
+
+  const answers = {};
+  for (const [question, value] of Object.entries(obj)) {
+    const list = (Array.isArray(value) ? value : [value])
+      .map((v) => String(v ?? '').trim())
+      .filter(Boolean);
+    if (question && list.length) answers[question] = list;
+  }
+  return Object.keys(answers).length > 0 ? answers : null;
+}
+
 function normalizeAnswers(raw) {
   let obj = raw;
   if (typeof raw === 'string') {
@@ -164,14 +195,15 @@ function toHookResponse(event, action, message = '', { toolInput, source, toolNa
     // the blocking reason: Codex receives that reason as the tool result and
     // can continue without ever opening its terminal picker.
     if (source === 'codex' || toolName === 'request_user_input') {
-      const answers = action === 'answer' ? normalizeAnswers(message) : null;
+      // Lists, not a joined string: Codex takes one entry per chosen option.
+      const answers = action === 'answer' ? normalizeAnswerLists(message) : null;
       if (!answers) return {}; // pass / dismiss / timeout -> native Codex picker
 
       const byId = {};
       for (const q of Array.isArray(toolInput?.questions) ? toolInput.questions : []) {
         const selected = answers[q.question];
         if (!selected || !q.id) continue;
-        byId[q.id] = { answers: [selected] };
+        byId[q.id] = { answers: selected };
       }
       if (Object.keys(byId).length === 0) return {};
 
@@ -358,6 +390,7 @@ module.exports = {
   DecisionBroker,
   toHookResponse,
   normalizeAnswers,
+  normalizeAnswerLists,
   describeToolCall,
   activityLabel,
   FULL_DETAIL_MAX,

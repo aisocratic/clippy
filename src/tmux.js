@@ -47,6 +47,27 @@ const shQuote = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
 const oneLine = (s) => String(s).replace(/\s*\n+\s*/g, ' ').trim();
 
 /**
+ * Is Claude's bottom composer still holding exactly the text we just pasted?
+ * The two full-width rules distinguish the live composer from identical text
+ * in scrollback, so a retry can never clear an unrelated terminal draft.
+ */
+function promptStillPending(output, prompt) {
+  const lines = String(output || '').split('\n');
+  const rules = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (/^─{10,}\s*$/.test(lines[i].trim())) rules.push(i);
+  }
+  if (rules.length < 2) return false;
+  const after = rules[rules.length - 2];
+  const before = rules[rules.length - 1];
+  const composer = lines
+    .slice(after + 1, before)
+    .join(' ')
+    .replace(/^\s*[❯›]\s*/u, '');
+  return oneLine(composer) === oneLine(prompt);
+}
+
+/**
  * tmux's own parser reads a trailing ';' as the end of one command in a
  * sequence, so a prompt ending in "run make;" would silently lose its last
  * character. Only matters on the send-keys fallback path.
@@ -330,6 +351,8 @@ const listSessions = async (bin) => parseSessionList(await run(bin, listSessions
 const listPanes = async (bin, name) => parsePaneList(await run(bin, listPanesArgs(name)));
 const paneInfo = async (bin, target) => parsePaneInfo(await run(bin, paneInfoArgs(target)));
 const capturePane = (bin, target, options) => run(bin, capturePaneArgs(target, options));
+const pressKeys = (bin, target, ...keys) => run(bin, sendKeysArgs(target, ...keys));
+const pressEnter = (bin, target) => pressKeys(bin, target, 'Enter');
 const killSession = (bin, name) => run(bin, killSessionArgs(name));
 
 async function hasSession(bin, name) {
@@ -367,6 +390,8 @@ const needsFlattening = (paneCommand, text) =>
   String(text).includes('\n') && LINE_ORIENTED.has(String(paneCommand));
 // Let the TUI finish inserting the paste before Return lands on it.
 const PASTE_SETTLE_MS = 120;
+const SUBMIT_VERIFY_MS = 300;
+const RETRY_SETTLE_MS = 400;
 
 let bufferSeq = 0;
 
@@ -387,23 +412,43 @@ let bufferSeq = 0;
  * Hence LINE_ORIENTED: those panes get one line instead. The worst case is a
  * prompt flattened onto a single line, never a half-submitted one.
  */
-async function sendPrompt(bin, target, text) {
+async function sendPrompt(bin, target, text, { clearFirst = false } = {}) {
   const prompt = String(text || '');
   if (!prompt.trim()) return false;
 
   const info = await paneInfo(bin, target).catch(() => null);
   const body = needsFlattening(info && info.command, prompt) ? oneLine(prompt) : prompt;
-  const buffer = `clippy-${(bufferSeq = (bufferSeq + 1) % 1000)}`;
+  const paste = async () => {
+    const buffer = `clippy-${(bufferSeq = (bufferSeq + 1) % 1000)}`;
+    try {
+      await run(bin, loadBufferArgs(buffer), { input: body });
+      await run(bin, pasteBufferArgs(target, buffer));
+    } catch {
+      // An old tmux, or a buffer that would not load: one line is better than none.
+      await run(bin, sendKeysLiteralArgs(target, oneLine(body)));
+    }
+  };
 
-  try {
-    await run(bin, loadBufferArgs(buffer), { input: body });
-    await run(bin, pasteBufferArgs(target, buffer));
-  } catch {
-    // An old tmux, or a buffer that would not load: one line is better than none.
-    await run(bin, sendKeysLiteralArgs(target, oneLine(body)));
-  }
+  // Claude can leave an invisible composer mode behind after overlays (the
+  // optional rating prompt is one). For Clippy's own hidden chat pane, main
+  // has just verified the composer is empty, so resetting that empty line is
+  // safe and makes the following Return reliable. Never used for projects.
+  if (clearFirst) await run(bin, sendKeysArgs(target, 'C-u'));
+  await paste();
   await new Promise((r) => setTimeout(r, PASTE_SETTLE_MS));
   await run(bin, sendKeysArgs(target, 'Enter'));
+
+  // Claude occasionally paints the paste but ignores Return when its previous
+  // turn has only just settled. Verify the live composer, then replace only
+  // our exact text and retry with a longer pause.
+  await new Promise((r) => setTimeout(r, SUBMIT_VERIFY_MS));
+  const pane = await capturePane(bin, target, { lines: 30 }).catch(() => '');
+  if (promptStillPending(pane, body)) {
+    await run(bin, sendKeysArgs(target, 'C-u'));
+    await paste();
+    await new Promise((r) => setTimeout(r, RETRY_SETTLE_MS));
+    await run(bin, sendKeysArgs(target, 'Enter'));
+  }
   return true;
 }
 
@@ -411,6 +456,7 @@ module.exports = {
   // pure
   shQuote,
   oneLine,
+  promptStillPending,
   escapeSemicolon,
   remoteDir,
   sshControlArgs,
@@ -448,6 +494,8 @@ module.exports = {
   listPanes,
   paneInfo,
   capturePane,
+  pressKeys,
+  pressEnter,
   killSession,
   sendPrompt,
 };

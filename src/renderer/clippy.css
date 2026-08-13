@@ -77,9 +77,11 @@ body {
    hard one alone disappears against a dark wallpaper, so a wide, faint blur
    lifts the panel off whatever it happens to be floating over.
 
-   The offsets are 4px right and 5px down, and the window is only 5px wider
-   than the panel (WIN_W in src/main.js) — take the shadow any further and it
-   is clipped by the window edge rather than drawn. */
+   The offsets are 4px right and 5px down. The window (WIN_W in src/main.js)
+   is 10px wider than the panel on each side, which is all the room anything
+   drawn outside the panel's box has — this shadow, and the stacked sheets
+   below. Take either further and it is clipped by the window edge rather than
+   drawn. */
 
 #card,
 #qcard,
@@ -104,6 +106,44 @@ body {
 #menu {
   position: relative;
   margin-bottom: 16px;
+}
+
+/* ---------- More than one message waiting: a stack of papers ----------
+   The panel on screen sits on the ones behind it — a sheet of the same paper
+   peeking past its top-left corner for each message still queued, up to two.
+   Three sheets is where it stops: past that a pile stops reading as "a few"
+   and starts eating the corner of the screen, and the number on the buddy is
+   what carries the real count.
+
+   Drawn as shadows rather than elements. They cost no DOM, cannot be clicked
+   or measured, and follow whatever size and radius the panel grows into —
+   which matters because the card is resized by its own contents. Each sheet
+   is two shadows: the fill, pulled in 2px, over the outline it leaves showing
+   at the edge. Earlier shadows paint on top, so a sheet is listed before the
+   one behind it and the panel's own shadows come last. */
+#card.stacked,
+#bubble.stacked {
+  /* The room the sheets peek into, asked for rather than borrowed: the window
+     is measured from the stage (contentHeight in clippy.js), so a margin here
+     is what makes it taller. Without it the top sheet is drawn above the
+     window and simply isn't there. */
+  margin-top: 24px;
+  box-shadow:
+    -9px -9px 0 -2px var(--surface),
+    -9px -9px 0 0 var(--ink),
+    4px 5px 0 var(--ink),
+    0 10px 26px rgba(0, 0, 0, 0.28);
+}
+
+#card.stacked.deep,
+#bubble.stacked.deep {
+  box-shadow:
+    -9px -9px 0 -2px var(--surface),
+    -9px -9px 0 0 var(--ink),
+    -18px -18px 0 -2px var(--surface),
+    -18px -18px 0 0 var(--ink),
+    4px 5px 0 var(--ink),
+    0 10px 26px rgba(0, 0, 0, 0.28);
 }
 
 /* The tail is a rotated square: two of its four borders show, which is why it
@@ -257,8 +297,17 @@ button.dim:hover:not(:disabled) {
 }
 
 #stage:hover #who,
-body:not(.compact) #who {
+body:not(.compact) #who,
+/* One buddy for every session: which agent it is speaking for is not a detail
+   you should have to hover to find out. */
+body.solo #who {
   opacity: 1;
+}
+
+/* The shared main buddy is identified by its own name only. Session buddies
+   keep the project and model line so several agents remain scannable. */
+body.solo #who-sub {
+  display: none;
 }
 
 #who-pet,
@@ -573,6 +622,21 @@ body.flipped #buddy-vector {
   letter-spacing: 0.08em;
 }
 
+/* Who is asking, and from where: "billing-api · Claude · Ghostty".
+   Sits under the head row rather than in it, because it is the one line on the
+   card that can run long — an app name and a project name together — and the
+   head row also holds the button that must never wrap. Quiet on purpose: it
+   answers "which one is this", which you only read when you need it. */
+#card-where {
+  margin: -4px 0 8px;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* Jump straight to the terminal this card came from. */
 /* A way out of the card rather than an answer to it, so it keeps the shape of a
    button but not the weight of one: the light rule instead of the ink one. */
@@ -847,9 +911,42 @@ button.opt.chosen::after {
   margin-bottom: 5px;
 }
 
+/* A log reads better as a run of cards than as a wall of prefixed lines: who
+   said it stays put on the left, and each turn has an edge of its own so a long
+   one does not run into the next. Same paper as the deeds under the buddy, so
+   the two logs look like the same idea seen twice. */
+.feed-line {
+  align-items: start;
+  padding: 6px 8px;
+  margin-bottom: 6px;
+  border-radius: var(--radius-s);
+  border: 1px solid var(--line-soft);
+  background: var(--surface);
+}
+
+.feed-line.system {
+  border-style: dashed;
+  background: transparent;
+}
+
 .drive-role,
 .feed-role {
   font-weight: 600;
+}
+
+/* The name sits on its own line above the words when the turn is long enough
+   to wrap, which is most of them — a label and a paragraph side by side leaves
+   the paragraph a very narrow column on a 300px panel. */
+.feed-line {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.feed-role {
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  margin-bottom: 2px;
 }
 
 .drive-copy,
@@ -1070,43 +1167,46 @@ body:not(.compact) #statusline {
    resting buddy is a sprite and its name, nothing to click by accident. The
    room is reserved either way (see SIZES in src/characters.js), so revealing
    them never resizes the window. */
+/* ---------- The action bar ----------
+   One row under the buddy holding everything he can do, in one place that does
+   not move. It fades in when you point at him and stays while a panel you
+   opened is up, so the way to the next thing is always in the same spot. */
 #controls {
-  margin-bottom: 5px;
+  margin-top: 5px;
   display: flex;
-  gap: 6px;
+  gap: 4px;
   opacity: 0;
-  transition: opacity 0.2s;
+  transition: opacity 0.15s;
 }
 
-#stage:hover #controls {
+/* Pointing at him, or already reading something he opened. */
+#stage:hover #controls,
+body.reading #controls {
   opacity: 1;
 }
 
-/* Floating on their own over the desktop, these are the only buttons with no
-   panel behind them, so they carry the panel's own shadow to stay legible over
-   a photo. */
-#controls button {
+/* These are the only buttons with no panel behind them, so they carry the
+   panel's own shadow to stay legible over whatever wallpaper they land on. */
+#controls .act {
+  display: flex;
+  align-items: center;
+  gap: 4px;
   font-size: 10px;
-  padding: 2px 8px;
+  padding: 3px 7px;
   background: var(--surface);
   box-shadow: 2px 2px 0 var(--ink), 0 4px 10px rgba(0, 0, 0, 0.25);
 }
 
-/* Moved inside an open panel (placeControls in clippy.js): the panel owns the
-   space over the buddy now, so these stop floating and become its last row —
-   plain buttons, no lift, ruled off from whatever the panel came to say. And
-   always visible: you are already looking straight at it. */
-#controls.inside {
-  margin: 10px 0 0;
-  padding-top: 9px;
-  border-top: 1px solid var(--line-soft);
-  justify-content: flex-end;
-  opacity: 1;
+.act-icon {
+  font-size: 11px;
+  line-height: 1;
 }
 
-#controls.inside button {
-  background: #ffffff;
-  box-shadow: none;
+/* Labels are the first thing to go when the row runs out of room: an icon with
+   a tooltip is a guess, but a guess you can hover, and five words at 10px is
+   worse than five pictures. The buddy's own size decides. */
+body.compact #controls .act-label {
+  display: none;
 }
 
 /* ---------- The combined panel: status, token usage, and the composer ---------- */
@@ -1123,17 +1223,6 @@ body:not(.compact) #statusline {
    another one. */
 #usage.collapsed #usage-detail {
   display: none;
-}
-
-/* Send is for something to send: it stays out of the way until the composer
-   has words in it, so the collapsed summary and an untouched box both read as
-   "nothing to do here". */
-#btn-usage-send {
-  display: none;
-}
-
-#usage:not(.collapsed).composing #btn-usage-send {
-  display: inline-block;
 }
 
 /* The session's state, in plain words — the first thing you came to find out,
@@ -1155,8 +1244,8 @@ body:not(.compact) #statusline {
 }
 
 #usage-bar {
-  height: 6px;
-  border-radius: 3px;
+  height: 9px;
+  border-radius: 5px;
   background: var(--line-soft);
   overflow: hidden;
 }
@@ -1176,16 +1265,35 @@ body:not(.compact) #statusline {
   background: var(--no);
 }
 
+/* The one number worth reading at a glance, set big enough to read at a
+   glance. Everything under it is the working: what that leaves, out of what,
+   and the percentage — useful once you have looked, never the thing you came
+   for. All of it was 10.5px grey, which made the panel a wall of small print. */
 #usage-context {
-  margin: 5px 0 7px;
-  font-size: 10.5px;
-  color: #575757;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 7px 0 9px;
+}
+
+#usage-context b {
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1.15;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+#usage-context .ctx-rest {
+  font-size: 11.5px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
 }
 
 #usage-bars {
   display: flex;
   flex-direction: column;
-  gap: 7px;
+  gap: 11px;
 }
 
 .ubar-head {
@@ -1193,9 +1301,10 @@ body:not(.compact) #statusline {
   justify-content: space-between;
   align-items: baseline;
   gap: 8px;
-  font-size: 10.5px;
-  color: var(--muted);
-  margin-bottom: 3px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 4px;
 }
 
 .ubar-head span {
@@ -1206,20 +1315,21 @@ body:not(.compact) #statusline {
 
 /* What a window covers — true of the row, but never the point of it. */
 .ubar-sub {
-  font-size: 9.5px;
-  color: #8a8a86;
-  margin-bottom: 3px;
+  font-size: 10.5px;
+  color: var(--muted);
+  margin-bottom: 4px;
 }
 
 .ubar-head b {
-  color: #333333;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ink);
   font-variant-numeric: tabular-nums;
-  font-weight: 600;
   white-space: nowrap;
 }
 
 .ubar-track {
-  height: 5px;
+  height: 7px;
   border-radius: 3px;
   background: var(--line-soft);
   overflow: hidden;
@@ -1257,55 +1367,18 @@ body:not(.compact) #statusline {
 }
 
 .ubar-group {
-  margin-top: 3px;
-  font-size: 9.5px;
+  margin-top: 6px;
+  font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: #8a8a86;
 }
 
 #usage-note {
-  margin-top: 7px;
-  font-size: 9.5px;
+  margin-top: 9px;
+  font-size: 10.5px;
   line-height: 1.4;
   color: #8a8a86;
-}
-
-/* Keep talking to the agent without leaving the panel: what you type here is
-   typed into that session's terminal, exactly as the old composer did.
-
-   It sits there as a single line — an invitation, not a form — and grows to
-   three the moment you start writing. The height is explicit rather than a
-   `rows` count so the growth can be measured and animated. */
-#usage-input {
-  width: 100%;
-  margin-top: 9px;
-  font-family: inherit;
-  font-size: 11.5px;
-  line-height: 16px;
-  height: 32px; /* 1 line + padding + border */
-  padding: 7px 9px;
-  border: 1.5px solid var(--line);
-  border-radius: var(--radius-s);
-  background: #ffffff;
-  color: var(--text);
-  resize: none;
-  /* No transition on the height: the window is resized to fit whatever this
-     measures, and an animating box measures its old size. */
-  -webkit-app-region: no-drag;
-}
-
-#usage.composing #usage-input {
-  height: 64px; /* 3 lines */
-}
-
-#usage-input::placeholder {
-  color: #9a9a96;
-}
-
-#usage-input:focus {
-  outline: none;
-  border-color: var(--clip);
 }
 
 #usage-actions {
@@ -1443,7 +1516,6 @@ body.docked #menu {
    smaller. Everything hangs below a perched buddy, because down is the only
    way this window can grow. */
 body.docked #controls {
-  order: 1;
   margin-top: 5px;
   margin-bottom: 0;
 }
@@ -1491,12 +1563,11 @@ body.compact #card {
 }
 
 body.compact #controls {
-  margin-bottom: 3px;
   gap: 3px;
 }
 
-body.compact #controls button {
-  padding: 1px 7px;
+body.compact #controls .act {
+  padding: 2px 5px;
 }
 
 .hidden {
@@ -1539,7 +1610,13 @@ body.compact #controls button {
 
 /* A buddy whose session Clippy started. The ring is on the container rather
    than the artwork, so it survives every character and sprite theme. */
-body.owned #clippy::after {
+/* …but never on the one wearing the crown: it is already marked, and a buddy
+   with both reads as two different kinds of special at once. */
+body.solo #clippy::after {
+  content: none;
+}
+
+body.owned:not(.solo) #clippy::after {
   content: '';
   position: absolute;
   inset: -3px;
@@ -1547,4 +1624,444 @@ body.owned #clippy::after {
   border-radius: 7px;
   opacity: 0.45;
   pointer-events: none;
+}
+
+/* Who the chat is addressed to: the buddy, or one of the agents it speaks for.
+   Only shown when a single buddy stands in for every session. */
+#pet-to {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 4px;
+  margin-bottom: 8px;
+  max-width: 100%;
+}
+
+/* On its own above the panel now, so each pill is its own small card — it has
+   the wallpaper behind it rather than the panel's paper. */
+.pet-target {
+  font: inherit;
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 3px 9px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border: 1.5px solid var(--ink);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 1px 2px 0 var(--ink);
+  cursor: pointer;
+}
+
+.pet-target:hover:not(:disabled) { background: var(--surface-2); }
+
+.pet-target.on {
+  opacity: 1;
+  font-weight: 700;
+  background: var(--clip);
+  color: #15262a;
+  border-color: var(--clip);
+}
+
+/* An agent with no window and no tmux pane has nowhere to be typed at. */
+.pet-target:disabled {
+  opacity: 0.45;
+  cursor: default;
+  box-shadow: none;
+  text-decoration: line-through;
+}
+
+/* A panel that has only just appeared does not take clicks yet — see ARM_MS in
+   clippy.js. Clippy pops up over whatever you were doing, often right under the
+   pointer, and the button nearest the corner it appears in is the one that says
+   yes. Swallowing the first fraction of a second is the difference between a
+   card you read and a command you approved by accident. */
+#card.arming #card-actions,
+#card.arming #card-options,
+#card.arming .panel-x,
+#qcard.arming #qcard-actions,
+#bubble.arming #bubble-actions {
+  pointer-events: none;
+}
+
+/* The buddy's own pill, at the head of the row. It is not one of the agents —
+   talking to it reaches none of them — so it is marked rather than left to be
+   told apart by position. The crown is the same one on its name plate, and
+   only appears when this buddy really is the one answering for everybody. */
+.pet-target.main {
+  background: var(--yellow);
+  border-color: var(--ink);
+}
+
+.pet-target.main.on {
+  background: var(--yellow);
+  color: var(--ink);
+  border-color: var(--ink);
+}
+
+/* ---------- @: the roster as a list ----------
+   Sits between the log and the box, so it grows into the panel rather than
+   floating over the thing you are typing. Two lines per agent because one is
+   not enough to tell ~/work/api from ~/side/api. */
+#pet-picker {
+  margin-top: 7px;
+  max-height: 148px;
+  overflow-y: auto;
+  border: 1.5px solid var(--line);
+  border-radius: var(--radius-s);
+  background: var(--surface-2);
+}
+
+.pick {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 5px 9px;
+  cursor: pointer;
+}
+
+.pick + .pick {
+  border-top: 1px solid var(--line-soft);
+}
+
+.pick.on {
+  background: var(--clip);
+}
+
+.pick-name {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.pick-meta {
+  font-size: 10px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pick.on .pick-meta {
+  color: #15262a;
+}
+
+/* Listed, but not somewhere a message can go: seeing it and knowing why beats
+   it quietly missing from the list. */
+.pick.off {
+  cursor: default;
+  opacity: 0.5;
+}
+
+/* ---------- One way to close a popup ----------
+   Every panel that can be dismissed carries the same (x) in the same corner,
+   the way a window does. Before this, closing was "Close" at the foot of the
+   stats, "close" in the chat's header, "Got it" among the bubble's buttons and
+   "Answer in terminal ✓" on a question — four words, three places, one job.
+
+   Not on a held card: that is a decision, and the buttons on it each mean
+   something. A corner (x) there would be a fifth way to answer a permission
+   request without saying which answer you meant. */
+/* Every panel that carries a corner button has to be the thing that corner is
+   measured from — otherwise the (x) positions itself against the stage and
+   floats off over the buddy. */
+#pet,
+#feed,
+#usage,
+#drive {
+  position: relative;
+}
+
+.panel-tools {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  align-items: center;
+}
+
+.panel-x,
+.panel-tools button {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  flex: none;
+  display: grid;
+  place-items: center;
+  font-size: 14px;
+  line-height: 1;
+  font-weight: 600;
+  border-radius: 50%;
+  border: 1.5px solid var(--line);
+  background: var(--surface);
+  color: var(--muted);
+}
+
+.panel-x {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
+}
+
+/* Inside the tools stack it is laid out by the column, not by the corner. */
+.panel-tools .panel-x {
+  position: static;
+}
+
+.panel-x:hover:not(:disabled),
+.panel-tools button:hover:not(:disabled) {
+  border-color: var(--ink);
+  color: var(--ink);
+  background: var(--surface-2);
+}
+
+/* Room for the corner so a title never runs under the button. */
+/* Everything that shares a line with a corner button has to keep clear of it.
+   The bubble is the one that catches people out: its text is a paragraph, so it
+   happily wraps underneath the (x) and loses a word to it. */
+#pet-head,
+#feed-head,
+#qcard-head,
+#card-head,
+#bubble-text,
+#qcard-title,
+#feed-note {
+  padding-right: 26px;
+}
+
+/* The corner stack is one button wide and two tall, so the two lines beside it
+   have to keep clear of it — the recap is a sentence and will happily run
+   underneath. */
+#usage-status,
+#usage-recap {
+  padding-right: 30px;
+}
+
+/* ---------- Who you are addressing, beside the box ----------
+   The pills at the top say the same thing, but nobody looks up there while
+   they type — and a prompt typed into the wrong agent's session cannot be
+   taken back. So the answer sits against the box: that agent's own buddy, in
+   that session's colour, with its project name. */
+#pet-row {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+  margin-top: 7px;
+}
+
+#pet-row #pet-input {
+  flex: 1;
+  min-width: 0;
+  margin-top: 0;
+}
+
+#pet-to-chip {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 46%;
+  padding: 4px 9px 4px 5px;
+  border-radius: 999px;
+  border: 1.5px solid var(--addressing, var(--clip));
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 10.5px;
+  font-weight: 700;
+}
+
+.chip-face {
+  width: 20px;
+  height: 20px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 50%;
+  background: var(--surface);
+}
+
+/* No artwork for that character on this machine — a sprite pack that was
+   never generated, a colour with no clip drawn for it. A dot in the session's
+   own colour still says which agent this is; an empty ring says nothing. */
+.chip-face.plain {
+  background: var(--addressing, var(--clip));
+}
+
+.chip-face img,
+.chip-face svg {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  image-rendering: pixelated;
+}
+
+/* One frame out of a sprite pack's sheet, scaled to the chip. */
+.chip-sheet {
+  width: 100%;
+  height: 100%;
+  background-repeat: no-repeat;
+  image-rendering: pixelated;
+}
+
+.chip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Addressing an agent tints the panel's edge in that session's colour, so
+   "this is not your pet" registers before any of it is read. */
+#pet.addressing {
+  border-color: var(--addressing, var(--ink));
+}
+
+/* Stepping through the queue. Small and quiet: this is navigation, not an
+   answer, and it sits in the head row beside the position it moves. */
+#card-pager {
+  display: flex;
+  gap: 3px;
+  flex: none;
+}
+
+.pager {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  font-size: 13px;
+  line-height: 1;
+  border-radius: 5px;
+  border: 1.5px solid var(--line);
+  background: var(--surface);
+  color: var(--muted);
+}
+
+.pager:hover:not(:disabled) {
+  border-color: var(--ink);
+  color: var(--ink);
+}
+
+/* ---------- What the buddy did ----------
+   Under his feet, below the live activity line: the last few things he did, as
+   small cards rather than a run of text. Each carries the face of the agent it
+   was about, which is the whole point when one buddy is answering for several —
+   at a glance you can see *who* something happened to, without reading a name.
+
+   Paper, like every other surface in the app, because these float over the
+   desktop with nothing behind them; bare text needed a heavy shadow to stay
+   legible and still read as debris rather than a list. */
+#deeds {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  margin-top: 6px;
+  /* Room for the outline and its offset shadow: a card run flush to the window
+     edge has both clipped, and the window is only as wide as the buddy. */
+  padding: 0 4px;
+  max-width: 100%;
+}
+
+.deed {
+  max-width: 100%;
+}
+
+.deed {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 8px 4px 5px;
+  border-radius: 999px;
+  border: 1.5px solid var(--ink);
+  background: var(--surface);
+  box-shadow: 1px 2px 0 var(--ink);
+  /* Oldest fade back a little, so the newest reads first without moving. */
+  opacity: 0.95;
+}
+
+.deed:nth-child(3) { opacity: 0.8; }
+.deed:nth-child(4) { opacity: 0.62; }
+.deed:nth-child(n + 5) { opacity: 0.45; }
+
+.deed-face {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 50%;
+  background: var(--clip);
+}
+
+.deed-face img,
+.deed-face svg,
+.deed-face .chip-sheet {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  image-rendering: pixelated;
+}
+
+.deed-body {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  min-width: 0;
+}
+
+.deed-what {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.deed-meta {
+  flex: none;
+  font-size: 9px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Like the activity line, this belongs to the bare buddy: with a panel open it
+   would be repeating what the panel already says. */
+body:not(.compact) #deeds {
+  display: none;
+}
+
+
+/* A routing proposal in the chat: who this looked like it was for, and a
+   button that is the only thing which actually sends it. Never automatic — a
+   prompt in the wrong session becomes work in the wrong repository. */
+.pet-line.offer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 8px;
+  border: 1.5px dashed var(--line);
+  border-radius: var(--radius-s);
+  background: var(--surface-2);
+}
+
+.offer-send,
+.offer-no {
+  font-size: 10px;
+  padding: 2px 8px;
+}
+
+.offer-send {
+  background: var(--ok-tint);
 }

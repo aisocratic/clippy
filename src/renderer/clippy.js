@@ -42,6 +42,8 @@ const statusEl = document.getElementById('statusline');
 
 const cardEl = document.getElementById('card');
 const cardQueue = document.getElementById('card-queue');
+const cardPager = document.getElementById('card-pager');
+const cardWhere = document.getElementById('card-where');
 const cardTitle = document.getElementById('card-title');
 const cardDetail = document.getElementById('card-detail');
 const cardMore = document.getElementById('btn-card-more');
@@ -55,7 +57,7 @@ const btnPass = document.getElementById('btn-pass');
 const btnGood = document.getElementById('btn-good');
 const btnFeedback = document.getElementById('btn-feedback');
 const btnSubmit = document.getElementById('btn-submit');
-const btnDismiss = document.getElementById('btn-dismiss');
+const btnCardX = document.getElementById('btn-card-x');
 const btnGoto = document.getElementById('btn-goto');
 
 const driveEl = document.getElementById('drive');
@@ -72,7 +74,6 @@ const usageBarFill = document.getElementById('usage-bar-fill');
 const usageContext = document.getElementById('usage-context');
 const usageBars = document.getElementById('usage-bars');
 const usageNote = document.getElementById('usage-note');
-const usageInput = document.getElementById('usage-input');
 const btnUsageSize = document.getElementById('btn-usage-size');
 
 const feedEl = document.getElementById('feed');
@@ -83,6 +84,7 @@ const feedLog = document.getElementById('feed-log');
 const petEl = document.getElementById('pet');
 const petWho = document.getElementById('pet-who');
 const petLog = document.getElementById('pet-log');
+const petTo = document.getElementById('pet-to');
 const petInput = document.getElementById('pet-input');
 
 const stageEl = document.getElementById('stage');
@@ -99,7 +101,6 @@ const vectorEl = document.getElementById('buddy-vector');
 let sheetTimer = null;
 let pose = 'idle'; // what the buddy is doing right now, by name
 let pointing = false; // standing on a prompt
-let troubledUntil = 0; // a tool failed recently
 let greetingUntil = 0; // this session just started
 let pettedUntil = 0; // double-clicked just now — say hi back
 let clickedUntil = 0; // single-clicked just now — a quick acknowledging wave
@@ -112,6 +113,7 @@ const whoEl = document.getElementById('who');
 const whoPet = document.getElementById('who-pet');
 const whoSub = document.getElementById('who-sub');
 const activityEl = document.getElementById('activity');
+const deedsEl = document.getElementById('deeds');
 const qcardEl = document.getElementById('qcard');
 const qcardTitle = document.getElementById('qcard-title');
 const qcardDetail = document.getElementById('qcard-detail');
@@ -154,6 +156,12 @@ let settings = {
 };
 let lastExtendAt = 0;
 let canOpen = false; // do we know which terminal window this session lives in?
+// Where this session actually lives, as main resolved it: a terminal, an agent
+// app (ChatGPT, Claude), or a tmux pane Clippy started. `goLabel` is the words
+// on the button that takes you there — "go to terminal" is the wrong noun for
+// two of those three, and that button is the one thing on a card that moves
+// you somewhere.
+let source = { kind: 'unknown', name: '', goLabel: 'go to terminal ↗' };
 
 /* ---------- Window size: a paperclip until there's something to read ---------- */
 
@@ -164,7 +172,20 @@ let widthSent = 0;
 // How wide the window has to be while a plan card is up: the plan panel
 // (--plan-w in clippy.css) plus the same slack the normal window keeps around
 // the normal panel. Every other card leaves the width alone (0 = default).
-const PLAN_WIN_W = 510;
+/**
+ * How much wider than its panel a window has to be.
+ *
+ * Everything drawn outside the panel's own box lives in this margin: the
+ * offset shadow to its right, and the sheets stacked past its top-left corner
+ * when several messages are waiting. It is the same figure main builds WIN_W
+ * from (`--panel-w` + this), and the plan card needs it too — that one was
+ * left on the old 10px total when WIN_W grew, so a plan's shadow and sheets
+ * were drawn outside its window and simply cut off.
+ */
+const WIN_MARGIN = 42;
+
+/** The plan card is a page, so its window is the wide panel plus that margin. */
+const PLAN_WIN_W = 500 + WIN_MARGIN;
 
 const PANELS = ['card', 'bubble', 'qcard', 'usage', 'pet', 'drive', 'feed', 'menu'];
 
@@ -178,7 +199,7 @@ const RESIZE_SETTLE_MS = 400;
  * rather than guessed: a one-line approval and a 40-line plan are very
  * different windows, and the fixed size used to cut the taller one off.
  */
-function contentHeight() {
+function contentHeight(panelShowing = true) {
   const style = getComputedStyle(stageEl);
   let h = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
   for (const el of stageEl.children) {
@@ -190,7 +211,12 @@ function contentHeight() {
   // Slack for what layout does not measure: the panel's offset shadow falls
   // 5px below it, and while he's perched the bottom panel is the last thing in
   // the window, with no padding under it to fall into.
-  return Math.ceil(h) + 10;
+  //
+  // Only when there *is* a panel. With nothing but the buddy on the stage this
+  // was ten pixels of nothing, and because the stage is bottom-aligned it sat
+  // above his head — where, since macOS will not put a window above the menu
+  // bar, it became ten pixels he could never be dragged into.
+  return Math.ceil(h) + (panelShowing ? 10 : 0);
 }
 
 /**
@@ -198,12 +224,11 @@ function contentHeight() {
  * the renderer just says which of the two sizes its current contents want, and
  * how tall the full one has to be.
  */
-/* Panels that take the hide/chat row in when they open. The three left out —
-   a held card, a question card, and the menu — are each already a set of
-   actions waiting on you, so a second row underneath would be one more thing
-   to read at the moment you can least afford it. While one of those is up the
-   row simply steps aside. */
-const CONTROL_HOSTS = ['usage', 'pet', 'bubble', 'drive', 'feed'];
+/* Panels that are themselves a decision waiting on you. While one of these is
+   up the action bar steps aside — it would be one more thing to read at the
+   moment you can least afford it. Everything else (stats, chat, the feed) is
+   something you opened, and the bar stays available underneath. */
+const DEMANDING = ['card', 'qcard', 'menu'];
 
 /**
  * Where hide/chat live right now.
@@ -217,19 +242,32 @@ const CONTROL_HOSTS = ['usage', 'pet', 'bubble', 'drive', 'feed'];
  */
 function placeControls() {
   const open = (id) => !document.getElementById(id).classList.contains('hidden');
-  const hostId = CONTROL_HOSTS.find(open);
-  const host = hostId ? document.getElementById(hostId) : null;
-  controlsEl.classList.toggle('inside', Boolean(host));
-  // No host, but something else has the stage: stand down rather than float
-  // over the top of a card.
-  controlsEl.classList.toggle('hidden', !host && PANELS.some(open));
-  const parent = host || stageEl;
-  if (controlsEl.parentElement === parent) return;
-  if (host) host.append(controlsEl);
-  else stageEl.insertBefore(controlsEl, clippyEl);
+  // The bar lives under the buddy and stays there. It used to be re-parented
+  // into whichever panel was open, so the same two buttons appeared in a
+  // different place depending on what you had up — and while a card was
+  // showing they vanished entirely.
+  //
+  // Under his feet, too, rather than over his head: floating above him the row
+  // reserved 32px of stage even while invisible (it is opacity-0 until you
+  // point at him), and since macOS will not put a window above the menu bar,
+  // that was exactly how far short of the top he stopped when dragged up.
+  if (controlsEl.parentElement !== stageEl) stageEl.insertBefore(controlsEl, whoEl);
+  // A card or a question is a set of actions already waiting on an answer;
+  // a second row underneath is one more thing to read at the worst moment.
+  controlsEl.classList.toggle('hidden', DEMANDING.some(open));
+  // Reading something you opened: keep the bar up without needing the pointer
+  // on the buddy, since the pointer is on the panel.
+  document.body.classList.toggle('reading', PANELS.some(open) && !DEMANDING.some(open));
 }
 
 function syncMode() {
+  // The target row sits above the chat panel rather than inside it, so it has
+  // to be tied to it here: several panels take the chat's space by hiding it
+  // directly, and each of them would otherwise leave a row of agent pills
+  // floating over the buddy. One rule, in the place every panel change passes
+  // through, rather than seven places remembering.
+  if (petEl.classList.contains('hidden')) petTo.classList.add('hidden');
+
   const showing = PANELS.some((id) => !document.getElementById(id).classList.contains('hidden'));
   const want = showing ? 'full' : 'compact';
   // Switch to the mode we're about to ask for *before* measuring. `compact`
@@ -243,7 +281,11 @@ function syncMode() {
   document.body.classList.toggle('compact', want === 'compact');
   placeControls();
   // Measure after layout has settled, so a card that just appeared is included.
-  const height = want === 'full' ? contentHeight() : 0;
+  // Compact is measured too: the window is otherwise a fixed box taller than
+  // the buddy standing in it, and since the stage is bottom-aligned that slack
+  // sits *above* him — invisible, but the first thing to hit the top of the
+  // screen when you drag him up.
+  const height = contentHeight(showing);
   // Only the plan card asks for extra width; 0 means "the usual".
   const width = want === 'full' && document.body.classList.contains('plan') ? PLAN_WIN_W : 0;
   if (want === modeSent && Math.abs(height - heightSent) < 6 && width === widthSent) return;
@@ -251,7 +293,46 @@ function syncMode() {
   heightSent = height;
   widthSent = width;
   resizedAt = Date.now();
-  window.clippyAPI.setMode(want, height, width);
+  window.clippyAPI.setMode(want, height, width, buddyAnchor());
+}
+
+/**
+ * Where the buddy will stand inside the window we are about to ask for.
+ *
+ * Main keeps *this point* still on screen when it resizes, so opening a panel
+ * grows the window around him instead of dragging him along with it. Before
+ * this, a window anchored by its right edge grew 152px leftwards for a panel
+ * and took the buddy 76px with it — he jumped out from under the pointer that
+ * had just clicked him, which is most of why opening anything felt jumpy.
+ *
+ * Measured rather than assumed: he is horizontally centred, but what sits
+ * under his feet (the name plate, the activity line) changes with the mode,
+ * and the answer has to be right in both.
+ *
+ * @param {number} height  the window height being asked for, since the stage
+ *   is bottom-aligned and the current window may still be the old size.
+ */
+function buddyAnchor() {
+  const box = clippyEl.getBoundingClientRect();
+  const stage = stageEl.getBoundingClientRect();
+  // Both measurements are *relative*, because at this moment the window is
+  // still the old size — the resize we are asking for has not happened yet.
+  // An absolute centre measured here would describe the window we are leaving
+  // and be exactly one resize out of date, which is the bug this replaced.
+  //
+  // `dx` is his offset from the middle (zero while the stage centres him), and
+  // `fromBottom` is how far his middle sits above the foot of the content. The
+  // stage is bottom-aligned, so neither changes when the window grows — main
+  // applies them to the size it actually settles on.
+  return {
+    dx: Math.round(box.left + box.width / 2 - (stage.left + stage.width / 2)),
+    fromBottom: Math.round(stage.bottom - (box.top + box.height / 2)),
+    // His own size, so main can keep *him* on screen rather than the window.
+    // The window is a good deal taller than he is and the slack sits above his
+    // head, so clamping the window is what stopped him reaching the top.
+    halfW: Math.round(box.width / 2),
+    halfH: Math.round(box.height / 2),
+  };
 }
 
 /* ---------- UI helpers ---------- */
@@ -261,6 +342,7 @@ function applyIdentity() {
   const buddyName = character?.label || 'Buddy';
   const harness = HARNESS_NAMES[me.agent] || HARNESS_NAMES.claude;
   const model = shortModel(me.model);
+  const solo = document.body.classList.contains('solo');
   // The pet's own name leads; under it, the folder this session is in and the
   // model spending in it. The model goes on in full — `gpt-5.6-sol`, not the
   // `claude-` stripped label the panels use — because on the plate it is the
@@ -270,13 +352,18 @@ function applyIdentity() {
   // for one on another machine. Both are "mine", which is worth knowing before
   // you wonder why it has no terminal window.
   const owned = me.owned ? (me.host ? `⇅ ${me.host} · ` : '⧉ ') : '';
-  whoSub.textContent = owned + (me.model ? `${me.name} · ${me.model}` : me.name);
+  // The shared main buddy is a stable companion, not a session label: only
+  // its own name belongs on its plate. A session buddy names itself, project,
+  // and model so parallel agents remain distinguishable at a glance.
+  whoSub.textContent = solo ? '' : owned + (me.model ? `${me.name} · ${me.model}` : me.name);
   const where = me.owned
     ? me.host
       ? ` in tmux over ${me.host}`
       : ` in tmux (${me.tmux || 'started by Clippy'})`
     : '';
-  whoEl.title = `${me.pet} the ${buddyName}, on “${me.name}”${where} — running ${harness} with ${model}`;
+  whoEl.title = solo
+    ? `${me.pet} the ${buddyName}`
+    : `${me.pet} the ${buddyName}, on “${me.name}”${where} — running ${harness} with ${model}`;
 }
 
 // Hook payloads identify the harness, while its transcript is the reliable
@@ -423,20 +510,60 @@ function setExcited(on) {
  * something failed or the context window is filling up, bouncing means this
  * session wants you, curled up means the turn is over.
  */
+/**
+ * Being ignored for this long is the only thing worth sulking about.
+ *
+ * A tool failing is not: agents retry, and a buddy that pulls a face every
+ * time a grep comes back empty is a buddy you stop looking at. Wanting your
+ * attention is not either — that is what `excited` is for, and it is meant to
+ * be inviting rather than cross.
+ */
+const SULK_AFTER_MS = 5 * 60 * 1000;
+
+/** When the oldest thing still waiting on you turned up. 0 when nothing is. */
+let waitingSince = 0;
+
 function poseForState() {
   if (document.body.classList.contains('walking')) return 'walk';
   if (pettedUntil > Date.now()) return 'cheer'; // you just double-clicked him
   if (clickedUntil > Date.now()) return 'wave'; // you just clicked him once
   if (pointing) return 'point';
   if (greetingUntil > Date.now()) return 'wave';
+
+  // Ignored for five minutes, or the context is about to run out and the
+  // session is genuinely in trouble. Those two, and nothing else.
+  const ignored = waitingSince > 0 && Date.now() - waitingSince > SULK_AFTER_MS;
+  if (ignored || contextTight) return 'stress';
+
+  // Something needs you: be interesting about it rather than cross.
   if (activeRequestId || currentUrgent()) return 'excited';
-  if (troubledUntil > Date.now() || contextTight) return 'stress';
   if (myStatus === 'working') return 'think';
   if (myStatus === 'waiting') return 'sleep'; // finished — nothing left to do
   return 'idle';
 }
 
+/**
+ * Start or stop the clock on being ignored.
+ *
+ * Started by the first thing that needs an answer and only cleared when the
+ * last one is gone, so answering one of three does not buy another five
+ * minutes of patience for the other two.
+ */
+function trackWaiting() {
+  const anyWaiting = Boolean(activeRequestId) || currentUrgent() || requests.size > 0;
+  if (!anyWaiting) waitingSince = 0;
+  else if (!waitingSince) waitingSince = Date.now();
+}
+
+// The sulk threshold is a moment in time, and no event fires when it passes.
+// Slow on purpose: this exists to notice five minutes going by, not to animate.
+const SULK_CHECK_MS = 15 * 1000;
+setInterval(() => {
+  if (waitingSince) refreshPose();
+}, SULK_CHECK_MS);
+
 function refreshPose() {
+  trackWaiting();
   const want = poseForState();
   clippyEl.classList.toggle('stressed', want === 'stress');
   if (want !== pose) setPose(want);
@@ -516,6 +643,8 @@ function showBubble(text, { fix = null } = {}) {
   petEl.classList.add('hidden');
   menuEl.classList.add('hidden');
   bubbleEl.classList.remove('hidden');
+  armPanel(bubbleEl);
+  showStack(); // before syncMode: the sheets need their room in the measurement
   syncMode();
 }
 
@@ -562,11 +691,121 @@ function toggleMenu() {
   else openMenu();
 }
 
+/**
+ * How many messages are waiting on this buddy, counting the one on screen.
+ *
+ * Held cards and passive nudges together: with one buddy answering for every
+ * agent they arrive from all of them, and "two things want you" is the same
+ * fact whichever kind they are. The badge and the paper stack both read from
+ * here so they can never disagree about what is waiting.
+ */
+function waitingCount() {
+  return [...pending.values()].filter((p) => !p.acknowledged).length + requests.size;
+}
+
+/**
+ * Put the panel on screen on top of the ones behind it.
+ *
+ * Two sheets is the ceiling (see `.stacked` in clippy.css) — the point of the
+ * stack is "there is more after this", which a third sheet doesn't say any
+ * better. The exact number is the badge's job.
+ */
+function showStack() {
+  const behind = waitingCount() - 1;
+  for (const el of [cardEl, bubbleEl]) {
+    el.classList.toggle('stacked', behind >= 1);
+    el.classList.toggle('deep', behind >= 2);
+  }
+}
+
+/**
+ * Name the place this session lives, everywhere it gets named.
+ *
+ * Four buttons lead to the same window and all four used to say "terminal".
+ * For a session in the ChatGPT app or in Claude that is simply the wrong word,
+ * and for one Clippy started in tmux there is no window to go to at all — you
+ * attach one. Main works out which it is; this puts the word on the buttons.
+ */
+function applySource() {
+  const go = source.goLabel || 'go to terminal ↗';
+  btnGoto.textContent = go;
+  btnQgoto.textContent = go;
+  const tip = source.name
+    ? `Bring ${source.name} to the front`
+    : "Bring this session's window to the front";
+  btnGoto.title = tip;
+  btnQgoto.title = tip;
+}
+
+/**
+ * How long a panel ignores clicks after appearing.
+ *
+ * Clippy pops up unannounced, over whatever you were doing, often directly
+ * under the pointer — and a button that appears under a cursor mid-click
+ * catches a click that was meant for something else entirely. On an approval
+ * card the button nearest that corner is **Allow**, so the failure is not a
+ * stray dismissal: it is silently approving a command nobody read. Caught in
+ * testing as a real, trusted mousedown landing on Allow within a frame of the
+ * card appearing.
+ *
+ * Long enough to outlast a click already in flight, short enough that nobody
+ * deliberately reaching for a button ever notices it — they have to see the
+ * card and move to it first, which is far longer than this.
+ */
+const ARM_MS = 450;
+const armTimers = new WeakMap();
+
+/**
+ * Make a panel's buttons inert for a moment after it appears.
+ *
+ * Swallowing the click rather than disabling the buttons: `disabled` would grey
+ * them out for a fifth of a second, which reads as a broken card, and would
+ * fight the several places that set `disabled` for their own reasons.
+ */
+function armPanel(el) {
+  if (!el) return;
+  el.classList.add('arming');
+  clearTimeout(armTimers.get(el));
+  armTimers.set(
+    el,
+    setTimeout(() => el.classList.remove('arming'), ARM_MS)
+  );
+}
+
+/** What to call the place a card came from, mid-sentence. */
+const there = (req) => req?.source?.name || source.name || 'terminal';
+
+/**
+ * The button that hands a held question back instead of answering it here. It
+ * names where the question would then be waiting — which is the whole point of
+ * pressing it, and was "terminal" even when the answer was going to appear in
+ * the ChatGPT app.
+ */
+function applyPassLabel(req, { move = false } = {}) {
+  const where = there(req);
+  btnPass.textContent = canOpen
+    ? `${move ? 'Move to' : 'Ask me in'} ${where} ↗`
+    : `Ask me in ${where}`;
+}
+
+/**
+ * "billing-api · Claude · Ghostty" — who is asking, and from where.
+ *
+ * Built from the card's own source rather than the window's: one buddy answers
+ * for every agent in 'one' mode, so the window's idea of "where" belongs to
+ * whichever session spoke last, not to the card being read.
+ */
+function paintWhere(req) {
+  const line = [req?.name, req?.agentName, req?.source?.name].filter(Boolean).join(' · ');
+  cardWhere.textContent = line;
+  cardWhere.classList.toggle('hidden', !line);
+}
+
 function render() {
-  const active = [...pending.values()].filter((p) => !p.acknowledged);
-  const open = active.length + requests.size;
+  const open = waitingCount();
   badgeEl.textContent = String(open);
   badgeEl.classList.toggle('hidden', open === 0);
+  showStack();
 
   // This window speaks for one session only, so the status line is about it.
   statusEl.textContent = STATUS_TEXT[myStatus] || myStatus;
@@ -574,6 +813,7 @@ function render() {
   // Every route to the terminal window needs to know we can find it.
   btnGoto.classList.toggle('hidden', !canOpen);
   btnQgoto.classList.toggle('hidden', !canOpen);
+  applySource();
 
   // Perching, a terminal we can find, a message waiting: all of it can change
   // while the menu is on screen.
@@ -607,8 +847,6 @@ function currentUrgent() {
 
 /* ---------- Ambient activity line ("what's Claude doing right now") ---------- */
 
-const TROUBLE_MS = 25 * 1000; // how long a failure keeps the buddy sweating
-
 // The last thing this session was seen doing. The line under the buddy shows it
 // only when nothing else is open, but the combined panel wants it too, so the
 // label is kept here rather than read back out of the DOM.
@@ -620,12 +858,75 @@ function showActivity(name, activity) {
     activityEl.classList.add('hidden');
     return;
   }
-  if (activity.ok === false) troubledUntil = Date.now() + TROUBLE_MS;
   const icon = !activity.ok ? '⚠' : activity.state === 'done' ? '✓' : '⚙';
   latestActivity = `${icon} ${activity.label}`;
   activityEl.textContent = `${icon} ${name} — ${activity.label}`;
   activityEl.classList.toggle('failed', !activity.ok);
   activityEl.classList.remove('hidden');
+}
+
+/* ---------- What the buddy has actually done ----------
+   The activity line above says what is happening *right now* and forgets it
+   the instant it changes, so looking away meant never finding out that Clippy
+   allowed a command, handed a question back, or what the last turn ended with.
+   These are the deeds themselves: kept in state (so a panel opening and
+   closing does not lose them), capped, newest first. */
+
+const DEEDS_KEPT = 5;
+const deeds = [];
+
+/** hh:mm — the day is never in question for something this recent. */
+const deedClock = (at) =>
+  new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+
+/**
+ * Record something the buddy did.
+ *
+ * `who` is the agent it was about — with one buddy answering for several, "I
+ * allowed that" is meaningless without saying whose.
+ */
+function noteDeed(text, { who = '' } = {}) {
+  if (!text) return;
+  // Whose face the card wears, worked out now rather than at render time: the
+  // roster moves, and a deed is a record of something that already happened.
+  const mine = !who || who === me.name;
+  const from = mine
+    ? { character: settings.character, color: me.color, name: me.name }
+    : petRoster.find((a) => a.name === who) || { name: who, color: me.color };
+  deeds.unshift({ text, who, at: Date.now(), from });
+  deeds.length = Math.min(deeds.length, DEEDS_KEPT);
+  renderDeeds();
+}
+
+function renderDeeds() {
+  deedsEl.replaceChildren();
+  for (const deed of deeds) {
+    const card = document.createElement('div');
+    card.className = 'deed';
+
+    const face = document.createElement('span');
+    face.className = 'deed-face';
+    face.style.setProperty('--clip', deed.from.color || me.color);
+    face.append(faceOf(deed.from));
+
+    const body = document.createElement('div');
+    body.className = 'deed-body';
+    const what = document.createElement('span');
+    what.className = 'deed-what';
+    what.textContent = deed.text;
+    // One buddy can be answering for several agents, so the card names the
+    // session — except when it is the one the plate underneath already names.
+    const meta = document.createElement('span');
+    meta.className = 'deed-meta';
+    meta.textContent = [deed.who && deed.who !== me.name ? deed.who : '', deedClock(deed.at)]
+      .filter(Boolean)
+      .join(' · ');
+    body.append(what, meta);
+
+    card.append(face, body);
+    deedsEl.append(card);
+  }
+  deedsEl.classList.toggle('hidden', deeds.length === 0);
 }
 
 function clearActivity() {
@@ -666,6 +967,7 @@ function showQuestion(evt) {
   btnQgoto.classList.toggle('hidden', !canOpen);
   menuEl.classList.add('hidden');
   qcardEl.classList.remove('hidden');
+  armPanel(qcardEl);
   setExcited(true);
   syncMode();
 }
@@ -874,14 +1176,16 @@ async function showUsage() {
     usageBarFill.style.width = `${pct}%`;
     usageBarFill.classList.toggle('warn', pct >= 60 && pct < 85);
     usageBarFill.classList.toggle('hot', pct >= 85);
-    // What's left is the number you act on, so it leads.
-    usageContext.innerHTML = '';
+    // What's left is the number you act on, so it leads — and it is the one
+    // thing in this panel worth reading at a glance, so it is set big enough
+    // to be read at a glance. The rest is the working underneath it.
+    usageContext.replaceChildren();
     const strong = document.createElement('b');
     strong.textContent = `${fmtTokens(left)} left`;
-    usageContext.append(
-      strong,
-      ` of ${fmtTokens(session.contextLimit)} context · ${fmtTokens(session.context)} used (${pct}%)`
-    );
+    const rest = document.createElement('span');
+    rest.className = 'ctx-rest';
+    rest.textContent = `${fmtTokens(session.context)} used of ${fmtTokens(session.contextLimit)} · ${pct}%`;
+    usageContext.append(strong, rest);
   } else {
     usageBarFill.style.width = '0';
     usageContext.textContent = 'no transcript for this session yet';
@@ -901,12 +1205,6 @@ async function showUsage() {
 
   usageEl.classList.remove('hidden');
   syncMode();
-  // The full view is also where you type the next prompt, so the caret starts
-  // there — but only once it's on screen; the collapsed summary has no box.
-  // preventScroll, always: a window clamped shorter than its contents will
-  // happily scroll the composer into view and take the buddy off the top of
-  // his own window with it.
-  if (usageExpanded) usageInput.focus({ preventScroll: true });
 }
 
 /**
@@ -981,14 +1279,13 @@ function hideUsage() {
   syncMode();
 }
 
-// Same window, grown or shrunk — the bars and the composer were rendered when
-// the panel opened, so this only reveals or hides them and asks main for the
-// window that fits. Never a second panel.
+// Same window, grown or shrunk — the bars were rendered when the panel opened,
+// so this only reveals or hides them and asks main for the window that fits.
+// Never a second panel.
 btnUsageSize.addEventListener('click', () => {
   usageExpanded = !usageExpanded;
   applyUsageExpansion();
   syncMode();
-  if (usageExpanded) usageInput.focus({ preventScroll: true });
 });
 
 /* ---------- Talking to the pet ----------
@@ -1007,6 +1304,169 @@ function petLine(text, cls = '') {
   return el;
 }
 
+/**
+ * Who the next thing typed goes to.
+ *
+ * '' means the buddy itself; anything else is a session id. Sharing one buddy
+ * between every agent means it has to be able to speak *to* them, not only for
+ * them — otherwise the chat is a pet that knows things and can't pass them on.
+ */
+let petTarget = '';
+
+/** Everyone the chat could be addressed to, as main last described them. */
+let petRoster = [];
+
+/** `/Users/me/projects/api` -> `~/projects/api`, so the path fits a 300px row. */
+const shortPath = (dir) => String(dir || '').replace(/^\/Users\/[^/]+/, '~');
+
+/** "Claude Code" / "Codex" — which harness this session is, spelled out. */
+const harnessOf = (agent) => HARNESS_NAMES[agent && agent.agent] || 'Claude Code';
+
+const petChip = document.getElementById('pet-to-chip');
+
+/**
+ * A small standing portrait of one agent's buddy.
+ *
+ * The same artwork the buddy on screen is drawn from, at thumbnail size: the
+ * built-in SVG ones are drawn live in that session's colour, the rest have a
+ * GIF per pose and `idle` is the one that reads as a portrait.
+ */
+function faceOf(agent) {
+  const character = (settings.characters || []).find((c) => c.id === agent.character) || null;
+  const colour = agent.color || me.color;
+  if (character && character.vector && window.ClippyVectors) {
+    const art = window.ClippyVectors.create(character.vector, 'idle', colour);
+    if (art) return art;
+  }
+  // A dropped-in sprite pack has no per-pose GIF at all — its art is one sheet
+  // and a row of frames. Standing still on the first frame of `idle` is the
+  // portrait; the sheet's own animation is for the buddy, not for a thumbnail.
+  const sheet = character && character.sheet;
+  if (sheet) {
+    const pose = sheet.poses.idle || Object.values(sheet.poses)[0];
+    const cell = document.createElement('span');
+    cell.className = 'chip-sheet';
+    cell.style.backgroundImage = `url("${pose.file}")`;
+    cell.style.backgroundSize = `${sheet.columns * 100}% ${sheet.rows * 100}%`;
+    cell.style.backgroundPosition = `0% ${sheet.rows > 1 ? (pose.row / (sheet.rows - 1)) * 100 : 0}%`;
+    return cell;
+  }
+  const img = document.createElement('img');
+  const tint = character && character.perColour ? `${colour.replace('#', '')}-` : '';
+  img.src = `assets/themes/${agent.character || 'clip'}/${tint}idle.gif`;
+  img.alt = '';
+  // Art that was never generated for this character and colour: fall back to a
+  // dot in the session's own colour rather than leaving a broken image, or the
+  // empty ring that a bare `remove()` left behind.
+  img.addEventListener('error', () => {
+    img.parentElement?.classList.add('plain');
+    img.remove();
+  });
+  return img;
+}
+
+/**
+ * Say who the next thing typed is going to, right beside the box.
+ *
+ * `null` means the buddy itself, and the chip disappears — talking to your own
+ * pet is the resting state and does not need labelling.
+ */
+function showChatTarget(agent) {
+  petChip.replaceChildren();
+  if (!agent) {
+    petChip.classList.add('hidden');
+    petEl.classList.remove('addressing');
+    return;
+  }
+  const face = document.createElement('span');
+  face.className = 'chip-face';
+  face.style.setProperty('--clip', agent.color || me.color);
+  face.append(faceOf(agent));
+  const name = document.createElement('span');
+  name.className = 'chip-name';
+  name.textContent = agent.name;
+  petChip.append(face, name);
+  petChip.title = `Talking to ${agent.name} (${harnessOf(agent)}${agent.cwd ? ` · ${shortPath(agent.cwd)}` : ''}) — click to talk to ${me.pet} instead`;
+  petChip.classList.remove('hidden');
+  // The panel takes on that session's colour while you are addressing it, so
+  // "this is not your pet" is visible without reading anything.
+  petEl.classList.add('addressing');
+  petEl.style.setProperty('--addressing', agent.color || me.color);
+}
+
+function renderPetTargets(roster) {
+  petTo.replaceChildren();
+  const all = (roster && roster.agents) || [];
+  petRoster = all;
+  // With a buddy each, this window speaks for exactly one session, so the row
+  // is a choice between two things rather than a roster: the buddy, or the
+  // agent it is sitting on. It used to be hidden entirely here, because the
+  // status panel carried a box that talked to that agent — and that box is
+  // gone, so this is now the only way to reach it.
+  const agents =
+    settings.buddyMode === 'one'
+      ? all
+      : all.filter((a) => a.sessionId === (roster && roster.showing));
+  if (!agents.length) {
+    petTo.classList.add('hidden');
+    petTarget = '';
+    return;
+  }
+
+  const choose = (value) => {
+    petTarget = value;
+    for (const button of petTo.children) {
+      const on = button.dataset.to === value;
+      button.classList.toggle('on', on);
+      button.setAttribute('aria-checked', String(on));
+    }
+    const to = agents.find((a) => a.sessionId === value) || null;
+    petInput.placeholder = to ? `Type to ${to.name}…` : 'Say hi';
+    showChatTarget(to);
+  };
+
+  const add = (value, label, title, enabled = true) => {
+    const button = document.createElement('button');
+    button.className = 'pet-target';
+    button.dataset.to = value;
+    button.textContent = label;
+    button.title = title;
+    button.setAttribute('role', 'radio');
+    button.disabled = !enabled;
+    button.addEventListener('click', () => choose(value));
+    petTo.appendChild(button);
+    return button;
+  };
+
+  // The buddy itself leads the row, and wears the crown when it is the one
+  // answering for everybody — the same mark it wears on its name plate, so
+  // "the main one" is one idea with one symbol rather than two.
+  const solo = document.body.classList.contains('solo');
+  const buddy = add(
+    '',
+    `${solo ? '👑 ' : ''}${me.pet || 'the buddy'}`,
+    solo
+      ? `${me.pet} is your main buddy — it speaks for every agent. Talking here reaches none of them.`
+      : `Chat with ${me.pet || 'your buddy'} — this never reaches a session`
+  );
+  buddy.classList.add('main');
+
+  for (const agent of agents) {
+    add(
+      agent.sessionId,
+      agent.name,
+      agent.reachable
+        ? `Type this into ${agent.name}'s session (${harnessOf(agent)}${agent.cwd ? ` · ${shortPath(agent.cwd)}` : ''})`
+        : `${agent.name} has no window or tmux session Clippy can type into`,
+      agent.reachable
+    );
+  }
+  petTo.classList.remove('hidden');
+  // Keep talking to whoever you were, if they are still there.
+  const stillThere = petTarget && agents.some((a) => a.sessionId === petTarget);
+  choose(stillThere ? petTarget : '');
+}
+
 function showPet() {
   // The panel and everything else want the same space above the buddy's head.
   usageEl.classList.add('hidden');
@@ -1020,6 +1480,46 @@ function showPet() {
   petEl.classList.remove('hidden');
   syncMode();
   petInput.focus({ preventScroll: true });
+  refreshPetTargets({ force: true });
+}
+
+// Sessions start and end while the panel sits open, and a row of agents that
+// is a minute old is worse than none: it offers people who have gone and hides
+// people who have arrived. Refreshed on open and on activity, but not on every
+// tool event a busy session produces.
+let petTargetsAt = 0;
+const PET_TARGETS_EVERY_MS = 3000;
+
+let petTargetsTimer = null;
+
+function refreshPetTargets({ force = false } = {}) {
+  if (petEl.classList.contains('hidden')) return;
+  const now = Date.now();
+  const since = now - petTargetsAt;
+  if (!force && since < PET_TARGETS_EVERY_MS) {
+    // Too soon — but a session really did just start or end, so this has to
+    // happen eventually. Dropping it left the row a session out of date until
+    // something else happened to come along.
+    if (!petTargetsTimer) {
+      petTargetsTimer = setTimeout(() => {
+        petTargetsTimer = null;
+        refreshPetTargets({ force: true });
+      }, PET_TARGETS_EVERY_MS - since);
+    }
+    return;
+  }
+  if (petTargetsTimer) {
+    clearTimeout(petTargetsTimer);
+    petTargetsTimer = null;
+  }
+  petTargetsAt = now;
+  window.clippyAPI
+    .agents()
+    .then((roster) => {
+      renderPetTargets(roster);
+      syncMode();
+    })
+    .catch(() => renderPetTargets(null));
 }
 
 function hidePet() {
@@ -1033,9 +1533,207 @@ function togglePet() {
   else hidePet();
 }
 
+/**
+ * "Was that meant for one of them?"
+ *
+ * Said to the buddy with nobody selected, a message might still be work for an
+ * agent — "the tests are failing on billing-api" is not small talk. Main asks
+ * the pet model (src/delegate.js) and answers with a *proposal*.
+ *
+ * It is never sent from here. A prompt typed into a session becomes work in
+ * somebody's repository and cannot be recalled, so the choice is shown with the
+ * reason for it and a button, and the button is the user's. Nothing appears at
+ * all when the model is unsure — a question you did not ask for is noise, and
+ * the chat has already answered.
+ */
+async function proposeAgent(text) {
+  let picked = null;
+  try {
+    picked = await window.clippyAPI.delegate(text);
+  } catch {
+    return; // routing is a nicety; failing at it must not disturb the chat
+  }
+  if (!picked || !picked.agent || petEl.classList.contains('hidden')) return;
+
+  const row = document.createElement('div');
+  row.className = 'pet-line offer';
+  const said = document.createElement('span');
+  said.textContent = picked.why
+    ? `Sounds like ${picked.agent.name} — ${picked.why}`
+    : `Sounds like ${picked.agent.name}.`;
+  const send = document.createElement('button');
+  send.className = 'offer-send';
+  send.textContent = `send to ${picked.agent.name}`;
+  send.addEventListener('click', () => {
+    window.clippyAPI.sendPrompt(text, picked.agent.sessionId);
+    row.replaceChildren(document.createTextNode(`sent to ${picked.agent.name}`));
+    row.className = 'pet-line waiting';
+    noteDeed(`passed a message to ${picked.agent.name}`, { who: picked.agent.name });
+    syncMode();
+  });
+  const no = document.createElement('button');
+  no.className = 'offer-no';
+  no.textContent = 'no';
+  no.addEventListener('click', () => {
+    row.remove();
+    syncMode();
+  });
+  row.append(said, send, no);
+  petLog.append(row);
+  petLog.scrollTop = petLog.scrollHeight;
+  syncMode();
+}
+
+/* ---------- @ — addressing an agent by name ----------
+   The pills above the box are fine for two or three agents and useless for a
+   dozen: they are one row, they truncate, and two projects called "api" look
+   identical on them. Typing @ opens the same roster as a list instead, with
+   the folder and the harness under each name — which is the only way to tell
+   ~/work/api from ~/side/api apart. Picking one sets the same target the pills
+   set, so the two can never disagree about where a message is going. */
+
+const picker = document.getElementById('pet-picker');
+let pickerHits = []; // what @ is currently offering
+let pickerAt = -1; // which of them is highlighted
+
+/** The `@fragment` immediately before the caret, or null. */
+function mentionBeforeCaret() {
+  const upto = petInput.value.slice(0, petInput.selectionStart ?? petInput.value.length);
+  const m = /@([^\s@]*)$/.exec(upto);
+  return m ? { start: upto.length - m[0].length, query: m[1] } : null;
+}
+
+function hidePicker() {
+  if (picker.classList.contains('hidden')) return;
+  picker.classList.add('hidden');
+  picker.replaceChildren();
+  pickerHits = [];
+  pickerAt = -1;
+  syncMode();
+}
+
+function highlightPicker(next) {
+  if (!pickerHits.length) return;
+  // Wraps, so holding ↓ never dead-ends at the bottom of a long list.
+  pickerAt = (next + pickerHits.length) % pickerHits.length;
+  [...picker.children].forEach((row, i) => row.classList.toggle('on', i === pickerAt));
+  picker.children[pickerAt]?.scrollIntoView({ block: 'nearest' });
+}
+
+/**
+ * Offer whoever matches what has been typed after the @.
+ *
+ * Unreachable agents are listed but not selectable: seeing that a session is
+ * there and cannot be typed into is more use than it silently missing from the
+ * list, which reads as "Clippy has forgotten about it".
+ */
+function refreshPicker() {
+  const mention = mentionBeforeCaret();
+  if (!mention) return hidePicker();
+
+  const q = mention.query.toLowerCase();
+  const hits = petRoster.filter(
+    (a) =>
+      !q ||
+      a.name.toLowerCase().includes(q) ||
+      shortPath(a.cwd).toLowerCase().includes(q) ||
+      harnessOf(a).toLowerCase().includes(q)
+  );
+  if (!hits.length) return hidePicker();
+
+  pickerHits = hits;
+  picker.replaceChildren();
+  for (const [i, agent] of hits.entries()) {
+    const row = document.createElement('div');
+    row.className = `pick${agent.reachable ? '' : ' off'}`;
+    row.setAttribute('role', 'option');
+
+    const name = document.createElement('span');
+    name.className = 'pick-name';
+    name.textContent = agent.name;
+
+    const meta = document.createElement('span');
+    meta.className = 'pick-meta';
+    meta.textContent = agent.reachable
+      ? `${harnessOf(agent)}${agent.cwd ? ` · ${shortPath(agent.cwd)}` : ''}`
+      : `${harnessOf(agent)} · no window to type into`;
+
+    row.append(name, meta);
+    // mousedown, not click: the box must not lose the caret before we put the
+    // name into it.
+    row.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      if (agent.reachable) takeMention(agent);
+    });
+    row.addEventListener('mouseenter', () => highlightPicker(i));
+    picker.appendChild(row);
+  }
+  picker.classList.remove('hidden');
+  // First reachable one, so Enter lands somewhere useful straight away.
+  highlightPicker(Math.max(0, hits.findIndex((a) => a.reachable)));
+  syncMode();
+}
+
+/** Put the chosen agent's name in the box and point the message at them. */
+function takeMention(agent) {
+  const mention = mentionBeforeCaret();
+  if (!mention) return hidePicker();
+  const before = petInput.value.slice(0, mention.start);
+  const after = petInput.value.slice(petInput.selectionStart ?? petInput.value.length);
+  const token = `@${agent.name} `;
+  petInput.value = before + token + after;
+  const caret = before.length + token.length;
+  petInput.setSelectionRange(caret, caret);
+  hidePicker();
+  petTarget = agent.sessionId;
+  // The pills are the same setting seen another way, so they move with it.
+  for (const button of petTo.children) {
+    const on = button.dataset.to === petTarget;
+    button.classList.toggle('on', on);
+    button.setAttribute('aria-checked', String(on));
+  }
+  petInput.placeholder = `Type to ${agent.name}…`;
+  showChatTarget(agent);
+  petInput.focus();
+  syncComposing(petInput, petEl);
+}
+
+/**
+ * Strip the address off the front of a message.
+ *
+ * `@billing-api deploy it` is addressed to billing-api and says "deploy it" —
+ * sending the @ along would put Clippy's own routing syntax into somebody's
+ * prompt.
+ */
+function withoutMention(text) {
+  const named = (name) => petRoster.some((a) => a.name === name);
+  // Only an address and nothing else: you have said who, not what, so there is
+  // nothing to send yet.
+  const bare = /^@(\S+)\s*$/.exec(text);
+  if (bare && named(bare[1])) return '';
+  const m = /^@(\S+)\s+([\s\S]+)$/.exec(text);
+  if (!m) return text;
+  return named(m[1]) ? m[2] : text;
+}
+
 async function sayToPet() {
-  const text = petInput.value.trim();
+  const text = withoutMention(petInput.value.trim());
   if (!text || petThinking) return;
+  hidePicker();
+
+  // Addressed to an agent: this is not small talk, it goes to their session
+  // exactly as the status card's composer would send it.
+  if (petTarget) {
+    petInput.value = '';
+    petEl.classList.remove('composing');
+    petLine(text, 'mine');
+    window.clippyAPI.sendPrompt(text, petTarget);
+    const to = [...petTo.children].find((b) => b.dataset.to === petTarget);
+    petLine(`sent to ${to ? to.textContent : 'the agent'}`, 'waiting');
+    syncMode();
+    return;
+  }
+
   petThinking = true;
   petInput.value = '';
   petEl.classList.remove('composing');
@@ -1060,9 +1758,35 @@ async function sayToPet() {
   petThinking = false;
 }
 
-petInput.addEventListener('input', () => syncComposing(petInput, petEl));
+petInput.addEventListener('input', () => {
+  syncComposing(petInput, petEl);
+  refreshPicker();
+});
+// Moving the caret can leave (or enter) an @ without changing a character.
+petInput.addEventListener('click', refreshPicker);
+petInput.addEventListener('blur', hidePicker);
 
 petInput.addEventListener('keydown', (e) => {
+  // While the picker is up it owns the keys that mean "choose": Enter would
+  // otherwise send a half-typed @name as a message.
+  if (!picker.classList.contains('hidden')) {
+    if (e.key === 'ArrowDown') return e.preventDefault(), highlightPicker(pickerAt + 1);
+    if (e.key === 'ArrowUp') return e.preventDefault(), highlightPicker(pickerAt - 1);
+    if (e.key === 'Enter' || e.key === 'Tab') {
+      const agent = pickerHits[pickerAt];
+      if (agent && agent.reachable) {
+        e.preventDefault();
+        takeMention(agent);
+        return;
+      }
+    }
+    if (e.key === 'Escape') {
+      // The picker first, the panel second: one Escape should not do both.
+      e.preventDefault();
+      hidePicker();
+      return;
+    }
+  }
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
     sayToPet();
@@ -1071,10 +1795,49 @@ petInput.addEventListener('keydown', (e) => {
 });
 
 document.getElementById('pet-close').addEventListener('click', hidePet);
-document.getElementById('btn-chat').addEventListener('click', (e) => {
-  e.stopPropagation(); // the buddy's own click would open the status panel
-  togglePet();
+
+// The chip is a way out as well as a label: one click and you are talking to
+// your own buddy again, without hunting for its pill.
+petChip.addEventListener('click', () => {
+  petTarget = '';
+  for (const button of petTo.children) {
+    const on = button.dataset.to === '';
+    button.classList.toggle('on', on);
+    button.setAttribute('aria-checked', String(on));
+  }
+  petInput.placeholder = 'Say hi';
+  showChatTarget(null);
+  petInput.focus();
 });
+document.getElementById('feed-close').addEventListener('click', hideFeed);
+/**
+ * The action bar under the buddy.
+ *
+ * Each of these was already reachable — two as floating word-buttons that a
+ * panel would adopt as its footer, the rest only by knowing to right-click. The
+ * bar is the one surface now; the context menu stays as a shortcut for people
+ * who already reach for it, and both drive the same functions.
+ *
+ * stopPropagation throughout: a click that reaches the buddy underneath would
+ * also run primaryAction and open something else on top of what was just asked
+ * for.
+ */
+const onAction = (id, run) =>
+  document.getElementById(id).addEventListener('click', (e) => {
+    e.stopPropagation();
+    run();
+  });
+
+onAction('btn-chat', togglePet);
+onAction('btn-stats', () => {
+  if (usageEl.classList.contains('hidden')) showUsage();
+  else hideUsage();
+});
+onAction('btn-messages', () => {
+  if (feedEl.classList.contains('hidden')) showFeed();
+  else hideFeed();
+});
+onAction('btn-settings', () => window.clippyAPI.openSettings());
 
 /* ---------- Drive mode panel (Clippy-driven Agent SDK session) ---------- */
 
@@ -1213,8 +1976,18 @@ function hideFeed() {
 
 /* ---------- Interactive cards (approvals & reviews) ---------- */
 
-function showNextRequest() {
-  const next = requests.values().next().value;
+/**
+ * Show one of the queued cards — by default the one at the front.
+ *
+ * `id` names a specific card, which is how paging works: reading what else is
+ * waiting used to mean *answering* the card in front of it, since this always
+ * took `requests.values().next()`. The buddy advertised the others with a
+ * count badge, a "+N more" chip and a stack of paper behind the card, and gave
+ * you no way to reach any of them.
+ */
+function showNextRequest(id = null) {
+  const queue = [...requests.values()];
+  const next = (id && requests.get(id)) || queue[0];
   if (!next) {
     activeRequestId = null;
     cardEl.classList.add('hidden');
@@ -1245,6 +2018,17 @@ function showNextRequest() {
   // asks main for a window wide and tall enough to read it in.
   document.body.classList.toggle('plan', isPlan);
   showQueueDepth();
+  // Whose card this is, before what it says: one buddy can be answering for
+  // several agents, and "which of them is this" is the first thing to know.
+  // The card carries its own — reading it off the window would name whichever
+  // session that window heard from most recently.
+  if (next.source) source = { ...source, ...next.source };
+  applySource();
+  btnCardX.title =
+    next.type === 'review'
+      ? 'Close'
+      : `Close — ${there(next)} will ask you there instead`;
+  paintWhere(next);
   cardTitle.textContent = next.title;
 
   // Answerable multiple-choice question — option buttons. The answer is fed
@@ -1259,11 +2043,11 @@ function showNextRequest() {
     // Claude Code hasn't run the tool, so there is no picker in the terminal
     // yet. This button hands it over — release the hook so the picker appears,
     // and raise that terminal window so you land on it.
-    btnPass.textContent = canOpen ? 'Move to terminal ↗' : 'Ask me in terminal';
+    applyPassLabel(next, { move: true });
     btnPass.classList.toggle('hidden', !!next.noPass);
     btnSubmit.classList.remove('hidden');
-    btnDismiss.classList.remove('hidden');
     cardEl.classList.remove('hidden');
+    armPanel(cardEl);
     syncMode();
     setExcited(true);
     return;
@@ -1276,12 +2060,15 @@ function showNextRequest() {
   // note rides along with whichever button you press.
   cardInput.classList.toggle('hidden', !isApproval);
   btnSubmit.classList.add('hidden');
-  btnDismiss.classList.add('hidden');
 
-  setMarkdown(cardDetail, next.detail || '');
-  cardDetail.classList.toggle('hidden', !next.detail);
-  offerTheRest(next);
-  cardInput.value = '';
+  // A glance, not a page: the rest is a button away, in a window that can hold
+  // it. `next.detail` is kept whole so the reader has something to show even
+  // when main had nothing left to send.
+  const shown = summarise(next.detail || '');
+  setMarkdown(cardDetail, shown);
+  cardDetail.classList.toggle('hidden', !shown);
+  offerTheRest({ ...next, truncated: next.truncated || shown !== (next.detail || '') });
+  cardInput.value = next.draft || '';
   cardInput.placeholder = isPlan
     ? 'optional: what to change before approving (Revise sends this back)…'
     : isApproval
@@ -1290,7 +2077,7 @@ function showNextRequest() {
   // Plan approvals reuse the allow/deny path but read better as Approve/Revise.
   btnAllow.textContent = isPlan ? 'Approve plan' : 'Allow';
   btnDeny.textContent = isPlan ? 'Revise' : 'Deny';
-  btnPass.textContent = canOpen ? 'Ask me in terminal ↗' : 'Ask me in terminal';
+  applyPassLabel(next);
   btnAllow.classList.toggle('hidden', !isApproval);
   btnDeny.classList.toggle('hidden', !isApproval);
   btnPass.classList.toggle('hidden', !isApproval || next.noPass); // Drive has no terminal
@@ -1301,6 +2088,7 @@ function showNextRequest() {
   btnFeedback.disabled = false;
 
   cardEl.classList.remove('hidden');
+  armPanel(cardEl);
   syncMode();
   setExcited(true);
 }
@@ -1312,6 +2100,14 @@ function showNextRequest() {
  * fit the box. The second one has to be measured — the text is whatever the
  * agent wrote, and the box is a fixed 190px.
  */
+/**
+ * Offer the whole thing when the card is only showing part of it.
+ *
+ * Either main cut it before sending (a plan past 4000 characters, a sign-off
+ * past 600) or it arrived whole and does not fit the box — which has to be
+ * measured, since the text is whatever the agent wrote and the box is a fixed
+ * height.
+ */
 function offerTheRest(req) {
   const boxed =
     !cardDetail.classList.contains('hidden') &&
@@ -1319,40 +2115,65 @@ function offerTheRest(req) {
   cardMore.classList.toggle('hidden', !(req.truncated || boxed));
 }
 
-cardMore.addEventListener('click', async () => {
+/**
+ * The first line or two of a message, for the card.
+ *
+ * The summary is the agent's own opening — free, and already what the review
+ * card's headline does. The alternative was a summarising call through the pet
+ * model, which reads better and costs a request per message; if that is ever
+ * wanted, this is the one place to change.
+ */
+function summarise(text, cap = 220) {
+  const clean = String(text || '').trim();
+  if (clean.length <= cap) return clean;
+  // Prefer a sentence or paragraph boundary within reach of the cap, so the
+  // summary ends somewhere a person would have stopped.
+  const window = clean.slice(0, cap + 60);
+  const stop = Math.max(window.lastIndexOf('. '), window.lastIndexOf('\n\n'));
+  return `${(stop > cap * 0.5 ? window.slice(0, stop + 1) : clean.slice(0, cap)).trim()}…`;
+}
+
+cardMore.addEventListener('click', () => {
+  // Open it in a window instead of growing this one.
+  //
+  // "read all" used to unfold the card in place: the same floating panel got
+  // taller until it ran out of screen, could not be moved to another display,
+  // and went away the moment the card was answered. A long message wants a
+  // page, and a page wants a window.
   const req = requests.get(activeRequestId);
-  // Only the cut ones need a round trip; the rest are already here in full and
-  // just need the room.
-  if (req && req.truncated) {
-    cardMore.disabled = true;
-    cardMore.textContent = 'reading…';
-    const whole = await window.clippyAPI.cardFull(req.id);
-    cardMore.disabled = false;
-    cardMore.textContent = 'read all';
-    if (whole) {
-      req.detail = whole;
-      req.truncated = false;
-      setMarkdown(cardDetail, whole);
-      cardDetail.classList.remove('hidden');
-    }
-  }
-  cardMore.classList.add('hidden');
-  cardEl.classList.add('reading');
-  // Unfolded, the card can want more window than the screen has, and a window
-  // clamped shorter than its contents loses the *top* of them — the title and
-  // the queue go off-screen and you're left reading the middle of a message.
-  // So the box only grows into the room that is actually there: everything
-  // else on the stage, measured, subtracted from the screen.
-  const rest = contentHeight() - cardDetail.clientHeight;
-  const room = Math.max(120, (window.screen?.availHeight || 900) - rest - 24);
-  if (room < cardDetail.clientHeight) cardDetail.style.maxHeight = `${room}px`;
-  syncMode(); // the window grows to whatever the unfolded card now needs
+  if (req) window.clippyAPI.openReader(req.id, { title: req.title, text: req.detail || req.title });
 });
 
 /** "+2 more": how many held requests are stacked up behind this card. */
 function showQueueDepth() {
-  cardQueue.classList.toggle('hidden', requests.size <= 1);
-  cardQueue.textContent = `+${requests.size - 1} more`;
+  const queue = [...requests.keys()];
+  const at = queue.indexOf(activeRequestId);
+  const many = queue.length > 1;
+  // Where you are, not only how many are left — the point of being able to
+  // move is knowing whether there is anything behind you.
+  cardQueue.classList.toggle('hidden', !many);
+  cardQueue.textContent = many ? `${at + 1} of ${queue.length}` : '';
+  cardPager.classList.toggle('hidden', !many);
+  // The sheets behind the card say the same thing without being read. Set
+  // here as well as in render(), because a card is shown straight from
+  // showNextRequest and the window is measured immediately after.
+  showStack();
+}
+
+/**
+ * Step to the card `by` places along, wrapping.
+ *
+ * Nothing is resolved by moving: every card keeps its deadline running and its
+ * half-typed reason, and comes back exactly as it was left.
+ */
+function pageCards(by) {
+  const queue = [...requests.keys()];
+  if (queue.length < 2) return;
+  // Whatever is in the box belongs to the card being left, not to the box.
+  const leaving = requests.get(activeRequestId);
+  if (leaving) leaving.draft = cardInput.value;
+  const at = queue.indexOf(activeRequestId);
+  showNextRequest(queue[(at + by + queue.length) % queue.length]);
 }
 
 // answers map for the active answer card: questionText -> label | [labels]
@@ -1400,11 +2221,31 @@ function answersComplete() {
   return Object.values(answerState).every((v) => (Array.isArray(v) ? v.length > 0 : v != null));
 }
 
+const DEED_WORDS = {
+  allow: 'allowed',
+  deny: 'denied',
+  pass: 'handed back',
+  dismiss: 'waved away',
+  answer: 'answered',
+  feedback: 'sent feedback on',
+  ok: 'signed off',
+};
+
 function decide(action, message = '') {
   if (!activeRequestId) return;
+  const req = requests.get(activeRequestId);
+  if (req) {
+    const what = req.type === 'review' ? 'the last turn' : req.title || 'a request';
+    noteDeed(`${DEED_WORDS[action] || action} ${what}`, { who: req.name });
+  }
   window.clippyAPI.decide(activeRequestId, action, message);
+  const queue = [...requests.keys()];
+  const at = queue.indexOf(activeRequestId);
   requests.delete(activeRequestId);
-  showNextRequest();
+  // Stay where you were in the queue rather than snapping back to the front:
+  // answering the third of four should show you the fourth, not the first.
+  const rest = [...requests.keys()];
+  showNextRequest(rest[Math.min(at, rest.length - 1)] || null);
   render();
 }
 
@@ -1424,7 +2265,12 @@ setInterval(() => {
     }
   }
   if (dropped) {
+    // A card can now expire while you are reading a different one. Only move
+    // if the one you are *on* is the one that went; otherwise stay put, or
+    // paging would yank you elsewhere every time something behind you timed
+    // out.
     if (!requests.has(activeRequestId)) showNextRequest();
+    else showQueueDepth(); // the position it shows has shifted underneath it
     render();
   }
 
@@ -1441,13 +2287,22 @@ setInterval(() => {
 
 window.clippyAPI.onSettings((s) => {
   settings = s;
+  // Only the window that actually speaks for everybody wears the crown and
+  // keeps its plate up — not every buddy that happens to exist while the mode
+  // says 'one'.
+  document.body.classList.toggle('solo', s.isSolo === true);
   applyCharacter();
   applyIdentity();
   render();
 });
 
 window.clippyAPI.onIdentity((id) => {
+  const wasColor = me.color;
   Object.assign(me, id);
+  // The clip sprites are drawn per session colour, so a buddy that just
+  // changed which session it speaks for needs its artwork re-picked, not just
+  // its name re-lettered.
+  if (id.color && id.color !== wasColor) applyCharacter();
   applyIdentity();
 });
 
@@ -1464,6 +2319,8 @@ function handleEvent(evt) {
     applyIdentity();
   }
   refreshIdentity();
+  // Whoever is running may have changed; the chat's target row should agree.
+  refreshPetTargets();
 
   switch (evt.kind) {
     case 'appearance':
@@ -1472,6 +2329,12 @@ function handleEvent(evt) {
 
     case 'approval':
     case 'review': {
+      if (evt.kind === 'review') {
+        // The turn ending is worth remembering whether or not the card is
+        // ever answered — it is the "we completed this" line.
+        const said = (evt.message || '').replace(/^.*? finished:?\s*/i, '').trim();
+        noteDeed(said ? `finished: ${said.slice(0, 70)}` : 'finished a turn', { who: evt.name });
+      }
       // A review card carries no deadline (expiresAt 0): the hook was already
       // answered, so the card can wait for as long as the user does.
       requests.set(evt.requestId, {
@@ -1480,6 +2343,11 @@ function handleEvent(evt) {
         variant: evt.variant || 'tool',
         noPass: !!evt.noPass,
         name: evt.name,
+        // Kept per card, not per window: in one-for-all mode the next card up
+        // may well be a different agent in a different app.
+        sessionId: evt.sessionId || '',
+        agentName: evt.agentName || '',
+        source: evt.source || null,
         title: evt.kind === 'approval' ? evt.title : evt.message,
         detail: evt.detail || '',
         // Main kept the rest of it; "read all" comes and gets it.
@@ -1500,6 +2368,9 @@ function handleEvent(evt) {
         type: 'answer',
         noPass: !!evt.noPass,
         name: evt.name,
+        sessionId: evt.sessionId || '',
+        agentName: evt.agentName || '',
+        source: evt.source || null,
         title: evt.title || `${evt.agentName || 'The agent'} is asking you`,
         questions: evt.questions || [],
         expiresAt,
@@ -1531,6 +2402,18 @@ function handleEvent(evt) {
     }
     case 'can-open': {
       canOpen = Boolean(evt.value);
+      if (evt.source) source = { ...source, ...evt.source };
+      applySource();
+      // Which app a session lives in takes a process-table walk to work out, so
+      // the first card of a session is usually built before the answer lands.
+      // When it does, the card on screen gets the better name rather than
+      // keeping the generic one until it is dismissed.
+      const open = requests.get(activeRequestId);
+      if (open && evt.source && open.sessionId === evt.sessionId) {
+        open.source = { ...open.source, ...evt.source };
+        paintWhere(open);
+        applyPassLabel(open);
+      }
       break;
     }
     case 'dock': {
@@ -1540,13 +2423,6 @@ function handleEvent(evt) {
       // Compact is about size, not about being perched — a corner buddy is a
       // bare paperclip too until it has something to show.
       document.body.classList.toggle('compact', Boolean(evt.compact));
-      // Clicking a compact buddy opens the panel before main has grown the
-      // window, and a display:none textarea can't take the caret — so the
-      // composer claims it here, once the panel is actually on screen (and
-      // only in the expanded view, where the composer exists).
-      if (!evt.compact && usageExpanded && !usageEl.classList.contains('hidden')) {
-        usageInput.focus({ preventScroll: true });
-      }
       break;
     }
     case 'pose': {
@@ -1592,10 +2468,25 @@ function handleEvent(evt) {
       showQuestion(evt);
       break;
     }
+    case 'open-usage': {
+      showUsage();
+      break;
+    }
     case 'request-closed': {
       // resolved elsewhere: timeout, terminal answer, or session moved on
-      if (requests.delete(evt.requestId) && evt.requestId === activeRequestId) {
-        showNextRequest();
+      if (requests.has(evt.requestId) && evt.timedOut) {
+        noteDeed(`ran out of time on ${requests.get(evt.requestId).title || 'a request'}`, {
+          who: requests.get(evt.requestId).name,
+        });
+      }
+      if (requests.delete(evt.requestId)) {
+        // Only move if the card that went is the one being read. Now that the
+        // queue can be paged, something timing out three cards behind you must
+        // not drag you back to the front — but the position it shows has
+        // changed underneath, so that is redrawn either way.
+        if (evt.requestId === activeRequestId) showNextRequest();
+        else showQueueDepth();
+        render();
       }
       break;
     }
@@ -1643,6 +2534,7 @@ function handleEvent(evt) {
       const wasEmpty = !feedTurns.length;
       mergeFeed(evt.turns);
       menuFeed.classList.remove('hidden'); // there is something to show now
+      document.getElementById('btn-messages').classList.remove('hidden');
       if (evt.source) feedSrc.textContent = evt.source;
       if (!feedEl.classList.contains('hidden')) renderFeed();
 
@@ -1650,7 +2542,10 @@ function handleEvent(evt) {
       // closed, nothing is being asked of the user, and this is news rather
       // than the backlog we read on the way in.
       const said = [...(evt.turns || [])].reverse().find((t) => t.role === 'assistant' && t.text);
-      const quiet = feedEl.classList.contains('hidden') && !activeRequestId && !evt.cold && !wasEmpty;
+      // A watcher cold-starts from the transcript tail. For a prompt just sent
+      // through this buddy, that first read is a live reply, not old history.
+      const isNews = evt.directReply || (!evt.cold && !wasEmpty);
+      const quiet = feedEl.classList.contains('hidden') && !activeRequestId && isNews;
       if (said && quiet) {
         showBubble(said.text);
         setTimeout(() => {
@@ -1666,7 +2561,10 @@ function handleEvent(evt) {
       me.host = evt.host || '';
       me.tmux = evt.tmux || '';
       document.body.classList.toggle('owned', me.owned);
-      if (me.owned) menuFeed.classList.remove('hidden');
+      if (me.owned) {
+        menuFeed.classList.remove('hidden');
+        document.getElementById('btn-messages').classList.remove('hidden');
+      }
       feedSrc.textContent = me.host ? `via ${me.host}` : me.tmux ? `tmux · ${me.tmux}` : '';
       applyIdentity();
       break;
@@ -1708,9 +2606,20 @@ window.clippyAPI.onEvent(handleEvent);
 
 /* ---------- Context pressure: a full window is worth worrying about ---------- */
 
-// Past this much of the context window used, the buddy starts to look stressed.
-// It's the number you'd want to notice before Claude starts forgetting things.
-const CONTEXT_STRESS = 0.3;
+/**
+ * Past this much of the context window used, the buddy looks stressed.
+ *
+ * This was 0.3, which meant a red pulse on every session that had been going
+ * for ten minutes — permanently, with nothing wrong. A signal that is on
+ * almost all the time is not a signal, and "why is it flashing red?" is the
+ * only thing it actually communicated.
+ *
+ * Nine tenths full is the point where it is worth knowing: a turn or two left
+ * before the agent starts forgetting the beginning of the conversation. Until
+ * then a filling context window is information, and it already has a bar in
+ * the panel saying so.
+ */
+const CONTEXT_STRESS = 0.9;
 const CONTEXT_POLL_MS = 60 * 1000;
 let contextCheckInFlight = false;
 
@@ -1790,7 +2699,44 @@ btnFeedback.addEventListener('click', () => {
 btnSubmit.addEventListener('click', () => {
   if (answersComplete()) decide('answer', JSON.stringify(answerState));
 });
-btnDismiss.addEventListener('click', () => decide('dismiss'));
+/**
+ * The corner (x) on a held card.
+ *
+ * Never an answer. Whatever kind of card it is, closing hands the decision
+ * back to the agent — which then asks in its own terminal, exactly as it would
+ * have if Clippy had not been running. That is what makes an (x) safe to put on
+ * a card at all: the alternative was a fifth button that resolved a permission
+ * request without saying which way you meant it.
+ *
+ * A review card holds nothing open, so there is nothing to hand back and this
+ * is a plain close.
+ */
+document.getElementById('card-prev').addEventListener('click', () => pageCards(-1));
+document.getElementById('card-next').addEventListener('click', () => pageCards(1));
+
+// Arrows page the queue while a card is up — but never while something is
+// being typed into it, where they mean "move the caret".
+document.addEventListener('keydown', (e) => {
+  if (!activeRequestId || requests.size < 2) return;
+  if (e.target === cardInput || e.target.tagName === 'TEXTAREA') return;
+  if (e.key === 'ArrowLeft') {
+    e.preventDefault();
+    pageCards(-1);
+  }
+  if (e.key === 'ArrowRight') {
+    e.preventDefault();
+    pageCards(1);
+  }
+});
+
+btnCardX.addEventListener('click', () => {
+  const req = requests.get(activeRequestId);
+  if (!req) return;
+  if (req.type === 'review') return decide('ok');
+  // An answerable question is waved away; an approval is passed back. Both end
+  // up as {} on the wire — the agent asks for itself.
+  decide(req.type === 'answer' ? 'dismiss' : 'pass');
+});
 
 document.getElementById('drive-send').addEventListener('click', sendDrivePrompt);
 document.getElementById('drive-stop').addEventListener('click', () => window.clippyAPI.driveStop());
@@ -1815,7 +2761,7 @@ cardInput.addEventListener('input', () => {
   }
 });
 
-// "I'll answer in the terminal" — put the card away and show them where.
+// The corner (x) on a question: put it away and show them where to answer.
 document.getElementById('btn-qok').addEventListener('click', () => {
   hideQuestion();
   if (canOpen) window.clippyAPI.pointAtPrompt();
@@ -1844,9 +2790,7 @@ document.getElementById('btn-snooze').addEventListener('click', () => {
   render();
 });
 
-document.getElementById('btn-hide').addEventListener('click', () => {
-  window.clippyAPI.hide();
-});
+onAction('btn-hide', () => window.clippyAPI.hide());
 
 // Raise this session's terminal window from a card: "this needs you — take me
 // to that terminal". Clippy rides along on its top-right corner.
@@ -1854,12 +2798,12 @@ btnGoto.addEventListener('click', () => window.clippyAPI.openWindow());
 
 document.getElementById('btn-usage-close').addEventListener('click', hideUsage);
 
-/* ---------- Talking back: the composer at the foot of the panel ---------- */
+/* ---------- Talking back ---------- */
 
 /**
- * An empty composer is an invitation, not a form: one line tall, no Send
- * button. Both appear the moment there are words in it — and both change how
- * tall the panel is, so main is told either way.
+ * An empty box is an invitation, not a form: one line tall until there are
+ * words in it, then three. Growing changes how tall the panel is, so main is
+ * told either way.
  */
 function syncComposing(el, box) {
   const composing = Boolean(el.value.trim());
@@ -1868,30 +2812,6 @@ function syncComposing(el, box) {
   syncMode();
 }
 
-function sendPrompt() {
-  const text = usageInput.value.trim();
-  if (!text) return;
-  window.clippyAPI.sendPrompt(text);
-  usageInput.value = '';
-  usageEl.classList.remove('composing');
-  hideUsage();
-  // The visible confirmation is the terminal raising and the text appearing
-  // on its own prompt line — a cheer here bridges the half-second gap.
-  pettedUntil = Date.now() + 1200;
-  refreshPose();
-  setTimeout(refreshPose, 1300);
-}
-
-usageInput.addEventListener('input', () => syncComposing(usageInput, usageEl));
-
-usageInput.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && !e.shiftKey) {
-    e.preventDefault();
-    sendPrompt();
-  }
-  if (e.key === 'Escape') hideUsage();
-});
-document.getElementById('btn-usage-send').addEventListener('click', sendPrompt);
 
 /**
  * What a plain click should just do, no menu in the way: a message you haven't
@@ -1907,6 +2827,18 @@ function primaryAction() {
   clickedUntil = Date.now() + CLICK_ACK_MS;
   refreshPose();
   setTimeout(refreshPose, CLICK_ACK_MS + 50);
+
+  // The chat is the one panel you compose in, so clicking the buddy must not
+  // quietly swap it for something else. It used to: a waiting message won this
+  // race, the bubble took the panel's place, and a half-typed sentence went
+  // with it — you clicked the animal you were talking to and it changed the
+  // subject. Clicking him now closes the chat, the same way 💬 does, and
+  // mid-sentence it stays put — the rule parking already follows.
+  if (!petEl.classList.contains('hidden')) {
+    if (petInput.value.trim() || petThinking) return;
+    hidePet();
+    return;
+  }
 
   const next = [...pending.values()].find((p) => !p.acknowledged);
   if (next) {
@@ -2051,8 +2983,14 @@ let parkTimer = null;
 
 function parkPanels() {
   if (activeRequestId) return;
-  // Mid-thought in either box — the composer or the pet — so stay put.
-  if (usageInput.value.trim() || petInput.value.trim()) return;
+  // Still pointing at it. A leave can be reported for reasons that are not the
+  // user walking away — the window resizing under a stationary cursor is the
+  // usual one — and putting the panel away while they are reading it is what
+  // made opening anything feel like a flicker: open, vanish, open again. If
+  // anything in this window is under the pointer, they have not left.
+  if (document.querySelector(':hover')) return;
+  // Mid-thought in the chat box, so stay put.
+  if (petInput.value.trim()) return;
   if (petThinking) return; // an answer is on its way; don't shut the door on it
   if (!usageEl.classList.contains('hidden')) {
     usageEl.classList.add('hidden');

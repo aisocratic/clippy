@@ -13,6 +13,7 @@
  *   adaptive-icon.png  1024², the clip inset for Android's mask
  *   splash-icon.png    1024², what expo-splash-screen centres on paper
  *   favicon.png        48², the web build's tab icon
+ *   notification-icon.png  96², a white silhouette for Android's status bar
  *
  * The one rule that is not negotiable: **the iOS icon may not have an alpha
  * channel.** App Store Connect rejects an icon with transparency, and the
@@ -56,7 +57,7 @@ function flatten(rgba, background = PAPER) {
  * an Android one to whatever mask the launcher fancies, so the clip is drawn
  * smaller into a bigger canvas and given room to survive the crop.
  */
-function clipOn(size, { fill = 1, transparent = false } = {}) {
+function clipOn(size, { fill = 1, transparent = false, silhouette = false } = {}) {
   const inner = Math.round(size * fill);
   const sprite = renderIconPixels(inner);
   const canvas = Buffer.alloc(size * size * 4); // transparent to start
@@ -66,10 +67,14 @@ function clipOn(size, { fill = 1, transparent = false } = {}) {
     for (let x = 0; x < inner; x++) {
       const from = (y * inner + x) * 4;
       const to = ((y + offset) * size + (x + offset)) * 4;
-      canvas[to] = sprite[from];
-      canvas[to + 1] = sprite[from + 1];
-      canvas[to + 2] = sprite[from + 2];
-      canvas[to + 3] = sprite[from + 3];
+      // Android draws a notification icon as a mask: every visible pixel is
+      // forced to white and only the alpha survives, so shipping the coloured
+      // art would render as a white blob. Flatten it to a shape here instead.
+      const on = sprite[from + 3] !== 0;
+      canvas[to] = silhouette ? 255 : sprite[from];
+      canvas[to + 1] = silhouette ? 255 : sprite[from + 1];
+      canvas[to + 2] = silhouette ? 255 : sprite[from + 2];
+      canvas[to + 3] = silhouette ? (on ? 255 : 0) : sprite[from + 3];
     }
   }
   return transparent ? canvas : flatten(canvas);
@@ -96,6 +101,8 @@ function makeMobileIcons() {
     // The launch screen: the same clip, small and centred on paper.
     write('splash-icon.png', 1024, { fill: 0.4, transparent: true }),
     write('favicon.png', 48, { fill: 0.8, transparent: true }),
+    // The small monochrome mark Android puts in the status bar.
+    write('notification-icon.png', 96, { fill: 0.86, transparent: true, silhouette: true }),
   ];
   return made;
 }

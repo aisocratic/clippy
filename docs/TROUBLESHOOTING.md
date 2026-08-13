@@ -2,10 +2,11 @@
 
 ## The downloaded app will not open
 
-The current public DMG is ad-hoc signed rather than Apple-notarized. Right-click
-**Clippy for Claude Code** in Applications, choose **Open**, then confirm
-**Open** once. Do not bypass Gatekeeper for a binary from any source other than
-the official GitHub release.
+The official `v0.3.1` release and later are Developer ID signed and
+Apple-notarized, so macOS should open them normally. If macOS says the app
+cannot be verified, delete that copy and download the current asset from the
+official GitHub release; do not bypass Gatekeeper for a binary from any other
+source.
 
 The current DMG is Apple-silicon-only and requires macOS 11 or newer. Intel Mac
 users must build from source for now. See [Compatibility](COMPATIBILITY.md).

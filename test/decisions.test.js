@@ -273,3 +273,54 @@ test('activityLabel is terse and verb-forward', () => {
   assert.match(activityLabel('ExitPlanMode', {}), /plan/i);
   assert.match(activityLabel('mcp__memory__create', {}), /memory__create/);
 });
+
+test('a multi-select answered in Clippy reaches Codex as a list, not one joined label', () => {
+  // The bug this covers: normalizeAnswers joins with commas because Claude's
+  // updatedInput wants one string per question. Codex takes one entry per
+  // chosen option, so joining produced `answers: ["Redis, Postgres"]` — a
+  // single option label matching nothing it offered, and an answer that
+  // therefore meant nothing.
+  const toolInput = {
+    questions: [
+      {
+        id: 'stores',
+        question: 'Which stores?',
+        multiSelect: true,
+        options: [{ label: 'Redis' }, { label: 'Postgres' }],
+      },
+    ],
+  };
+  const reply = toHookResponse('PreToolUse', 'answer', '{"Which stores?":["Redis","Postgres"]}', {
+    toolInput,
+    source: 'codex',
+    toolName: 'request_user_input',
+  });
+  assert.match(
+    reply.hookSpecificOutput.permissionDecisionReason,
+    /"stores":\{"answers":\["Redis","Postgres"\]\}/
+  );
+});
+
+test('a single-choice Codex answer is still a one-item list', () => {
+  const toolInput = { questions: [{ id: 'store', question: 'Which store?', options: [{ label: 'Redis' }] }] };
+  const reply = toHookResponse('PreToolUse', 'answer', '{"Which store?":"Redis"}', {
+    toolInput,
+    source: 'codex',
+    toolName: 'request_user_input',
+  });
+  assert.match(reply.hookSpecificOutput.permissionDecisionReason, /"store":\{"answers":\["Redis"\]\}/);
+});
+
+test('a Codex question with no id cannot be answered, and says so by declining', () => {
+  // Answering by position would be a guess about which question we replied to.
+  // Handing it back is the honest failure: Codex asks in its own picker.
+  const toolInput = { questions: [{ question: 'Which store?', options: [{ label: 'Redis' }] }] };
+  assert.deepEqual(
+    toHookResponse('PreToolUse', 'answer', '{"Which store?":"Redis"}', {
+      toolInput,
+      source: 'codex',
+      toolName: 'request_user_input',
+    }),
+    {}
+  );
+});

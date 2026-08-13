@@ -7,7 +7,7 @@ const { toHookResponse } = require('../src/decisions');
 
 // The switches the tray's Quick settings offers. An action can only be gated on
 // one of these — anything else would be a switch nobody can reach.
-const SWITCHES = ['approvals', 'answerQuestions', 'reviewOnStop', 'autoPerch'];
+const SWITCHES = ['approvals', 'answerQuestions', 'reviewOnStop', 'autoPerch', 'quietWhenFocused'];
 
 test('every action is complete enough to render', () => {
   assert.ok(ACTIONS.length >= 8, 'the catalogue should cover what Clippy actually does');

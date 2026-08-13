@@ -54,17 +54,35 @@ legend {
 }
 
 .choice {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: 5px;
-  margin-right: 14px;
-  padding: 3px 0;
+  gap: 7px;
+  padding: 4px 0;
   cursor: pointer;
+}
+
+.choice-copy {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+}
+
+.choice-copy small {
+  color: var(--muted);
+}
+
+code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.95em;
 }
 
 #agent-row {
   display: flex;
   flex-wrap: wrap;
+}
+
+#agent-row .choice {
+  margin-right: 14px;
 }
 
 .indent {

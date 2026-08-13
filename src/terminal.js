@@ -308,12 +308,40 @@ function run(cmd, args, { timeout = OSASCRIPT_TIMEOUT_MS } = {}) {
   });
 }
 
-/** The terminal emulator app that owns `pid`, via the live process table. */
+/**
+ * The bundle id of an app we found on disk, or '' if it won't say.
+ *
+ * An app's Info.plist is usually a *binary* plist, so this asks `defaults`
+ * rather than reading the file — the same question the Finder asks. Best
+ * effort by design: the callers that want it (naming ChatGPT, Claude and
+ * friends in source-app.js) all fall back to the app's name, so a machine
+ * where this fails still gets the right words, just less robustly.
+ */
+async function bundleIdFor(bundlePath) {
+  if (!bundlePath) return '';
+  try {
+    const out = await run(
+      '/usr/bin/defaults',
+      ['read', `${bundlePath}/Contents/Info.plist`, 'CFBundleIdentifier'],
+      { timeout: 2000 }
+    );
+    return out.trim();
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * The app that owns `pid` — the terminal emulator hosting a session, or the
+ * agent app hosting it directly — via the live process table.
+ */
 async function appForPid(pid) {
   if (!pid) return null;
   try {
     const table = parseProcessTable(await run('/bin/ps', ['-Ao', 'pid=,ppid=,comm=']));
-    return findAppAncestor(pid, table);
+    const app = findAppAncestor(pid, table);
+    if (!app) return null;
+    return { ...app, bundleId: await bundleIdFor(app.bundle) };
   } catch (err) {
     // Indistinguishable from "no terminal app" upstream, so leave a trace here.
     console.warn('clippy: could not read the process table:', err.message);
@@ -353,18 +381,31 @@ async function activateApp(target) {
     : target?.program === ITERM_APP
     ? ['-a', 'iTerm']
     : null;
-  if (!args) return;
+  if (!args) return false;
   try {
     await run('/usr/bin/open', args, { timeout: 3000 });
+    return true;
   } catch {
     // best effort — the script's own frontmost/AXRaise still gets its turn
+    return false;
   }
 }
 
-/** Raise a session's terminal window. Resolves with its bounds, or null. */
+/**
+ * Raise a session's window.
+ *
+ * Two answers, not one, because they fail apart: `open` on the bundle needs no
+ * permission and brings the *app* forward, while picking its exact window needs
+ * Accessibility. Without that grant — and for an agent app like ChatGPT or
+ * Claude, which most people have never granted it to — the app really is in
+ * front of the user now, and reporting "I couldn't find that window" would be
+ * a lie about something that visibly just happened.
+ *
+ * @returns {Promise<{bounds: object|null, activated: boolean}>}
+ */
 async function revealWindow(target) {
-  await activateApp(target);
-  return runWindowScript(target, { reveal: true });
+  const activated = await activateApp(target);
+  return { bounds: await runWindowScript(target, { reveal: true }), activated };
 }
 
 /**
@@ -442,6 +483,8 @@ module.exports = {
   windowBounds,
   typeScript,
   typeAndSubmit,
+  appForPid,
+  bundleIdFor,
   TERMINAL_APP,
   ITERM_APP,
 };

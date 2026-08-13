@@ -1,6 +1,6 @@
 {
   "name": "clippy-for-claude",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "A Clippy for your Mac that watches Claude Code and Codex sessions and lets you answer them without hunting through terminal tabs",
   "author": "AI Socratic (https://aisocratic.org)",
   "keywords": [
@@ -35,6 +35,7 @@
     "make-mobile-icons": "node scripts/make-mobile-icons.js",
     "package": "node scripts/package-app.js",
     "package:release": "node scripts/package-app.js --require-release-signing",
+    "verify:release": "node scripts/verify-release.js",
     "add-sprite-pack": "node scripts/add-sprite-pack.js",
     "mock-session": "node scripts/mock-session.js",
     "demo:web": "node scripts/demo-web.js",

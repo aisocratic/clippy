@@ -96,6 +96,45 @@ button:disabled {
   opacity: 0.45;
 }
 
+/* Every picker is the same compact, outlined control as the app's buttons.
+   Native select chrome otherwise gives the sound picker and the session
+   pickers visibly different borders, arrows, and focus states. */
+select {
+  appearance: none;
+  min-height: 31px;
+  padding: 5px 30px 5px 10px;
+  border: 1.5px solid var(--ink);
+  border-radius: 8px;
+  background-color: #ffffff;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--ink) 50%),
+    linear-gradient(135deg, var(--ink) 50%, transparent 50%);
+  background-position:
+    calc(100% - 14px) 13px,
+    calc(100% - 9px) 13px;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+  color: var(--text);
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 700;
+  line-height: 1.3;
+  transition: background-color 0.12s ease, box-shadow 0.12s ease, transform 0.08s ease;
+}
+
+select:hover:not(:disabled) {
+  background-color: var(--surface-2);
+}
+
+select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+select:disabled {
+  opacity: 0.45;
+}
+
 /* ---------- Rail ---------- */
 
 #rail {
@@ -252,6 +291,11 @@ button:disabled {
   max-width: 62ch;
 }
 
+/* A header that needs two paragraphs has to look like it has two. */
+.panel-head p + p {
+  margin-top: 8px;
+}
+
 /* ---------- Fields ---------- */
 
 .field-row {
@@ -277,11 +321,22 @@ button:disabled {
   margin-bottom: 7px;
 }
 
+/* A button in one of these rows belongs to the control beside it, not to the
+   whole field. Centred against `.field` it floats between the label and the
+   select — level with neither. Its bottom edge lines up with the control's. */
+.field-row > button {
+  align-self: end;
+}
+
 .field-note {
   flex: 1;
   min-width: 220px;
   font-size: 11.5px;
   color: var(--muted);
+  /* The note explains the control, so it sits with it rather than being
+     centred against a block that is taller than the thing it describes. */
+  align-self: end;
+  padding-bottom: 6px;
 }
 
 .segmented {
@@ -327,9 +382,9 @@ button:disabled {
 
 .heading-row h1 { margin-bottom: 0; }
 
-/* A circled "+" is only obvious to whoever put it there. This one says what it
-   does and wears the card shadow, so it reads as the page's one action. */
-.add-buddy {
+/* A circled "+" is only obvious to whoever put it there. Header actions say
+   what they do and wear the card shadow, so each reads as the page's action. */
+.panel-action {
   display: inline-flex;
   align-items: center;
   gap: 7px;
@@ -343,16 +398,16 @@ button:disabled {
   white-space: nowrap;
 }
 
-.add-buddy span {
+.panel-action span {
   font-size: 17px;
   line-height: 1;
 }
 
-.add-buddy:hover:not(:disabled) {
+.panel-action:hover:not(:disabled) {
   background: #f7d874;
 }
 
-.add-buddy:active:not(:disabled) {
+.panel-action:active:not(:disabled) {
   transform: translate(2px, 2px);
   box-shadow: 1px 1px 0 var(--ink);
 }
@@ -360,12 +415,6 @@ button:disabled {
 .sound-setting select,
 .draw-tools input {
   min-width: 150px;
-  padding: 6px 9px;
-  border: 1.5px solid var(--ink);
-  border-radius: 8px;
-  background: #fff;
-  color: var(--text);
-  font: inherit;
 }
 
 .cast {
@@ -805,7 +854,8 @@ button:disabled {
   background: var(--surface-2);
 }
 
-.access-actions button.primary {
+.access-actions button.primary,
+.feedback-actions button.primary {
   background: var(--yellow);
 }
 
@@ -869,13 +919,6 @@ button:disabled {
 .session-pick {
   flex: none;
   max-width: 190px;
-  padding: 4px 7px;
-  border-radius: 8px;
-  border: 1.5px solid var(--ink);
-  background: #ffffff;
-  color: var(--text);
-  font: inherit;
-  font-size: 11.5px;
 }
 
 .session .dot {
@@ -907,7 +950,8 @@ button:disabled {
 
 /* ---------- Updates ---------- */
 
-.update-box {
+.update-box,
+.feedback-box {
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -946,3 +990,108 @@ button:disabled {
 .update-result.good { color: var(--ok); }
 .update-result.warn { color: var(--warn); }
 .update-result.bad { color: var(--no); }
+
+/* ---------- Feedback ---------- */
+
+.thumbs {
+  display: flex;
+  gap: 10px;
+}
+
+.thumb {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  font: inherit;
+  font-size: 13px;
+  background: var(--surface-2);
+  border: 2px solid var(--ink);
+  border-radius: var(--radius, 14px);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.thumb:hover { background: var(--surface); }
+
+/* The chosen thumb has to be obvious at a glance — it is the one thing on this
+   panel that changes what everything below it says. */
+.thumb.on {
+  background: var(--yellow);
+  box-shadow: 3px 3px 0 var(--ink);
+}
+
+.thumb-mark { font-size: 17px; line-height: 1; }
+
+.feedback-label {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-top: 14px;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.feedback-count { font-weight: 400; font-size: 11.5px; color: var(--faint); }
+.feedback-count.bad { color: var(--no); }
+
+#feedback-text {
+  width: 100%;
+  margin-top: 6px;
+  padding: 10px 12px;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 2px solid var(--ink);
+  border-radius: var(--radius, 14px);
+  resize: vertical;
+}
+
+#feedback-text:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* Deliberately roomy: this says where the words are about to go, and that is
+   not fine print. */
+.consent-note {
+  margin: 14px 0 0;
+  padding: 12px 14px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--muted);
+  background: var(--surface-2);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius, 14px);
+}
+
+.consent-note b { color: var(--text); }
+
+.feedback-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+/* The one buddy, in among the sessions it answers for.
+   Highlighted because it is not one of them: it is the one in charge, and at a
+   glance you should be able to tell which row is the manager and which are the
+   agents being managed. */
+.solo-session {
+  background: var(--yellow);
+  box-shadow: 4px 4px 0 var(--ink);
+  margin-bottom: 4px;
+}
+
+.solo-session .session-status {
+  color: var(--ink);
+  opacity: 0.7;
+}
+
+/* Its picker sits on yellow rather than paper, so it needs its own ground. */
+.solo-session .session-pick {
+  background: var(--surface);
+}

@@ -9,6 +9,7 @@ const path = require('node:path');
 const {
   shQuote,
   oneLine,
+  promptStillPending,
   escapeSemicolon,
   needsFlattening,
   sessionName,
@@ -233,6 +234,16 @@ test('the send-keys fallback is defended against tmux argument parsing', () => {
 
 test('oneLine collapses a prompt the same way a keystroke has to', () => {
   assert.equal(oneLine('first\n\n  second  \nthird'), 'first second third');
+});
+
+test('an ignored Return is detected only in the live Claude composer', () => {
+  const pending = `old scrollback\n❯ same words\n────────────\n❯\u00a0same words   \n────────────\nstatus`;
+  const submitted = `❯ same words\nanswer\n────────────\n❯\u00a0\n────────────\nstatus`;
+
+  assert.equal(promptStillPending(pending, 'same words'), true);
+  assert.equal(promptStillPending(submitted, 'same words'), false);
+  assert.equal(promptStillPending('❯ same words\nanswer', 'same words'), false, 'scrollback has no composer rules');
+  assert.equal(promptStillPending(pending, 'different draft'), false, 'never clears user text');
 });
 
 test('a multi-line prompt is only flattened for panes that submit on newline', () => {

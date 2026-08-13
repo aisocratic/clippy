@@ -6,6 +6,23 @@ Clippy has no account, cloud relay, advertising SDK, or app telemetry. It does
 not upload prompts, code, project names, transcripts, approvals, or usage data
 to AI Socratic.
 
+The one exception is **Feedback**, and it never happens on its own. Nothing is
+sent until you open Settings → Feedback, pick a thumb, write something, and
+press send under a line naming where it goes — privately to the AI Socratic
+team, and nowhere else. What is transmitted
+is exactly three values — the thumb, the text you typed, and the app version —
+to `https://aisocratic.org/api/feedback`. No project names, paths, code,
+transcripts, session data, IP-derived identity, email, or device id travel with
+it, and the payload is built in one pure function (`src/feedback.js`) with a
+test asserting nothing else can join it.
+
+Feedback is stored in AI Socratic's own database and read by the people who
+make Clippy. It is not published: nothing written there appears on the website
+or anywhere public. The table carries a separate `published` column that only a
+person can set, so "shown publicly" can never be a state feedback falls into by
+default. There is no queue, no batching, and no retry — if a send fails, it
+says so and nothing leaves.
+
 The coding agent still communicates with its own provider under that product's
 terms. Clippy does not change that provider relationship.
 

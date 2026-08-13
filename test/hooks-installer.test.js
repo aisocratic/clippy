@@ -19,7 +19,6 @@ const {
   checkCodexDrift,
   checkOpenclawDrift,
   hookCommand,
-  statuslineCommand,
   SPECS,
   CODEX_SPECS,
   OPENCLAW_EVENTS,
@@ -114,25 +113,22 @@ test('the hooks never subscribe SessionStart', () => {
   }
 });
 
-test('install claims the statusline only when free: the 📎, right-padded, linkable', () => {
+test('install never touches the statusline: the prompt bar is not ours', () => {
+  // Clippy used to put a 📎 at the right edge of Claude Code's input box. The
+  // one line you are typing on is the worst place for a second thing to sit,
+  // so the app draws nothing there and the installer claims nothing.
   const settings = installHooks({}, 43117);
-  assert.equal(settings.statusLine.type, 'command');
-  assert.match(settings.statusLine.command, /127\.0\.0\.1:43117\/statusline\?cols=/);
-  assert.match(settings.statusLine.command, /stty size <\/dev\/tty/); // width for right-alignment
-  assert.match(settings.statusLine.command, /--connect-timeout 1/);
-  assert.match(settings.statusLine.command, /curl -sf /); // an old app's 404 shows nothing
-  assert.match(settings.statusLine.command, /\|\| true/);
-  assert.ok(settings.statusLine.command.endsWith(MARKER));
-
-  // re-install replaces rather than stacking
-  installHooks(settings, 43117);
-  assert.equal(settings.statusLine.command, statuslineCommand(43117));
-
-  uninstallHooks(settings);
   assert.equal(settings.statusLine, undefined);
 
-  // Codex has no statusline concept; its install must not invent the key
-  assert.equal(installCodexHooks({}, 43117).statusLine, undefined);
+  // One we installed before is taken back out, so nobody is left running a
+  // curl on every keystroke to render an empty line.
+  const ours = installHooks({ statusLine: { ...OLD_STATUSLINE } }, 43117);
+  assert.equal(ours.statusLine, undefined);
+
+  // …and one the user wrote themselves is left exactly where it is.
+  const theirs = { type: 'command', command: '~/bin/my-statusline.sh' };
+  const user = installHooks({ statusLine: { ...theirs } }, 43117);
+  assert.deepEqual(user.statusLine, theirs);
 });
 
 test('decide hooks echo the response as their decision and fail fast when app is down', () => {
@@ -199,18 +195,13 @@ const OLD_STATUSLINE = {
   command: `curl -sf -X POST 'http://127.0.0.1:43117/statusline' --data-binary @- || true ${MARKER}`,
 };
 
-test('an older build\'s statusline is replaced by install, never the user\'s own', () => {
-  // install replaces the whole previous footprint, statusline included
-  const settings = installHooks({ statusLine: { ...OLD_STATUSLINE } }, 43117);
-  assert.equal(settings.statusLine.command, statuslineCommand(43117));
-
+test('uninstall still reclaims a statusline we once installed', () => {
   const removed = uninstallHooks({ statusLine: { ...OLD_STATUSLINE } });
   assert.equal(removed.statusLine, undefined);
 
-  // a statusline the user wrote themselves survives both install and uninstall
+  // a statusline the user wrote themselves survives uninstall too
   const theirs = { type: 'command', command: '~/bin/my-statusline.sh' };
   const user = installHooks({ statusLine: { ...theirs } }, 43117);
-  assert.deepEqual(user.statusLine, theirs);
   uninstallHooks(user);
   assert.deepEqual(user.statusLine, theirs);
 });
@@ -238,15 +229,9 @@ test('checkDrift flags leftovers from older builds as stale, but never the user\
   assert.equal(drift.wrongPort, false);
   assert.deepEqual(drift.missing, []);
 
-  // no statusline at all is an install from before there was one
+  // an absent statusline is not drift any more: nothing installs one.
   const bare = installHooks({}, 43117);
-  delete bare.statusLine;
-  assert.deepEqual(checkDrift(bare, 43117).missing, ['statusLine (the 📎 under the input box)']);
-
-  // ours pointing at another port counts as moved
-  const moved = installHooks({}, 43117);
-  moved.statusLine = { type: 'command', command: statuslineCommand(5005) };
-  assert.equal(checkDrift(moved, 43117).wrongPort, true);
+  assert.deepEqual(checkDrift(bare, 43117).missing, []);
 });
 
 test('OpenClaw install registers our handler for each family and is idempotent', () => {

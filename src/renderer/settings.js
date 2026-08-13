@@ -187,6 +187,110 @@ function renderSizes() {
   }
 }
 
+// What each choice actually does, said in the panel rather than guessed at.
+const BUDDY_MODES = [
+  {
+    id: 'each',
+    label: 'One each',
+    note:
+      'A buddy per session, side by side — every agent has its own face, colour and ' +
+      'spot on screen. Best when you want to see at a glance how many are running.',
+  },
+  {
+    id: 'one',
+    label: 'One for all',
+    note:
+      'A single buddy that speaks for whichever agent needs you, wearing that ' +
+      "agent's name, colour and face while it does. Best when several agents are " +
+      'running and you would rather not have a desk full of paperclips.',
+  },
+];
+
+function renderBuddyMode() {
+  const host = document.getElementById('buddy-mode');
+  const note = document.getElementById('buddy-mode-note');
+  const current = state.buddyMode === 'one' ? 'one' : 'each';
+  host.replaceChildren();
+  for (const mode of BUDDY_MODES) {
+    const btn = document.createElement('button');
+    btn.className = mode.id === current ? 'on' : '';
+    btn.textContent = mode.label;
+    btn.addEventListener('click', () => set('buddyMode', mode.id));
+    host.appendChild(btn);
+  }
+  note.textContent = BUDDY_MODES.find((mode) => mode.id === current).note;
+}
+
+/**
+ * The row for the buddy that stands in for every agent.
+ *
+ * Built from the same pieces as a session row — dot, name, art, a picker —
+ * because it is the same kind of thing: a buddy you can look at and re-cast.
+ * What it is *not* is a session, so it wears the highlight and says what it is
+ * doing rather than which agent it is.
+ */
+function soloRow() {
+  const solo = state.solo || {};
+  const row = document.createElement('div');
+  row.className = 'session solo-session';
+
+  const dot = document.createElement('span');
+  dot.className = 'dot';
+  dot.style.background = solo.color || '#9aa3ad';
+
+  const show = document.createElement('button');
+  show.className = 'session-name';
+  show.textContent = `${solo.pet || 'One buddy'} · every agent`;
+  show.title = 'Bring the one buddy to the front';
+  show.addEventListener('click', () => window.clippySettings.showBuddy('solo'));
+
+  const status = document.createElement('span');
+  status.className = 'session-status';
+  status.textContent = solo.showing ? `speaking for ${solo.showing}` : 'waiting for an agent';
+
+  const art = document.createElement('span');
+  art.className = 'session-art';
+  const character = state.characters.find((c) => c.id === solo.character);
+  if (character) art.appendChild(poseArt(character, posesOf(character)[0], 28));
+
+  // A dropdown, not a row of every character: the cast grows every time a
+  // sprite pack is installed, and a segmented control grew with it.
+  const pick = document.createElement('select');
+  pick.className = 'session-pick';
+  pick.title = 'Which buddy stands in for every agent';
+  const auto = document.createElement('option');
+  auto.value = '';
+  auto.textContent = `Auto (${labelFor(solo.character)})`;
+  pick.appendChild(auto);
+  for (const option of state.characters) {
+    const opt = document.createElement('option');
+    opt.value = option.id;
+    opt.textContent = option.label;
+    pick.appendChild(opt);
+  }
+  pick.value = state.soloCharacter || '';
+  pick.addEventListener('change', () => set('soloCharacter', pick.value));
+
+  const sizePick = document.createElement('select');
+  sizePick.className = 'session-pick session-size';
+  sizePick.title = 'How big the main buddy is drawn';
+  const autoSize = document.createElement('option');
+  autoSize.value = '';
+  autoSize.textContent = `Default (${SIZE_LABEL[state.size] || state.size})`;
+  sizePick.appendChild(autoSize);
+  for (const size of state.sizes) {
+    const option = document.createElement('option');
+    option.value = size.id;
+    option.textContent = SIZE_LABEL[size.id] || size.id;
+    sizePick.appendChild(option);
+  }
+  sizePick.value = solo.size || '';
+  sizePick.addEventListener('change', () => set('soloSize', sizePick.value));
+
+  row.append(dot, show, status, art, pick, sizePick);
+  return row;
+}
+
 function renderSound() {
   document.getElementById('appearance-sound').value = state.appearanceSound || '';
 }
@@ -338,11 +442,17 @@ function renderSessions() {
   const host = document.getElementById('session-list');
   host.replaceChildren();
 
+  // One buddy for all of them: it goes at the top, because it is the one that
+  // answers for every row under it.
+  if (state.buddyMode === 'one') host.appendChild(soloRow());
+
   if (!state.sessions.length) {
     const empty = document.createElement('div');
     empty.className = 'empty-note';
     empty.textContent =
-      'No sessions yet. Start Claude Code or Codex in a project and its buddy appears here.';
+      state.buddyMode === 'one'
+        ? 'No sessions yet. Start Claude Code or Codex and the buddy above speaks for it.'
+        : 'No sessions yet. Start Claude Code or Codex in a project and its buddy appears here.';
     host.appendChild(empty);
     return;
   }
@@ -441,6 +551,7 @@ function set(key, value) {
 function render() {
   renderAccess();
   renderSound();
+  renderBuddyMode();
   renderSizes();
   renderCast();
   renderActions();
@@ -464,28 +575,43 @@ window.clippySettings.onState((next) => {
   while (sheetTimers.length) clearInterval(sheetTimers.pop());
   state = { ...state, ...next };
   render();
+  syncRailSelection();
 });
 
 // The rail is a table of contents for one continuous settings page. Highlight
-// the section currently being read while normal hash links scroll the page.
+// the last section whose top has crossed the page header. An intersection band
+// can skip a short Sessions panel entirely and select Sounds at scrollTop 0;
+// measuring tops makes the first panel unambiguously own the top of the page.
+const page = document.getElementById('page');
 const links = [...document.querySelectorAll('.rail-link')];
-const spy = new IntersectionObserver(
-  (entries) => {
-    for (const entry of entries) {
-      if (!entry.isIntersecting) continue;
-      for (const link of links) {
-        const on = link.getAttribute('href') === `#${entry.target.id}`;
-        link.classList.toggle('on', on);
-        if (on) link.setAttribute('aria-current', 'location');
-        else link.removeAttribute('aria-current');
-      }
-    }
-  },
-  { root: document.getElementById('page'), rootMargin: '-8% 0px -72% 0px' }
-);
-for (const panel of document.querySelectorAll('.panel')) spy.observe(panel);
+const panels = [...document.querySelectorAll('.panel')];
+
+function syncRailSelection() {
+  const marker = page.getBoundingClientRect().top + 50;
+  let current = panels[0];
+  for (const panel of panels) {
+    if (panel.getBoundingClientRect().top > marker) break;
+    current = panel;
+  }
+  for (const link of links) {
+    const on = link.getAttribute('href') === `#${current.id}`;
+    link.classList.toggle('on', on);
+    if (on) link.setAttribute('aria-current', 'location');
+    else link.removeAttribute('aria-current');
+  }
+}
+
+page.addEventListener('scroll', syncRailSelection, { passive: true });
+window.addEventListener('resize', syncRailSelection);
+window.addEventListener('hashchange', () => requestAnimationFrame(syncRailSelection));
+requestAnimationFrame(syncRailSelection);
 
 window.clippySettings.ready();
+
+// Use the same local-folder/SSH launcher as the menu-bar "New agent" item.
+document.getElementById('btn-new-agent').addEventListener('click', () => {
+  window.clippySettings.newAgent();
+});
 
 /* ---------- Sound ---------- */
 
@@ -724,6 +850,105 @@ window.clippySettings.ready();
       show(await window.clippySettings.checkUpdates());
     } finally {
       button.disabled = false;
+    }
+  });
+}
+
+/* ---------------- Feedback ---------------- */
+
+// Matches the cap in src/feedback.js and the API route, so the counter, the
+// app and the server never disagree about what fits.
+const FEEDBACK_MAX = 4000;
+
+{
+  const rest = document.getElementById('feedback-rest');
+  const textarea = document.getElementById('feedback-text');
+  const counter = document.getElementById('feedback-count');
+  const prompt = document.getElementById('feedback-prompt');
+  const send = document.getElementById('btn-send-feedback');
+  const result = document.getElementById('feedback-result');
+  const thumbs = {
+    up: document.getElementById('thumb-up'),
+    down: document.getElementById('thumb-down'),
+  };
+
+  let rating = null;
+
+  const say = (message, tone = '') => {
+    result.textContent = message;
+    result.className = `update-result${tone ? ` ${tone}` : ''}`;
+  };
+
+  // Send stays out of reach until there is a thumb and some words. Nothing
+  // Clippy sends should ever be one stray click away.
+  const syncSend = () => {
+    send.disabled = !(rating && textarea.value.trim());
+  };
+
+  const count = () => {
+    const left = FEEDBACK_MAX - textarea.value.length;
+    // Only worth saying when it starts to matter.
+    counter.textContent = left > 400 ? '' : `${left} characters left`;
+    counter.className = left < 0 ? 'feedback-count bad' : 'feedback-count';
+  };
+
+  const pick = (next) => {
+    rating = next;
+    for (const [key, button] of Object.entries(thumbs)) {
+      const on = key === next;
+      button.classList.toggle('on', on);
+      button.setAttribute('aria-checked', String(on));
+    }
+    // The question is different depending on which way it went, and asking
+    // "what happened?" of someone who just said it's going well reads oddly.
+    prompt.textContent = next === 'up' ? 'What worked?' : 'What happened?';
+    textarea.placeholder =
+      next === 'up'
+        ? 'What has Clippy got right?'
+        : 'What were you doing, and what did Clippy do?';
+    rest.classList.remove('hidden');
+    say('');
+    syncSend();
+    textarea.focus();
+  };
+
+  thumbs.up.addEventListener('click', () => pick('up'));
+  thumbs.down.addEventListener('click', () => pick('down'));
+  textarea.addEventListener('input', () => {
+    count();
+    syncSend();
+  });
+  count();
+  syncSend();
+
+  send.addEventListener('click', async () => {
+    const message = textarea.value.trim();
+    if (!rating) return say('Pick 👍 or 👎 first.', 'bad');
+    if (!message) return say('Tell us a little about it first.', 'bad');
+
+    send.disabled = true;
+    say('sending…');
+    try {
+      // Pressing the button is the yes: the note above it says where this
+      // goes, and the API still wants that recorded alongside the words.
+      const outcome = await window.clippySettings.sendFeedback({ rating, message });
+
+      if (!outcome || !outcome.ok) {
+        say((outcome && outcome.error) || 'That could not be sent.', 'bad');
+        return;
+      }
+      // Reset rather than leave the words sitting there looking unsent.
+      say('Sent — thank you. It goes straight to the team, and nowhere else.', 'good');
+      textarea.value = '';
+      rest.classList.add('hidden');
+      for (const button of Object.values(thumbs)) {
+        button.classList.remove('on');
+        button.setAttribute('aria-checked', 'false');
+      }
+      rating = null;
+      count();
+    } finally {
+      syncSend();
     }
   });
 }
