@@ -1,6 +1,6 @@
 {
   "name": "clippy-for-claude",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "A Clippy for your Mac that watches Claude Code and Codex sessions and lets you answer them without hunting through terminal tabs",
   "author": "AI Socratic (https://aisocratic.org)",
   "keywords": [
