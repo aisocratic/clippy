@@ -87,6 +87,7 @@
     // The app opens the whole message in a window of its own; the bench has no
     // second window, so this only records the ask.
     openReader: (id, mine) => post('open-reader', { id, mine }),
+    openActivityReader: (title, text) => post('open-activity-reader', { title, text }),
     openWindow: (opts) => post('open-window', opts || {}),
     pointAtPrompt: () => post('point'),
     openSettings: () => post('open-settings'),

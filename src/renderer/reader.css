@@ -31,13 +31,18 @@ body {
   flex-direction: column;
 }
 
-/* Draggable, so the window can be moved by its header as well as its frame. */
+/* Draggable, so the window can be moved by its header as well as its frame.
+   On macOS the traffic lights live over the left edge of this hidden title
+   bar, so reserve both sides and keep the message heading truly centred. */
 #head {
   -webkit-app-region: drag;
   flex: none;
-  padding: 14px 22px 12px;
+  display: grid;
+  justify-items: center;
+  padding: 14px 90px 12px;
   border-bottom: 1px solid var(--line-soft);
   background: var(--surface-2);
+  text-align: center;
 }
 
 #who {
@@ -50,6 +55,10 @@ body {
   margin-top: 2px;
   font-size: 16px;
   font-weight: 700;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 #body {

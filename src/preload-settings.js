@@ -23,8 +23,9 @@ contextBridge.exposeInMainWorld('clippySettings', {
     ipcRenderer.send('clippy-settings-assign-size', { sessionId, size }),
   // 'accessibility' opens the macOS pane; 'copy-path' copies this app's path.
   fix: (what) => ipcRenderer.send('clippy-settings-fix', what),
-  // Compare this build with the tip of main on GitHub.
+  // Compare this build with GitHub, then download and install a verified DMG update.
   checkUpdates: () => ipcRenderer.invoke('clippy-settings-check-updates'),
+  installUpdate: () => ipcRenderer.invoke('clippy-settings-install-update'),
   // Paste a pet's page link and main downloads and installs the pack.
   installPet: (url) => ipcRenderer.invoke('clippy-settings-install-pet', url),
   // Drawn buddies use the same local theme format as installed sprite packs.

@@ -696,8 +696,9 @@ function toggleMenu() {
  *
  * Held cards and passive nudges together: with one buddy answering for every
  * agent they arrive from all of them, and "two things want you" is the same
- * fact whichever kind they are. The badge and the paper stack both read from
- * here so they can never disagree about what is waiting.
+ * fact whichever kind they are. The badge reads this combined total; the card
+ * stack below deliberately does not, because it must only draw the cards that
+ * are actually in that popup's queue.
  */
 function waitingCount() {
   return [...pending.values()].filter((p) => !p.acknowledged).length + requests.size;
@@ -706,16 +707,21 @@ function waitingCount() {
 /**
  * Put the panel on screen on top of the ones behind it.
  *
- * Two sheets is the ceiling (see `.stacked` in clippy.css) — the point of the
- * stack is "there is more after this", which a third sheet doesn't say any
- * better. The exact number is the badge's job.
+ * Count the actual popup queue, not every unrelated nudge this shared buddy
+ * has heard. One item is one sheet; two and three get exactly that many; a
+ * larger queue stays at three sheets so it remains a readable stack.
  */
 function showStack() {
-  const behind = waitingCount() - 1;
-  for (const el of [cardEl, bubbleEl]) {
-    el.classList.toggle('stacked', behind >= 1);
-    el.classList.toggle('deep', behind >= 2);
-  }
+  const setDepth = (el, count) => {
+    const shown = Math.min(3, Math.max(1, count));
+    el.classList.toggle('stacked', shown >= 2); // one sheet behind the front
+    el.classList.toggle('deep', shown >= 3); // two sheets behind the front
+  };
+  // A decision card and a passive bubble are different queues. Do not make a
+  // lone approval look like two cards just because another session has a
+  // background "finished" nudge waiting.
+  setDepth(cardEl, requests.size);
+  setDepth(bubbleEl, [...pending.values()].filter((p) => !p.acknowledged).length);
 }
 
 /**
@@ -872,7 +878,8 @@ function showActivity(name, activity) {
    These are the deeds themselves: kept in state (so a panel opening and
    closing does not lose them), capped, newest first. */
 
-const DEEDS_KEPT = 5;
+const DEEDS_KEPT = 50;
+const DEEDS_PREVIEW = 2;
 const deeds = [];
 
 /** hh:mm — the day is never in question for something this recent. */
@@ -900,33 +907,77 @@ function noteDeed(text, { who = '' } = {}) {
 
 function renderDeeds() {
   deedsEl.replaceChildren();
-  for (const deed of deeds) {
-    const card = document.createElement('div');
-    card.className = 'deed';
-
-    const face = document.createElement('span');
-    face.className = 'deed-face';
-    face.style.setProperty('--clip', deed.from.color || me.color);
-    face.append(faceOf(deed.from));
-
-    const body = document.createElement('div');
-    body.className = 'deed-body';
-    const what = document.createElement('span');
-    what.className = 'deed-what';
-    what.textContent = deed.text;
-    // One buddy can be answering for several agents, so the card names the
-    // session — except when it is the one the plate underneath already names.
-    const meta = document.createElement('span');
-    meta.className = 'deed-meta';
-    meta.textContent = [deed.who && deed.who !== me.name ? deed.who : '', deedClock(deed.at)]
-      .filter(Boolean)
-      .join(' · ');
-    body.append(what, meta);
-
-    card.append(face, body);
-    deedsEl.append(card);
+  for (const deed of deeds.slice(0, DEEDS_PREVIEW)) {
+    deedsEl.append(makeDeed(deed));
+  }
+  if (deeds.length > DEEDS_PREVIEW) {
+    const more = document.createElement('button');
+    more.type = 'button';
+    more.className = 'deed-more';
+    more.textContent = '...';
+    more.title = `Show all ${deeds.length} activity log entries`;
+    more.setAttribute('aria-label', `Show all ${deeds.length} activity log entries`);
+    more.addEventListener('click', (event) => {
+      event.stopPropagation();
+      openAllDeeds();
+    });
+    deedsEl.append(more);
   }
   deedsEl.classList.toggle('hidden', deeds.length === 0);
+}
+
+/** One activity chip. Click it to read the uncropped entry in its own window. */
+function makeDeed(deed) {
+  const card = document.createElement('button');
+  card.type = 'button';
+  card.className = 'deed';
+  card.title = 'Open full activity entry';
+  card.setAttribute('aria-label', `Open activity: ${deed.text}`);
+  card.addEventListener('click', (event) => {
+    event.stopPropagation();
+    openDeed(deed);
+  });
+
+  const face = document.createElement('span');
+  face.className = 'deed-face';
+  face.style.setProperty('--clip', deed.from.color || me.color);
+  face.append(faceOf(deed.from));
+
+  const body = document.createElement('div');
+  body.className = 'deed-body';
+  const what = document.createElement('span');
+  what.className = 'deed-what';
+  what.textContent = deed.text;
+  // One buddy can be answering for several agents, so the card names the
+  // session — except when it is the one the plate underneath already names.
+  const meta = document.createElement('span');
+  meta.className = 'deed-meta';
+  meta.textContent = [deed.who && deed.who !== me.name ? deed.who : '', deedClock(deed.at)]
+    .filter(Boolean)
+    .join(' · ');
+  body.append(what, meta);
+
+  card.append(face, body);
+  return card;
+}
+
+function openDeed(deed) {
+  const label = [deed.who && deed.who !== me.name ? deed.who : me.name, deedClock(deed.at)]
+    .filter(Boolean)
+    .join(' · ');
+  window.clippyAPI.openActivityReader(label || 'Activity log', deed.text);
+}
+
+function openAllDeeds() {
+  const text = deeds
+    .map((deed) => {
+      const label = [deed.who && deed.who !== me.name ? deed.who : me.name, deedClock(deed.at)]
+        .filter(Boolean)
+        .join(' · ');
+      return `## ${label}\n\n${deed.text}`;
+    })
+    .join('\n\n---\n\n');
+  window.clippyAPI.openActivityReader('Activity log', text);
 }
 
 function clearActivity() {

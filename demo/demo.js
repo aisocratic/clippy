@@ -459,6 +459,12 @@ window.addEventListener('message', async (e) => {
       log('in', 'openReader', `read ${p.id} in its own window`);
       break;
 
+    case 'open-activity-reader':
+      // The same reader window is used for one activity entry and the full
+      // activity log; the bench records the request in lieu of a second window.
+      log('in', 'openActivityReader', `read ${p.title || 'activity'} in its own window`);
+      break;
+
     case 'agents':
       // In the app this is the live session list; the bench has none.
       log('in', 'agents', 'who is running');

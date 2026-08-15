@@ -222,3 +222,71 @@ test('signing off one review leaves the next queued card on screen', () => {
   assert.match(decide.slice(0, 900), /requests\.delete\(activeRequestId\)/);
   assert.match(decide.slice(0, 900), /showNextRequest\(rest\[Math\.min\(at, rest\.length - 1\)\]/);
 });
+
+test('the large card keeps its project and title clear of its close button', () => {
+  const styles = read('src', 'renderer', 'clippy.css');
+  const where = styles.slice(styles.indexOf('#card-where {'));
+  assert.match(where.slice(0, 500), /margin: 8px 0/);
+
+  // A long project name or headline must not run under the top-right (x).
+  const cornerClearance = styles.slice(styles.indexOf('#pet-head,'), styles.indexOf('/* The corner stack'));
+  assert.match(cornerClearance, /#card-where,/);
+  assert.match(cornerClearance, /#card-title,/);
+});
+
+test('the reader heading is centred clear of the macOS window controls', () => {
+  const styles = read('src', 'renderer', 'reader.css');
+  const header = styles.slice(styles.indexOf('#head {'), styles.indexOf('#who {'));
+
+  // The native traffic lights occupy the upper-left title-bar area. Keeping
+  // equal side clearance means a long reader title still has a real centre.
+  assert.match(header, /display:\s*grid/);
+  assert.match(header, /justify-items:\s*center/);
+  assert.match(header, /padding:\s*14px 90px 12px/);
+  assert.match(header, /text-align:\s*center/);
+});
+
+test('the under-Clippy activity preview opens complete entries in a reader window', () => {
+  const renderer = read('src', 'renderer', 'clippy.js');
+  const styles = read('src', 'renderer', 'clippy.css');
+  const preload = read('src', 'preload.js');
+  const main = read('src', 'main.js');
+
+  assert.match(renderer, /const DEEDS_PREVIEW = 2/);
+  assert.match(renderer, /deeds\.slice\(0, DEEDS_PREVIEW\)/);
+  assert.match(renderer, /more\.textContent = '\.\.\.'/);
+  assert.match(renderer, /function openDeed\(deed\)/);
+  assert.match(renderer, /function openAllDeeds\(\)/);
+  assert.match(renderer, /window\.clippyAPI\.openActivityReader\(/);
+  assert.match(preload, /openActivityReader: \(title, text\)/);
+  assert.match(main, /ipcMain\.on\('clippy-open-activity-reader'/);
+  assert.match(main, /openReader\(\{ title, where: buddy\.name, text \}\)/);
+  assert.match(styles, /\.deed-what\s*\{[\s\S]*font-size: 9px/);
+  assert.match(styles, /\.deed-meta\s*\{[\s\S]*font-size: 8px/);
+  assert.match(styles, /\.deed:focus-visible/);
+});
+
+test('a packaged DMG build checks for a verified update without downloading it silently', () => {
+  const main = read('src', 'main.js');
+  const updater = read('src', 'auto-update.js');
+  assert.match(main, /function checkForAutomaticUpdate\(\)/);
+  assert.match(main, /setInterval\(\(\) => checkForAutomaticUpdate/);
+  assert.match(main, /openSettingsWindow\('updates'\)/);
+  assert.match(updater, /release\?\.dmg \|\| !release\?\.checksum/);
+  assert.match(updater, /downloaded update failed its checksum/);
+  assert.match(updater, /wrong app identity/);
+});
+
+test('each popup stack reflects its own queue and never draws more than three cards', () => {
+  const renderer = read('src', 'renderer', 'clippy.js');
+  const stack = renderer.slice(renderer.indexOf('function showStack()'));
+
+  // Card and bubble queues are distinct: a passive nudge cannot make an
+  // approval card look like it has extra sheets behind it.
+  assert.match(stack.slice(0, 1200), /setDepth\(cardEl, requests\.size\)/);
+  assert.match(stack.slice(0, 1200), /setDepth\(bubbleEl, \[\.\.\.pending\.values\(\)\]/);
+  // The front card plus two backing sheets is the hard visual cap.
+  assert.match(stack.slice(0, 1200), /Math\.min\(3, Math\.max\(1, count\)\)/);
+  assert.match(stack.slice(0, 1200), /shown >= 2/);
+  assert.match(stack.slice(0, 1200), /shown >= 3/);
+});

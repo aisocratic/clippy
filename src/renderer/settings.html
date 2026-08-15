@@ -102,10 +102,9 @@
     <section id="updates" class="panel">
       <header class="panel-head">
         <h1>Updates</h1>
-        <p>No auto-updater and no phoning home — checking is a button, and updating is
-           <code>git pull</code>. This and <a href="#feedback">Feedback</a> are the only
-           two places Clippy talks to anything that isn't localhost, and both only when
-           you ask them to.</p>
+        <p>The installed DMG app checks GitHub shortly after launch and daily, then notifies you
+           when a checksummed, signed update is ready to install and relaunch. A checkout still
+           updates with <code>git pull</code>.</p>
       </header>
 
       <div class="update-box">
@@ -121,9 +120,10 @@
       <div class="drop-hint">
         <p><b>Updating a checkout:</b> <code>git pull &amp;&amp; npm install &amp;&amp; npm start</code>
            — hooks stay put, settings stay put.</p>
-        <p><b>Updating the installed app:</b> pull the checkout, run
-           <code>npm run package</code>, and replace the app in Applications with the fresh
-           <code>dist/</code> build.</p>
+        <p><b>Updating the installed app:</b> choose <b>Check for updates</b>, then
+           <b>Install and relaunch</b>. Clippy verifies the release checksum and macOS signature
+           before replacing itself. macOS may ask for your password when the app lives in a
+           protected Applications folder.</p>
       </div>
     </section>
 
