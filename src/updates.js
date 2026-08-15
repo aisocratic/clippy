@@ -3,10 +3,9 @@
 /**
  * Where this copy of Clippy came from, and whether GitHub has moved on.
  *
- * There is no update server and no background auto-updater — deliberately. A
- * checkout updates with `git pull`; the packaged app by downloading the newest
- * release DMG, which this module can now point at: it compares the app's own
- * version with the latest GitHub release and hands back the download link.
+ * A checkout updates with `git pull`; the packaged app compares itself against
+ * the newest signed release. The installer path lives in auto-update.js; this
+ * module deliberately stays pure and only says which release is available.
  * Pure logic with the network call injectable, so all of it is testable
  * offline.
  */
@@ -73,7 +72,7 @@ async function fetchLatest(fetchImpl = fetch) {
   };
 }
 
-/** The newest published release: { version, tag, date, url, dmg }. */
+/** The newest published release: { version, tag, date, url, dmg, checksum }. */
 async function fetchLatestRelease(fetchImpl = fetch) {
   const res = await fetchImpl(RELEASE_URL, {
     headers: { 'User-Agent': 'clippy-for-claude', Accept: 'application/vnd.github+json' },
@@ -82,12 +81,18 @@ async function fetchLatestRelease(fetchImpl = fetch) {
   const body = await res.json();
   const tag = body.tag_name || '';
   const dmg = (body.assets || []).find((a) => (a.name || '').endsWith('.dmg'));
+  // A downloaded installer is accepted only when the release also publishes
+  // the checksum our release job writes beside every DMG.
+  const checksum = dmg
+    ? (body.assets || []).find((a) => a.name === `${dmg.name}.sha256`)
+    : null;
   return {
     tag,
     version: tag.replace(/^v/, ''),
     date: body.published_at || null,
     url: body.html_url || `https://github.com/${REPO}/releases/latest`,
     dmg: dmg ? dmg.browser_download_url : null,
+    checksum: checksum ? checksum.browser_download_url : null,
   };
 }
 

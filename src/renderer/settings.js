@@ -775,10 +775,8 @@ document.getElementById('btn-new-agent').addEventListener('click', () => {
 
 /* ---------- Updates ---------- */
 
-// The one deliberate network call in the app, made when you press the button
-// and never before. The result speaks plainly: a checkout compares commits
-// against main (git pull to catch up), the packaged app compares its version
-// against the newest release and links the fresh DMG.
+// An installed app checks GitHub on demand, and a newer release can be fetched,
+// checksummed, signature-verified and installed without a second DMG drag.
 {
   const version = document.getElementById('update-version');
   const source = document.getElementById('update-source');
@@ -814,16 +812,29 @@ document.getElementById('btn-new-agent').addEventListener('click', () => {
       } else {
         result.replaceChildren();
         result.append(`v${info.release.version} is out (${when}) — `);
-        const link = document.createElement('a');
-        link.href = info.release.dmg || info.release.url;
-        link.textContent = 'download the new DMG';
-        // Born after the page-load pass that rewires anchors, so it routes
-        // itself: out to the browser, never navigating this window.
-        link.addEventListener('click', (e) => {
-          e.preventDefault();
-          window.clippySettings.openExternal(link.href);
+        const install = document.createElement('button');
+        install.type = 'button';
+        install.textContent = 'Install and relaunch';
+        install.disabled = !info.release.dmg || !info.release.checksum;
+        install.title = install.disabled
+          ? 'This release is missing its checksum, so Clippy will not install it.'
+          : 'Download the verified update and restart Clippy';
+        install.addEventListener('click', async () => {
+          install.disabled = true;
+          button.disabled = true;
+          result.textContent = `downloading v${info.release.version} and verifying it…`;
+          result.className = 'update-result';
+          const installed = await window.clippySettings.installUpdate();
+          if (installed?.ok) {
+            result.textContent = `v${installed.version} is installing — Clippy will relaunch.`;
+            result.className = 'update-result good';
+            return;
+          }
+          result.textContent = installed?.error || 'The update could not be installed.';
+          result.className = 'update-result bad';
+          button.disabled = false;
         });
-        result.append(link, ' and drag it into Applications again.');
+        result.append(install);
         result.className = info.upToDate === false ? 'update-result warn' : 'update-result';
       }
       return;

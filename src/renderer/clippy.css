@@ -110,10 +110,10 @@ body {
 
 /* ---------- More than one message waiting: a stack of papers ----------
    The panel on screen sits on the ones behind it — a sheet of the same paper
-   peeking past its top-left corner for each message still queued, up to two.
-   Three sheets is where it stops: past that a pile stops reading as "a few"
-   and starts eating the corner of the screen, and the number on the buddy is
-   what carries the real count.
+   peeking past its top-left corner for each message still queued, up to two:
+   one queued card = one sheet; two = two; three or more = the front plus two
+   sheets behind it. More would stop reading as "a few" and start eating the
+   corner of the screen, so the badge carries the exact count beyond three.
 
    Drawn as shadows rather than elements. They cost no DOM, cannot be clicked
    or measured, and follow whatever size and radius the panel grows into —
@@ -628,7 +628,11 @@ body.flipped #buddy-vector {
    head row also holds the button that must never wrap. Quiet on purpose: it
    answers "which one is this", which you only read when you need it. */
 #card-where {
-  margin: -4px 0 8px;
+  /* The (x) occupies the card's top-right corner. Keep the project line below
+     it even when the otherwise-empty header has no visible pager or terminal
+     button — this is the large content popup most likely to show a project
+     title on its own. */
+  margin: 8px 0;
   font-size: 10.5px;
   font-weight: 600;
   color: var(--muted);
@@ -1830,8 +1834,10 @@ body.owned:not(.solo) #clippy::after {
 #feed-head,
 #qcard-head,
 #card-head,
+#card-where,
 #bubble-text,
 #qcard-title,
+#card-title,
 #feed-note {
   padding-right: 26px;
 }
@@ -1986,11 +1992,39 @@ body.owned:not(.solo) #clippy::after {
   box-shadow: 1px 2px 0 var(--ink);
   /* Oldest fade back a little, so the newest reads first without moving. */
   opacity: 0.95;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+  text-align: left;
 }
 
-.deed:nth-child(3) { opacity: 0.8; }
-.deed:nth-child(4) { opacity: 0.62; }
-.deed:nth-child(n + 5) { opacity: 0.45; }
+.deed:hover {
+  background: var(--surface-2);
+}
+
+.deed:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.deed-more {
+  min-width: 44px;
+  padding: 2px 10px 4px;
+  border: 1.5px solid var(--ink);
+  border-radius: 999px;
+  background: var(--surface);
+  box-shadow: 1px 2px 0 var(--ink);
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  line-height: 1;
+}
+
+.deed-more:hover {
+  color: var(--ink);
+  background: var(--surface-2);
+}
 
 .deed-face {
   width: 18px;
@@ -2020,7 +2054,7 @@ body.owned:not(.solo) #clippy::after {
 }
 
 .deed-what {
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 600;
   color: var(--ink);
   overflow: hidden;
@@ -2030,7 +2064,7 @@ body.owned:not(.solo) #clippy::after {
 
 .deed-meta {
   flex: none;
-  font-size: 9px;
+  font-size: 8px;
   color: var(--muted);
   font-variant-numeric: tabular-nums;
 }

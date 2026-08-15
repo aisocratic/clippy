@@ -68,6 +68,7 @@ const {
   modelFromTranscriptFile,
 } = require('./usage');
 const { checkForUpdates, localBuild } = require('./updates');
+const { prepareInstall, launchInstall } = require('./auto-update');
 const { lockPath, allowsMultiple, writeLock, holderOf, defend } = require('./single-instance');
 const { sendFeedback } = require('./feedback');
 const { DEV_SESSION, eventsFor, storyList, sandboxUsage } = require('./sandbox-scenarios');
@@ -78,6 +79,7 @@ const { describeSource } = require('./source-app');
 const { routingPrompt, parseChoice, routable } = require('./delegate');
 
 const PORT = Number(process.env.CLIPPY_PORT || 43117);
+let installingUpdate = false;
 
 // Clippy is a small paperclip by default — the size it is when perched on a
 // window — and only takes the full window when there's a card to read.
@@ -489,6 +491,52 @@ function appBundlePath() {
   const exe = app.getPath('exe');
   const bundle = exe.indexOf('.app/Contents/MacOS/');
   return bundle === -1 ? exe : exe.slice(0, bundle + 4);
+}
+
+/** Download, verify, and stage a release before the helper replaces this app. */
+async function installLatestUpdate() {
+  if (installingUpdate) return { ok: false, error: 'An update is already being prepared.' };
+  const root = path.join(__dirname, '..');
+  const info = await checkForUpdates(root);
+  if (info.source !== 'packaged') return { ok: false, error: 'Updates install automatically only from the DMG app.' };
+  if (info.upToDate === true) return { ok: false, error: 'This is already the newest release.' };
+  if (!info.release?.dmg || !info.release?.checksum) {
+    return { ok: false, error: 'The newest release is missing its verified installer.' };
+  }
+
+  installingUpdate = true;
+  try {
+    const staged = await prepareInstall({ release: info.release, destination: appBundlePath() });
+    launchInstall(staged.helper);
+    // Let the renderer receive the success response before the updater starts
+    // waiting on this process. The helper reopens Clippy after replacement.
+    setTimeout(() => app.quit(), 250);
+    return { ok: true, version: info.release.version };
+  } catch (err) {
+    return { ok: false, error: err.message || 'The update could not be installed.' };
+  } finally {
+    installingUpdate = false;
+  }
+}
+
+/**
+ * A packaged DMG build checks once shortly after launch, then daily. It only
+ * fetches GitHub's small release record; the large installer is downloaded
+ * only after the user presses Install and relaunch in Settings.
+ */
+async function checkForAutomaticUpdate() {
+  const root = path.join(__dirname, '..');
+  if (localBuild(root).source !== 'packaged') return;
+  const info = await checkForUpdates(root);
+  if (info.upToDate !== false || !info.release?.dmg || !info.release?.checksum) return;
+  if (!Notification.isSupported()) return;
+  const n = new Notification({
+    title: '📎 Clippy update ready',
+    body: `v${info.release.version} is ready to install. Click to verify and relaunch.`,
+    silent: true,
+  });
+  n.on('click', () => openSettingsWindow('updates'));
+  n.show();
 }
 
 /** Everything the settings window draws itself from. */
@@ -4136,6 +4184,11 @@ app.whenReady().then(async () => {
   spawned.load(settings.spawnedSessions);
   warnOnHookDrift();
   createTray();
+  // Never delay launch on the network. The first check is late enough that a
+  // first-run install can settle, and the interval keeps long-running Clippy
+  // copies current without polling continuously.
+  setTimeout(() => checkForAutomaticUpdate().catch(() => {}), 12_000).unref?.();
+  setInterval(() => checkForAutomaticUpdate().catch(() => {}), 24 * 60 * 60 * 1000).unref?.();
   // tmux keeps running when Clippy doesn't, so anything we started and is still
   // alive gets its buddy back. Not awaited: it shells out to tmux, and the app
   // should be up before that finishes.
@@ -4181,6 +4234,18 @@ app.whenReady().then(async () => {
       where: buddy.name,
       text,
     });
+  });
+
+  // Activity is rendered as a short, ellipsized chip under the buddy. Let a
+  // click turn it into a normal reader window instead of making the buddy's
+  // tiny always-on-top window try to hold a page of text.
+  ipcMain.on('clippy-open-activity-reader', (e, payload) => {
+    const buddy = buddyForSender(e.sender);
+    if (!buddy) return;
+    const title = String(payload?.title || 'Activity log').trim() || 'Activity log';
+    const text = String(payload?.text || '');
+    if (!text) return;
+    openReader({ title, where: buddy.name, text });
   });
 
   ipcMain.handle('clippy-card-full', (e, requestId) => {
@@ -4389,6 +4454,7 @@ app.whenReady().then(async () => {
     // checker reports exactly that instead of guessing.
     return checkForUpdates(path.join(__dirname, '..'));
   });
+  ipcMain.handle('clippy-settings-install-update', () => installLatestUpdate());
   ipcMain.on('clippy-settings-show', (_e, sessionId) => {
     if (sessionId) showBuddy(String(sessionId), { pin: true });
   });

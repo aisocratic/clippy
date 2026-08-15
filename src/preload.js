@@ -46,6 +46,9 @@ contextBridge.exposeInMainWorld('clippyAPI', {
   // `mine` is what the card already holds, for the common case where main
   // never had to cut the message and so kept no copy of it.
   openReader: (id, mine) => ipcRenderer.send('clippy-open-reader', id, mine),
+  // Activity beneath the buddy is a glance; opening one sends its complete
+  // text to the same ordinary, resizable reader window as "read it all".
+  openActivityReader: (title, text) => ipcRenderer.send('clippy-open-activity-reader', { title, text }),
   context: () => ipcRenderer.invoke('clippy-context'),
   usage: () => ipcRenderer.invoke('clippy-usage'),
   // What a session Clippy started has been saying, for the panel that

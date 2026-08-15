@@ -6,6 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const { localBuild, checkForUpdates } = require('../src/updates');
+const { checksumFrom, installerScript, BUNDLE_ID } = require('../src/auto-update');
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'clippy-updates-'));
 
@@ -50,14 +51,19 @@ test('same sha is up to date, a different one is not', async () => {
   assert.equal((await checkForUpdates(checkoutAt(sha), gh('d'.repeat(40)))).upToDate, false);
 });
 
-const ghRelease = (tag, { dmg = true } = {}) => async () => ({
+const ghRelease = (tag, { dmg = true, checksum = true } = {}) => async () => ({
   ok: true,
   json: async () => ({
     tag_name: tag,
     published_at: '2026-08-06T00:00:00Z',
     html_url: `https://github.com/AISocratic/clippy/releases/tag/${tag}`,
     assets: dmg
-      ? [{ name: 'Clippy-for-Claude-Code.dmg', browser_download_url: `https://github.com/AISocratic/clippy/releases/download/${tag}/Clippy-for-Claude-Code.dmg` }]
+      ? [
+          { name: 'Clippy-for-Claude-Code.dmg', browser_download_url: `https://github.com/AISocratic/clippy/releases/download/${tag}/Clippy-for-Claude-Code.dmg` },
+          ...(checksum
+            ? [{ name: 'Clippy-for-Claude-Code.dmg.sha256', browser_download_url: `https://github.com/AISocratic/clippy/releases/download/${tag}/Clippy-for-Claude-Code.dmg.sha256` }]
+            : []),
+        ]
       : [],
   }),
 });
@@ -74,6 +80,24 @@ test('the packaged app measures itself against the newest release', async () => 
   const stale = await checkForUpdates(dir, ghRelease('v0.3.0'));
   assert.equal(stale.upToDate, false);
   assert.match(stale.release.dmg, /v0\.3\.0.*\.dmg$/);
+  assert.match(stale.release.checksum, /v0\.3\.0.*\.dmg\.sha256$/);
+});
+
+test('an installed update needs the exact DMG checksum and a safe replacement helper', () => {
+  const digest = 'a'.repeat(64);
+  assert.equal(checksumFrom(`${digest}  Clippy-for-Claude-Code.dmg\n`, 'Clippy-for-Claude-Code.dmg'), digest);
+  assert.equal(checksumFrom(`${digest}  another.dmg`, 'Clippy-for-Claude-Code.dmg'), null);
+
+  const script = installerScript({
+    pid: 1234,
+    source: '/private/tmp/new app/Clippy for Claude Code.app',
+    destination: '/Applications/Clippy for Claude Code.app',
+    work: '/private/tmp/update',
+  });
+  assert.match(script, /while \/bin\/kill -0 1234/);
+  assert.match(script, /\/usr\/bin\/ditto --rsrc --extattr/);
+  assert.match(script, /with administrator privileges/);
+  assert.equal(BUNDLE_ID, 'dev.aisocratic.clippy');
 });
 
 test('a release without a DMG asset still reports, just without a download link', async () => {
