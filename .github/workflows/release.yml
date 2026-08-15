@@ -14,7 +14,9 @@ jobs:
     env:
       CLIPPY_SIGN_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
       CLIPPY_NOTARY_PROFILE: clippy-notary
-      CLIPPY_KEYCHAIN: ${{ runner.temp }}/clippy-release.keychain-db
+      # `runner` is only available inside steps, not at job-level `env`.
+      # GitHub-hosted runners are isolated VMs, so this is private to the job.
+      CLIPPY_KEYCHAIN: /tmp/clippy-release.keychain-db
       CLIPPY_KEYCHAIN_PASSWORD: ${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@v7
