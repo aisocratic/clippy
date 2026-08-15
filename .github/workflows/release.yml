@@ -3,6 +3,7 @@ name: Release macOS installer
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
 
 permissions:
   contents: write
