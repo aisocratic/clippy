@@ -29,7 +29,9 @@ jobs:
       - name: Confirm tag version
         run: node -e "require('./scripts/verify-release').assertTagMatchesPackageVersion(process.env.GITHUB_REF_NAME)"
       - run: npm ci
-      - run: npm run test:all
+      # The installer source tree deliberately excludes the local website
+      # workspace, so test the tracked app suite on the release runner.
+      - run: npm test
       - name: Import Developer ID certificate
         env:
           MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
