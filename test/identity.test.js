@@ -2,7 +2,7 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { identityFor, petNameFor, PET_NAMES, PALETTE } = require('../src/identity');
+const { identityFor, petNameFor, petNamesFor, PET_NAMES, PALETTE } = require('../src/identity');
 
 test('sessions in the same project keep the label but get different looks', () => {
   const a = identityFor('sess-1', 'billing-api');
@@ -39,4 +39,20 @@ test('pet names are stable per session and drawn from the list', () => {
   // answer to the same name.
   const names = new Set(['a', 'b', 'c', 'd', 'e', 'f'].map(petNameFor));
   assert.ok(names.size >= 4);
+});
+
+test('live sessions get distinct pet names even when their hashes collide', () => {
+  const byBaseName = new Map();
+  let pair = null;
+  for (let i = 0; i < 2000 && !pair; i++) {
+    const id = `session-${i}`;
+    const base = petNameFor(id);
+    if (byBaseName.has(base)) pair = [byBaseName.get(base), id];
+    else byBaseName.set(base, id);
+  }
+  assert.ok(pair, 'the test needs a collision in the finite pet-name list');
+  const names = petNamesFor(pair);
+  assert.notEqual(names.get(pair[0]), names.get(pair[1]));
+  assert.equal(petNameFor(pair[0], pair), names.get(pair[0]));
+  assert.equal(petNameFor(pair[1], pair), names.get(pair[1]));
 });

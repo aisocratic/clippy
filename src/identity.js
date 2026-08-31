@@ -59,8 +59,39 @@ const PET_NAMES = [
   'Ube', 'Vinnie', 'Wonton', 'Xylo', 'Yam', 'Zucchini', 'Alfie', 'Butter',
 ];
 
-function petNameFor(key) {
-  return PET_NAMES[hash(`pet:${String(key || 'clippy')}`) % PET_NAMES.length];
+function petNamesFor(keys) {
+  // A hash into a finite list eventually collides. Allocate in key order so
+  // the collision is resolved consistently across restarts, not by arrival.
+  const assigned = new Map();
+  const taken = new Set();
+  const unique = [...new Set((keys || []).map((key) => String(key || 'clippy')))].sort();
+  for (const key of unique) {
+    const start = hash(`pet:${key}`) % PET_NAMES.length;
+    let name = '';
+    for (let offset = 0; offset < PET_NAMES.length; offset++) {
+      const candidate = PET_NAMES[(start + offset) % PET_NAMES.length];
+      if (!taken.has(candidate)) {
+        name = candidate;
+        break;
+      }
+    }
+    if (!name) {
+      const base = PET_NAMES[start];
+      let suffix = 2;
+      while (taken.has(`${base} ${suffix}`)) suffix++;
+      name = `${base} ${suffix}`;
+    }
+    taken.add(name);
+    assigned.set(key, name);
+  }
+  return assigned;
 }
 
-module.exports = { identityFor, petNameFor, PET_NAMES, PALETTE, hash };
+function petNameFor(key, sessionKeys = [key]) {
+  const id = String(key || 'clippy');
+  // Keep this safe as an Array#map callback, whose second argument is an index.
+  const keys = Array.isArray(sessionKeys) ? sessionKeys : [key];
+  return petNamesFor([...keys, id]).get(id);
+}
+
+module.exports = { identityFor, petNameFor, petNamesFor, PET_NAMES, PALETTE, hash };

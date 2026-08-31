@@ -93,9 +93,11 @@ test('a question answered in Clippy is not then relayed back as "still waiting"'
   assert.match(main, /const justAnswered = new Map\(\)/);
   assert.match(main, /justAnswered\.set\(reaction\.sessionId/);
   // …and the suppression has to sit on the passive path, which is where a
-  // Notification becomes a bubble and an OS notification.
+  // Notification becomes a bubble and an OS notification. The slice pins it
+  // early in emitPassive — before anything can surface — not at an exact
+  // offset; it grew when the by-hand-dismissal guard joined the same preamble.
   const passive = main.slice(main.indexOf('function emitPassive('));
-  assert.match(passive.slice(0, 1600), /nudgeIsStale\(reaction\.sessionId\)/);
+  assert.match(passive.slice(0, 2200), /nudgeIsStale\(reaction\.sessionId\)/);
   // It must expire. A session genuinely left waiting has to be able to say so.
   assert.match(main, /ANSWERED_QUIET_MS/);
   assert.match(main, /Date\.now\(\) - at < ANSWERED_QUIET_MS/);
@@ -246,7 +248,7 @@ test('the reader heading is centred clear of the macOS window controls', () => {
   assert.match(header, /text-align:\s*center/);
 });
 
-test('the under-Clippy activity preview opens complete entries in a reader window', () => {
+test('the under-Clippy activity preview expands and opens a two-pane log reader', () => {
   const renderer = read('src', 'renderer', 'clippy.js');
   const styles = read('src', 'renderer', 'clippy.css');
   const preload = read('src', 'preload.js');
@@ -257,13 +259,29 @@ test('the under-Clippy activity preview opens complete entries in a reader windo
   assert.match(renderer, /more\.textContent = '\.\.\.'/);
   assert.match(renderer, /function openDeed\(deed\)/);
   assert.match(renderer, /function openAllDeeds\(\)/);
-  assert.match(renderer, /window\.clippyAPI\.openActivityReader\(/);
-  assert.match(preload, /openActivityReader: \(title, text\)/);
-  assert.match(main, /ipcMain\.on\('clippy-open-activity-reader'/);
-  assert.match(main, /openReader\(\{ title, where: buddy\.name, text \}\)/);
+  assert.match(renderer, /function showDeedReader\(deed\)/);
+  assert.match(renderer, /function renderDeedReader\(\)/);
+  assert.match(renderer, /deedReaderList/);
+  assert.match(renderer, /deedReaderText\.textContent = selectedDeed/);
+  assert.match(renderer, /'deed-reader'/);
+  assert.match(styles, /#deeds:hover[\s\S]*height: 78px/);
+  assert.match(styles, /#deed-reader-body[\s\S]*grid-template-columns/);
   assert.match(styles, /\.deed-what\s*\{[\s\S]*font-size: 9px/);
   assert.match(styles, /\.deed-meta\s*\{[\s\S]*font-size: 8px/);
   assert.match(styles, /\.deed:focus-visible/);
+
+  // Each chip carries a one-line description of what the deed was about —
+  // recorded when it happens, shown under the action, and the full entry
+  // waits in the reader.
+  assert.match(renderer, /function noteDeed\(text, \{ who = '', detail = '' \} = \{\}\)/);
+  assert.match(renderer, /function deedDescription\(deed\)/);
+  assert.match(renderer, /desc\.className = 'deed-desc'/);
+  assert.match(renderer, /selectedDeed\.detail \|\| selectedDeed\.text/);
+  assert.match(styles, /\.deed-desc\s*\{[\s\S]*text-overflow: ellipsis/);
+  // Every deed that has a body records it: decisions, sign-offs, timeouts,
+  // and messages passed along.
+  assert.match(renderer, /noteDeed\('finished a turn', \{ who: evt\.name, detail: said \}\)/);
+  assert.match(renderer, /detail: req\.detail \|\| ''/);
 });
 
 test('a packaged DMG build checks for a verified update without downloading it silently', () => {
@@ -277,16 +295,54 @@ test('a packaged DMG build checks for a verified update without downloading it s
   assert.match(updater, /wrong app identity/);
 });
 
-test('each popup stack reflects its own queue and never draws more than three cards', () => {
+test('each popup stack reflects its own queue and never draws more than two windows', () => {
   const renderer = read('src', 'renderer', 'clippy.js');
+  const styles = read('src', 'renderer', 'clippy.css');
   const stack = renderer.slice(renderer.indexOf('function showStack()'));
 
   // Card and bubble queues are distinct: a passive nudge cannot make an
   // approval card look like it has extra sheets behind it.
   assert.match(stack.slice(0, 1200), /setDepth\(cardEl, requests\.size\)/);
   assert.match(stack.slice(0, 1200), /setDepth\(bubbleEl, \[\.\.\.pending\.values\(\)\]/);
-  // The front card plus two backing sheets is the hard visual cap.
-  assert.match(stack.slice(0, 1200), /Math\.min\(3, Math\.max\(1, count\)\)/);
-  assert.match(stack.slice(0, 1200), /shown >= 2/);
-  assert.match(stack.slice(0, 1200), /shown >= 3/);
+  // One post is one window; two or more show exactly one sheet behind the
+  // front — two windows, and never a third.
+  assert.match(stack.slice(0, 1200), /'stacked', count >= 2/);
+  assert.doesNotMatch(stack.slice(0, 1200), /deep/);
+  assert.doesNotMatch(styles, /\.stacked\.deep/);
+});
+
+test('the context summary carries the Codex GPT week alongside the Claude bars', () => {
+  const renderer = read('src', 'renderer', 'clippy.js');
+  const main = read('src', 'main.js');
+
+  // Main reads the Codex rollouts' week on a Claude panel (a Codex panel's
+  // own windows already are Codex's), and the renderer gives it its own row —
+  // after either the official or the measured bars, so it shows in both modes.
+  assert.match(main, /agent === 'codex' \? null : \(await windowsFor\('codex'\)\)\.week/);
+  assert.match(main, /codexWeek,/);
+  assert.match(renderer, /function renderCodexRow\(week\)/);
+  assert.match(renderer, /'week · Codex GPT'/);
+  assert.match(renderer, /renderCodexRow\(data\.codexWeek\)/);
+});
+
+test('one popup means one window above the buddy, never a bubble on a question card', () => {
+  const renderer = read('src', 'renderer', 'clippy.js');
+
+  // The bubble and the read-only question card replace each other rather than
+  // stacking: whichever shows, the other goes.
+  const bubble = renderer.slice(
+    renderer.indexOf('function showBubble('),
+    renderer.indexOf('function hideBubble(')
+  );
+  assert.match(bubble, /qcardEl\.classList\.add\('hidden'\)/);
+  const question = renderer.slice(
+    renderer.indexOf('function showQuestion('),
+    renderer.indexOf('function hideQuestion(')
+  );
+  assert.match(question, /bubbleEl\.classList\.add\('hidden'\)/);
+
+  // And transient chatter (info / transcript news) never takes a standing
+  // question down with it: those bubbles are skipped while the card is up.
+  assert.match(renderer, /evt\.sticky \|\| qcardEl\.classList\.contains\('hidden'\)/);
+  assert.match(renderer, /qcardEl\.classList\.contains\('hidden'\) &&\n\s*!activeRequestId/);
 });
