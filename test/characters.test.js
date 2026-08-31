@@ -63,21 +63,12 @@ test('every character in the menus has art drawn for it', () => {
   assert.ok(!ids.includes('classic'), 'the duplicate paperclip is gone');
 });
 
-test('parallel sessions get different buddies, and a hand-picked one goes first', () => {
+test('parallel sessions get different buddies, and a session choice stays private', () => {
   const cast = allCharacters().map((c) => c.id);
 
-  // A buddy you assigned to that repo is the first session's preference.
-  const assigned = { characterByProject: { 'billing-api': 'cat' } };
+  const assigned = { characterBySession: { 'session-a': 'cat' } };
   assert.equal(characterFor(assigned, 'billing-api', 'session-a'), 'cat');
   assert.notEqual(characterFor(assigned, 'billing-api', 'session-b', ['cat']), 'cat');
-  // A second session picks from its own id, not from the assignment's spot in
-  // the cast — so concurrent sessions don't all march in cast order.
-  assert.equal(
-    characterFor(assigned, 'billing-api', 'session-b', ['cat']),
-    characterFor({}, 'billing-api', 'session-b', ['cat'])
-  );
-  // …and only for that repo: everyone else is still cast automatically.
-  assert.ok(cast.includes(characterFor(assigned, 'my-app', 'session-c')));
 
   // The automatic pick is stable for a session. A concurrent session excludes
   // that animation and must get another while the cast has room.
@@ -88,7 +79,7 @@ test('parallel sessions get different buddies, and a hand-picked one goes first'
 
   // A character that has since been deleted (a sprite pack you removed) must
   // not leave a buddy with no art at all.
-  assert.ok(cast.includes(characterFor({ characterByProject: { x: 'gone' } }, 'x', 'session-x')));
+  assert.ok(cast.includes(characterFor({ characterBySession: { x: 'gone' } }, 'x', 'session-x')));
   assert.ok(cast.includes(characterFor({}, '')), 'and a nameless session still works');
 });
 
@@ -167,23 +158,19 @@ test('center art is never turned around, and a pose can disagree with its pack',
 });
 
 test('a choice made for one session does not dress its twin', () => {
-  // Two agents in the same folder. The settings window shows a row each, and
-  // picking in one row used to be written against the *project*, which is what
-  // made both buddies change at once.
   const settings = {
-    characterByProject: { 'billing-api': 'cat' },
     characterBySession: { 'session-a': 'clod' },
   };
   assert.equal(characterFor(settings, 'billing-api', 'session-a'), 'clod', 'the one you picked');
   assert.equal(
     characterFor(settings, 'billing-api', 'session-b'),
-    'cat',
-    'its twin keeps what the folder says'
+    characterFor({}, 'billing-api', 'session-b'),
+    'its twin uses its own automatic choice'
   );
   // A session choice outranks the folder even when the folder wants it too, and
   // even when a twin is already wearing it — you pointed at this buddy.
   assert.equal(
-    characterFor({ characterByProject: { p: 'cat' }, characterBySession: { s: 'cat' } }, 'p', 's', ['cat']),
+    characterFor({ characterBySession: { s: 'cat' } }, 'p', 's', ['cat']),
     'cat'
   );
   // …but a character that no longer exists falls through rather than sticking.

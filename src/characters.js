@@ -244,8 +244,8 @@ function sizeFor(settings, name, sessionId = '') {
  *
  * Assignments come in two levels. One made against a *session* is that buddy's
  * alone, so changing the pet in one row of the settings window never disturbs
- * the other agents running in the same folder. One made against the *project*
- * is the folder's standing preference, and outlives any particular session.
+ * the other agents running in the same folder. A project name is only a
+ * readable label, never a shared assignment key.
  *
  * @param {object} settings  the app's settings (the assignments live here)
  * @param {string} name      the project name — what project assignments use
@@ -262,14 +262,6 @@ function characterFor(settings, name, sessionId = '', used = []) {
   // choice: you pointed at one buddy in the list and said "you, be the fox".
   const own = (settings.characterBySession || {})[sessionId];
   if (own && cast.some((c) => c.id === own)) return own;
-
-  // A buddy assigned to this project by hand still wins — but only while it's
-  // free. Everyone else picks from their own session id, so parallel sessions
-  // in one folder never read as twins, and never all march in cast order.
-  const assigned = (settings.characterByProject || {})[name];
-  if (assigned && !unavailable.has(assigned) && cast.some((c) => c.id === assigned)) {
-    return assigned;
-  }
 
   const start = hash(String(sessionId || name || 'clippy')) % cast.length;
   for (let offset = 0; offset < cast.length; offset++) {

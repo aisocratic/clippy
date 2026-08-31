@@ -80,6 +80,10 @@ const feedEl = document.getElementById('feed');
 const feedSrc = document.getElementById('feed-src');
 const feedNote = document.getElementById('feed-note');
 const feedLog = document.getElementById('feed-log');
+const deedReaderEl = document.getElementById('deed-reader');
+const deedReaderList = document.getElementById('deed-reader-list');
+const deedReaderMeta = document.getElementById('deed-reader-meta');
+const deedReaderText = document.getElementById('deed-reader-text');
 
 const petEl = document.getElementById('pet');
 const petWho = document.getElementById('pet-who');
@@ -187,7 +191,7 @@ const WIN_MARGIN = 42;
 /** The plan card is a page, so its window is the wide panel plus that margin. */
 const PLAN_WIN_W = 500 + WIN_MARGIN;
 
-const PANELS = ['card', 'bubble', 'qcard', 'usage', 'pet', 'drive', 'feed', 'menu'];
+const PANELS = ['card', 'bubble', 'qcard', 'usage', 'pet', 'drive', 'feed', 'deed-reader', 'menu'];
 
 // When we last asked main for a different window, and how long afterwards a
 // mouseleave is treated as the layout moving rather than the pointer.
@@ -286,8 +290,15 @@ function syncMode() {
   // sits *above* him — invisible, but the first thing to hit the top of the
   // screen when you drag him up.
   const height = contentHeight(showing);
-  // Only the plan card asks for extra width; 0 means "the usual".
-  const width = want === 'full' && document.body.classList.contains('plan') ? PLAN_WIN_W : 0;
+  // The plan and activity reader need a wider, readable column; 0 means the
+  // usual buddy-card width.
+  const width = want === 'full'
+    ? document.body.classList.contains('deed-reading')
+      ? 560
+      : document.body.classList.contains('plan')
+      ? PLAN_WIN_W
+      : 0
+    : 0;
   if (want === modeSent && Math.abs(height - heightSent) < 6 && width === widthSent) return;
   modeSent = want;
   heightSent = height;
@@ -642,6 +653,9 @@ function showBubble(text, { fix = null } = {}) {
   usageEl.classList.add('hidden'); // news wins over the token panel
   petEl.classList.add('hidden');
   menuEl.classList.add('hidden');
+  // One window above the buddy's head, never two: a question notice and a
+  // bubble about the same wait used to stack into what read as two popups.
+  qcardEl.classList.add('hidden');
   bubbleEl.classList.remove('hidden');
   armPanel(bubbleEl);
   showStack(); // before syncMode: the sheets need their room in the measurement
@@ -708,14 +722,13 @@ function waitingCount() {
  * Put the panel on screen on top of the ones behind it.
  *
  * Count the actual popup queue, not every unrelated nudge this shared buddy
- * has heard. One item is one sheet; two and three get exactly that many; a
- * larger queue stays at three sheets so it remains a readable stack.
+ * has heard. One post is one window, alone on screen; two or more show
+ * exactly one sheet behind the front — two windows, never three. The badge
+ * and the "+N more" chip carry the exact count past that.
  */
 function showStack() {
   const setDepth = (el, count) => {
-    const shown = Math.min(3, Math.max(1, count));
-    el.classList.toggle('stacked', shown >= 2); // one sheet behind the front
-    el.classList.toggle('deep', shown >= 3); // two sheets behind the front
+    el.classList.toggle('stacked', count >= 2); // one sheet behind the front
   };
   // A decision card and a passive bubble are different queues. Do not make a
   // lone approval look like two cards just because another session has a
@@ -890,9 +903,11 @@ const deedClock = (at) =>
  * Record something the buddy did.
  *
  * `who` is the agent it was about — with one buddy answering for several, "I
- * allowed that" is meaningless without saying whose.
+ * allowed that" is meaningless without saying whose. `detail` is the thing
+ * itself — the command allowed, the words the turn ended on — which gives the
+ * chip its one-line description and the log reader its full entry.
  */
-function noteDeed(text, { who = '' } = {}) {
+function noteDeed(text, { who = '', detail = '' } = {}) {
   if (!text) return;
   // Whose face the card wears, worked out now rather than at render time: the
   // roster moves, and a deed is a record of something that already happened.
@@ -900,9 +915,20 @@ function noteDeed(text, { who = '' } = {}) {
   const from = mine
     ? { character: settings.character, color: me.color, name: me.name }
     : petRoster.find((a) => a.name === who) || { name: who, color: me.color };
-  deeds.unshift({ text, who, at: Date.now(), from });
+  deeds.unshift({ text, who, detail: String(detail || ''), at: Date.now(), from });
   deeds.length = Math.min(deeds.length, DEEDS_KEPT);
   renderDeeds();
+}
+
+/**
+ * The chip's second line: what the deed was about, flattened to one line the
+ * CSS can ellipsize. Capped well past what fits so the DOM never carries a
+ * whole plan, and empty when the description would just repeat the headline.
+ */
+function deedDescription(deed) {
+  const flat = String(deed.detail || '').replace(/\s+/g, ' ').trim();
+  if (!flat || flat === deed.text) return '';
+  return flat.length > 200 ? `${flat.slice(0, 199)}…` : flat;
 }
 
 function renderDeeds() {
@@ -924,9 +950,10 @@ function renderDeeds() {
     deedsEl.append(more);
   }
   deedsEl.classList.toggle('hidden', deeds.length === 0);
+  if (!deedReaderEl.classList.contains('hidden')) renderDeedReader();
 }
 
-/** One activity chip. Click it to read the uncropped entry in its own window. */
+/** One activity chip. Click it to read it beside the rest of the log. */
 function makeDeed(deed) {
   const card = document.createElement('button');
   card.type = 'button';
@@ -945,6 +972,8 @@ function makeDeed(deed) {
 
   const body = document.createElement('div');
   body.className = 'deed-body';
+  const line = document.createElement('span');
+  line.className = 'deed-line';
   const what = document.createElement('span');
   what.className = 'deed-what';
   what.textContent = deed.text;
@@ -955,29 +984,85 @@ function makeDeed(deed) {
   meta.textContent = [deed.who && deed.who !== me.name ? deed.who : '', deedClock(deed.at)]
     .filter(Boolean)
     .join(' · ');
-  body.append(what, meta);
+  line.append(what, meta);
+  body.append(line);
+
+  // What it was about, under the action: "allowed npm run build" says what
+  // happened, this line says to what — without opening the reader.
+  const description = deedDescription(deed);
+  if (description) {
+    const desc = document.createElement('span');
+    desc.className = 'deed-desc';
+    desc.textContent = description;
+    body.append(desc);
+  }
 
   card.append(face, body);
   return card;
 }
 
 function openDeed(deed) {
-  const label = [deed.who && deed.who !== me.name ? deed.who : me.name, deedClock(deed.at)]
-    .filter(Boolean)
-    .join(' · ');
-  window.clippyAPI.openActivityReader(label || 'Activity log', deed.text);
+  showDeedReader(deed);
 }
 
 function openAllDeeds() {
-  const text = deeds
-    .map((deed) => {
-      const label = [deed.who && deed.who !== me.name ? deed.who : me.name, deedClock(deed.at)]
-        .filter(Boolean)
-        .join(' · ');
-      return `## ${label}\n\n${deed.text}`;
-    })
-    .join('\n\n---\n\n');
-  window.clippyAPI.openActivityReader('Activity log', text);
+  showDeedReader(deeds[0]);
+}
+
+let selectedDeed = null;
+
+function deedLabel(deed) {
+  return [deed.who && deed.who !== me.name ? deed.who : me.name, deedClock(deed.at)]
+    .filter(Boolean)
+    .join(' · ');
+}
+
+function renderDeedReader() {
+  deedReaderList.replaceChildren();
+  if (!selectedDeed || !deeds.includes(selectedDeed)) selectedDeed = deeds[0] || null;
+  for (const deed of deeds) {
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.className = 'deed-reader-item';
+    item.classList.toggle('selected', deed === selectedDeed);
+    item.textContent = deed.text;
+    item.title = deedLabel(deed);
+    item.addEventListener('click', () => {
+      selectedDeed = deed;
+      renderDeedReader();
+    });
+    deedReaderList.append(item);
+  }
+  // The action stays visible as the entry's heading — the pane below holds
+  // the thing itself (the command, the sign-off), which the chip could only
+  // gesture at in one line.
+  deedReaderMeta.textContent = selectedDeed
+    ? `${deedLabel(selectedDeed)} — ${selectedDeed.text}`
+    : '';
+  deedReaderText.textContent = selectedDeed
+    ? selectedDeed.detail || selectedDeed.text
+    : 'Nothing logged yet.';
+  deedReaderText.scrollTop = 0;
+}
+
+function showDeedReader(deed) {
+  selectedDeed = deed || deeds[0] || null;
+  usageEl.classList.add('hidden');
+  bubbleEl.classList.add('hidden');
+  qcardEl.classList.add('hidden');
+  petEl.classList.add('hidden');
+  menuEl.classList.add('hidden');
+  feedEl.classList.add('hidden');
+  renderDeedReader();
+  deedReaderEl.classList.remove('hidden');
+  document.body.classList.add('deed-reading');
+  syncMode();
+}
+
+function hideDeedReader() {
+  deedReaderEl.classList.add('hidden');
+  document.body.classList.remove('deed-reading');
+  syncMode();
 }
 
 function clearActivity() {
@@ -1017,6 +1102,11 @@ function showQuestion(evt) {
   // takes you to where it can be answered.
   btnQgoto.classList.toggle('hidden', !canOpen);
   menuEl.classList.add('hidden');
+  // The question replaces whatever else was above his head — one window at a
+  // time, not a card floating on top of a bubble.
+  bubbleEl.classList.add('hidden');
+  usageEl.classList.add('hidden');
+  petEl.classList.add('hidden');
   qcardEl.classList.remove('hidden');
   armPanel(qcardEl);
   setExcited(true);
@@ -1253,9 +1343,33 @@ async function showUsage() {
   } else {
     renderMeasuredBars(data, windows, week, weekTotal, now);
   }
+  renderCodexRow(data.codexWeek);
 
   usageEl.classList.remove('hidden');
   syncMode();
+}
+
+/**
+ * The Codex/GPT share of the week, on the same summary — a Claude panel's
+ * windows only see ~/.claude, so what the GPT sessions on this machine spent
+ * is read from Codex's own rollouts and gets a row of its own. No track: GPT
+ * tokens are not a share of the Claude week, and a bar needs a denominator.
+ * Nothing spent (or no Codex at all) draws nothing.
+ */
+function renderCodexRow(week) {
+  const spent = allTokens(week && week.totals);
+  if (!spent) return;
+  const top = Object.entries(week.byModel || {})
+    .map(([model, totals]) => [model, allTokens(totals)])
+    .sort((a, b) => b[1] - a[1])[0];
+  usageBars.append(
+    bar('week · Codex GPT', fmtTokens(spent), null, {
+      sub: top ? `mostly ${top[0]} · from Codex rollouts` : 'from Codex rollouts',
+      hint:
+        'What Codex (GPT) sessions on this machine spent in the last 7 days, measured from ' +
+        '~/.codex/sessions rollouts — token totals, not a ChatGPT allowance.',
+    })
+  );
 }
 
 /**
@@ -1619,7 +1733,10 @@ async function proposeAgent(text) {
     window.clippyAPI.sendPrompt(text, picked.agent.sessionId);
     row.replaceChildren(document.createTextNode(`sent to ${picked.agent.name}`));
     row.className = 'pet-line waiting';
-    noteDeed(`passed a message to ${picked.agent.name}`, { who: picked.agent.name });
+    noteDeed(`passed a message to ${picked.agent.name}`, {
+      who: picked.agent.name,
+      detail: text,
+    });
     syncMode();
   });
   const no = document.createElement('button');
@@ -1861,6 +1978,7 @@ petChip.addEventListener('click', () => {
   petInput.focus();
 });
 document.getElementById('feed-close').addEventListener('click', hideFeed);
+document.getElementById('deed-reader-close').addEventListener('click', hideDeedReader);
 /**
  * The action bar under the buddy.
  *
@@ -2287,7 +2405,12 @@ function decide(action, message = '') {
   const req = requests.get(activeRequestId);
   if (req) {
     const what = req.type === 'review' ? 'the last turn' : req.title || 'a request';
-    noteDeed(`${DEED_WORDS[action] || action} ${what}`, { who: req.name });
+    // The body of what was decided — the command, the plan, the question —
+    // so the log says more than that a decision happened.
+    noteDeed(`${DEED_WORDS[action] || action} ${what}`, {
+      who: req.name,
+      detail: req.detail || '',
+    });
   }
   window.clippyAPI.decide(activeRequestId, action, message);
   const queue = [...requests.keys()];
@@ -2384,7 +2507,9 @@ function handleEvent(evt) {
         // The turn ending is worth remembering whether or not the card is
         // ever answered — it is the "we completed this" line.
         const said = (evt.message || '').replace(/^.*? finished:?\s*/i, '').trim();
-        noteDeed(said ? `finished: ${said.slice(0, 70)}` : 'finished a turn', { who: evt.name });
+        // The action is the headline; what the turn ended on is the chip's
+        // description line, and the whole sign-off waits in the reader.
+        noteDeed('finished a turn', { who: evt.name, detail: said });
       }
       // A review card carries no deadline (expiresAt 0): the hook was already
       // answered, so the card can wait for as long as the user does.
@@ -2528,6 +2653,7 @@ function handleEvent(evt) {
       if (requests.has(evt.requestId) && evt.timedOut) {
         noteDeed(`ran out of time on ${requests.get(evt.requestId).title || 'a request'}`, {
           who: requests.get(evt.requestId).name,
+          detail: requests.get(evt.requestId).detail || '',
         });
       }
       if (requests.delete(evt.requestId)) {
@@ -2596,7 +2722,14 @@ function handleEvent(evt) {
       // A watcher cold-starts from the transcript tail. For a prompt just sent
       // through this buddy, that first read is a live reply, not old history.
       const isNews = evt.directReply || (!evt.cold && !wasEmpty);
-      const quiet = feedEl.classList.contains('hidden') && !activeRequestId && isNews;
+      // A standing question card outranks passing chatter: showBubble would
+      // replace it, and a bubble that fades in six seconds must not take a
+      // question that was waiting on you down with it.
+      const quiet =
+        feedEl.classList.contains('hidden') &&
+        qcardEl.classList.contains('hidden') &&
+        !activeRequestId &&
+        isNews;
       if (said && quiet) {
         showBubble(said.text);
         setTimeout(() => {
@@ -2636,7 +2769,9 @@ function handleEvent(evt) {
         refreshPose();
         setTimeout(refreshPose, 2700);
       }
-      if (!activeRequestId) {
+      // Same rule as the transcript bubble: a question card that is up stays
+      // up — "Now watching …" chatter is not worth replacing it with.
+      if (!activeRequestId && (evt.sticky || qcardEl.classList.contains('hidden'))) {
         showBubble(evt.message, { fix: evt.fix });
         // Something you have to act on stays until you dismiss it; ordinary
         // chatter gets out of the way on its own.

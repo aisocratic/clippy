@@ -32,7 +32,7 @@ const { checkDrift, checkCodexDrift, checkOpenclawDrift, installToFiles } = requ
 const { identityFor, petNameFor } = require('./identity');
 const { SIZES, sizeList, allCharacters, characterFor, sizeFor } = require('./characters');
 const { ACTIONS } = require('./actions');
-const { windowActionFor } = require('./visibility');
+const { windowActionFor, resurfaces } = require('./visibility');
 const {
   SOLO_KEY,
   sharesWindow,
@@ -209,7 +209,6 @@ function loadSettings() {
   }
 }
 
-/** Give one project a buddy of its own (or '' to go back to the automatic one). */
 // How many per-session choices to remember. Trimmed oldest-first rather than
 // grown forever; for string keys, insertion order is age order.
 const SESSION_ASSIGN_CAP = 60;
@@ -225,37 +224,6 @@ function rememberForSession(map, sessionId, value) {
   return next;
 }
 
-/**
- * Pin every *other* live buddy in this folder to what it is wearing now.
- *
- * A choice is written against the session and against the project: the session
- * half is what makes it this buddy's and not its twin's, the project half is
- * what makes the folder look the same tomorrow, when this session id is long
- * gone. But the project half would drag the neighbours along, since a buddy
- * with no choice of its own follows the project — so they are given their
- * current look explicitly, first. Nobody moves except the one you picked.
- */
-function pinSiblings(sessionId, name, { size = false } = {}) {
-  for (const other of buddies.values()) {
-    if (other.sessionId === sessionId || other.name !== name) continue;
-    if (size) {
-      if ((settings.sizeBySession || {})[other.sessionId]) continue;
-      settings.sizeBySession = rememberForSession(
-        settings.sizeBySession,
-        other.sessionId,
-        sizeFor(settings, other.name, other.sessionId)
-      );
-    } else {
-      if ((settings.characterBySession || {})[other.sessionId]) continue;
-      settings.characterBySession = rememberForSession(
-        settings.characterBySession,
-        other.sessionId,
-        other.character
-      );
-    }
-  }
-}
-
 /** Give one session's buddy a character (or '' to go back to the automatic one). */
 function assignCharacter(sessionId, character) {
   if (!sessionId) return;
@@ -263,13 +231,7 @@ function assignCharacter(sessionId, character) {
   if (!name) return;
   const wanted = character && characterIds().includes(character) ? character : '';
 
-  pinSiblings(sessionId, name);
   settings.characterBySession = rememberForSession(settings.characterBySession, sessionId, wanted);
-
-  const byProject = { ...settings.characterByProject };
-  if (wanted) byProject[name] = wanted;
-  else delete byProject[name];
-  settings.characterByProject = byProject;
 
   saveSettings();
   recast();
@@ -284,13 +246,7 @@ function assignSize(sessionId, size) {
   if (!name) return;
   const wanted = size && SIZES[size] ? size : '';
 
-  pinSiblings(sessionId, name, { size: true });
   settings.sizeBySession = rememberForSession(settings.sizeBySession, sessionId, wanted);
-
-  const byProject = { ...settings.sizeByProject };
-  if (wanted) byProject[name] = wanted;
-  else delete byProject[name];
-  settings.sizeByProject = byProject;
 
   saveSettings();
   // The window that buddy lives in just changed shape.
@@ -336,9 +292,27 @@ function setSetting(key, value) {
   if (key === 'soloCharacter') {
     const solo = buddies.get(SOLO_KEY);
     if (solo && !solo.win.isDestroyed()) {
-      solo.character = soloCharacter();
+      // Through soloFaceFor: a per-session pick for the session it is wearing
+      // right now still outranks the new default face.
+      solo.character = soloFaceFor(solo.sessionId);
       post(solo, 'clippy-settings', settingsPayload(solo));
     }
+  }
+  // Switching the mode swaps which windows exist, and the old mode's windows
+  // must go. Leaving them up (an earlier build did, to avoid closing anything
+  // you were reading) is how a desk ended up with five per-session buddies
+  // stranded next to the shared one — the confusing state, not the kind one.
+  // Sessions come back as their events do; most of these windows are hidden
+  // until then anyway.
+  if (key === 'buddyMode') {
+    const keepSolo = settings.buddyMode === 'one';
+    for (const [mapKey, buddy] of [...buddies]) {
+      if ((mapKey === SOLO_KEY) === keepSolo) continue;
+      buddy.dock?.poll?.cancel();
+      buddies.delete(mapKey);
+      if (!buddy.win.isDestroyed()) buddy.win.destroy();
+    }
+    pushSettingsState();
   }
 }
 
@@ -376,10 +350,18 @@ function sendSettings() {
   }
 }
 
-/** Re-cast every buddy — a project was given a buddy of its own. */
+/** Re-cast every buddy after a session-specific choice changes. */
 function recast() {
   const usedByProject = new Map();
   for (const buddy of buddies.values()) {
+    // The shared buddy keeps its own face — except a per-session pick for the
+    // session it is speaking for RIGHT NOW is allowed to dress it (that is the
+    // visible effect of the pickers in one-for-all mode). Picks for the other
+    // rows are stored and worn when the buddy switches to them.
+    if (buddies.get(SOLO_KEY) === buddy) {
+      buddy.character = soloFaceFor(buddy.sessionId);
+      continue;
+    }
     const used = usedByProject.get(buddy.name) || [];
     buddy.character = characterFor(settings, buddy.name, buddy.sessionId, used);
     used.push(buddy.character);
@@ -413,14 +395,11 @@ function replaceAll() {
 }
 
 /**
- * Switching between one-each and one-for-all changes *where the next message
- * goes*, and nothing else.
- *
- * It used to tear every window down and build them again, which is the obvious
- * reading of "a different set of windows" and the wrong one: buddies you had
- * placed, perched and were reading vanished mid-thought because you flipped a
- * setting. Whoever is on screen stays there. The shared buddy appears when it
- * has something to say, which is the only moment it is needed.
+ * Switching between one-each and one-for-all swaps which windows exist as well
+ * as where the next message goes — see the `buddyMode` branch in setSetting.
+ * An earlier build kept the old mode's windows up to avoid closing anything
+ * you were reading, and that is exactly how a desk ended up with a row of
+ * stranded per-session buddies beside the shared one.
  */
 
 /* ---------------- Settings window ---------------- */
@@ -567,10 +546,14 @@ function settingsState() {
       name: s.name,
       agent: s.agent,
       color: identityFor(s.sessionId, s.name).color,
+      pet: petNameForLiveSession(s.sessionId),
       status: s.status,
       // Who this session's buddy is right now — which is what "Auto" means in
-      // the picker next to it.
-      character: buddyOf(s.sessionId)?.character || characterFor(settings, s.name, s.sessionId),
+      // the picker next to it. Read the session's OWN window from the map, not
+      // buddyOf: in 'one' mode buddyOf falls back to the shared window, and
+      // every row would report the solo buddy's face as its own.
+      character:
+        buddies.get(s.sessionId)?.character || characterFor(settings, s.name, s.sessionId),
     })),
   };
 }
@@ -587,6 +570,11 @@ function pushSettingsState() {
 // `drive:<id>`); every session that reports in gets its own little buddy so
 // several parallel agents never fight over one window.
 const buddies = new Map();
+
+/** A buddy name must be unique among the sessions currently on screen. */
+function petNameForLiveSession(sessionId) {
+  return petNameFor(sessionId, tracker.list().map((session) => session.sessionId));
+}
 
 /**
  * One buddy for everything, when you'd rather not have a desk full of them.
@@ -827,7 +815,7 @@ function buddyFor(key, name = '', agent = '', identityKey = key) {
       agent: agent || 'claude',
       // The shared window is named after itself, not after whichever session
       // happened to open it — petNameOf says the same thing once it exists.
-      pet: petNameFor(sharesSoloWindow(key) ? SOLO_KEY : identityKey),
+      pet: sharesSoloWindow(key) ? petNameFor(SOLO_KEY) : petNameForLiveSession(identityKey),
     },
   });
   // CLIPPY_SANDBOXTOOLS=1 npm start opens an inspector per buddy, detached so it
@@ -851,7 +839,7 @@ function buddyFor(key, name = '', agent = '', identityKey = key) {
     // The shared window is often re-dressed for another session before it has
     // finished loading, and the query string it was opened with is then a
     // session ago. Whoever it is wearing now is who it should look like.
-    if (loaded && loaded.sessionId !== key) sendIdentity(loaded);
+    if (loaded) sendIdentity(loaded);
     // Which way to face when there is nothing else to say.
     if (loaded) {
       loaded.side = null;
@@ -908,7 +896,7 @@ function buddyFor(key, name = '', agent = '', identityKey = key) {
     // The shared buddy wears one face whoever it speaks for; a per-session
     // buddy is cast against its siblings so two agents in one project differ.
     character: sharesSoloWindow(key)
-      ? soloCharacter()
+      ? soloFaceFor(key)
       : characterFor(
           settings,
           identity.name,
@@ -995,10 +983,9 @@ function wearIdentity(buddy, sessionId, name = '', agent = '') {
   const label = name || tracker.cwdFor(sessionId).split('/').pop() || buddy.name;
   buddy.name = label;
   if (agent) buddy.agent = agent;
-  // The manager keeps its own face. One buddy you learn the look of beats a
-  // paperclip that turns into a fox mid-sentence; which agent it is speaking
-  // for is said by the name plate and by the card, in words.
-  buddy.character = soloCharacter();
+  // The manager keeps its own face — unless you dressed this session yourself,
+  // in which case the shared buddy wears that face while speaking for it.
+  buddy.character = soloFaceFor(sessionId);
 
   // A window that hasn't finished loading drops anything sent to it, and the
   // shared one is routinely re-dressed in the same tick it was created. The
@@ -1042,7 +1029,7 @@ function sendIdentity(buddy) {
 function petNameOf(buddy) {
   if (!buddy) return '';
   if (buddies.get(SOLO_KEY) === buddy) return petNameFor(SOLO_KEY);
-  return petNameFor(buddy.identityKey || buddy.sessionId);
+  return petNameForLiveSession(buddy.identityKey || buddy.sessionId);
 }
 
 /** The face the shared buddy wears: the one you chose, or Clippy's own pick. */
@@ -1050,6 +1037,21 @@ function soloCharacter() {
   const chosen = settings.soloCharacter;
   if (chosen && characterIds().includes(chosen)) return chosen;
   return characterFor(settings, 'clippy', SOLO_KEY);
+}
+
+/**
+ * The face the shared buddy wears while speaking for `sessionId`.
+ *
+ * One buddy you learn the look of beats a paperclip that turns into a fox
+ * mid-sentence — so by default the manager keeps its own face. But a character
+ * you assigned to a specific session (including a subagent's) is you overriding
+ * that on purpose: "when it speaks for this one, wear this". The name plate and
+ * the card still say in words which agent is talking.
+ */
+function soloFaceFor(sessionId) {
+  const own = (settings.characterBySession || {})[sessionId];
+  if (own && characterIds().includes(own)) return own;
+  return soloCharacter();
 }
 
 /** Which buddy does this renderer belong to? */
@@ -1113,7 +1115,11 @@ function showBuddy(key, { pin = false, mode = 'full' } = {}) {
   const buddy = buddyOf(key);
   if (!buddy || buddy.win.isDestroyed()) return;
   const turn = ++buddy.visibilityTurn;
-  if (pin) buddy.pinned = true;
+  if (pin) {
+    buddy.pinned = true;
+    // Summoned by hand outranks hidden by hand.
+    buddy.dismissedAt = 0;
+  }
   if (!buddy.win.isVisible() && settings.appearanceSound) {
     // The outbox holds this until the page can hear it, so a window that has
     // only just been created still gets its entrance rather than a silent one.
@@ -1152,6 +1158,9 @@ function hideBuddy(key, { unpin = false } = {}) {
   buddy.visibilityTurn++;
   if (unpin) {
     buddy.pinned = false;
+    // Hidden by hand: repeat reminders about the same wait must not reopen it
+    // (see resurfaces in visibility.js). Anything genuinely new lifts this.
+    buddy.dismissedAt = Date.now();
     undock(buddy);
     buddy.win.hide();
     return;
@@ -2648,11 +2657,21 @@ async function collectUsage(key) {
     ? { model: trackedModel, context: 0, contextLimit: 0, totals: {}, turns: 0 }
     : null;
   const now = Date.now();
-  let cached = usageCache.get(agent);
-  if (!cached || now - cached.at > USAGE_CACHE_MS) {
-    cached = { at: now, windows: await refreshUsageWindowsFor(agent)(now) };
-    usageCache.set(agent, cached);
-  }
+  const windowsFor = async (which) => {
+    let cached = usageCache.get(which);
+    if (!cached || now - cached.at > USAGE_CACHE_MS) {
+      cached = { at: now, windows: await refreshUsageWindowsFor(which)(now) };
+      usageCache.set(which, cached);
+    }
+    return cached.windows;
+  };
+  const windows = await windowsFor(agent);
+  // Codex GPT belongs on the context summary too: a Claude panel's windows
+  // only sweep ~/.claude/projects, so what Codex spent this week is read from
+  // its own rollouts and carried alongside. Cheap when there are none — the
+  // sweep of a missing ~/.codex/sessions is an empty walk, cached a minute
+  // like everything else here.
+  const codexWeek = agent === 'codex' ? null : (await windowsFor('codex')).week;
   return {
     name: buddyOf(key)?.name || '',
     agent,
@@ -2663,7 +2682,10 @@ async function collectUsage(key) {
     // What Claude said as its last turn ended — the status summary's "doing
     // right now" line falls back to it when no tool activity is fresher.
     recap: await recapFor(key),
-    windows: cached.windows,
+    windows,
+    // The Codex/GPT share of the week, for its own row on the panel. Null on
+    // a Codex session's panel, whose windows above already are Codex's.
+    codexWeek,
     now,
   };
 }
@@ -2720,7 +2742,9 @@ function showUsageFor(key) {
 function trayMenu() {
   const attention = attentionItems();
   const sessionItems = [...buddies.values()].map((b) => ({
-    label: b.name,
+    // The pet name is what tells five sessions in one folder apart — the
+    // project alone reads as the same entry five times.
+    label: `${petNameOf(b)} · ${b.name}`,
     submenu: [
       { label: 'Show Clippy', click: () => showBuddy(b.sessionId, { pin: true }) },
       { label: 'Context & usage', click: () => showUsageFor(b.sessionId) },
@@ -3213,7 +3237,13 @@ function emitPassive(reaction, { osNotification = true } = {}) {
   // The event always goes to the window, whether or not anything pops up: it
   // is what keeps the badge, the feed and the activity line honest about a
   // session the user happens to be watching directly.
-  sendTo(reaction.sessionId, { ...reaction, counts: tracker.counts() });
+  const buddy = sendTo(reaction.sessionId, { ...reaction, counts: tracker.counts() });
+
+  // The world moved on (the user typed, the agent is working again) — a
+  // by-hand dismissal has served its purpose and the next wait may pop up.
+  if (buddy && (reaction.kind === 'clear' || reaction.kind === 'activity')) {
+    buddy.dismissedAt = 0;
+  }
 
   // "Still waiting for your reply" about a question Clippy answered a moment
   // ago. Codex leaves its picker on screen after a hook resolves the call, so
@@ -3232,6 +3262,14 @@ function emitPassive(reaction, { osNotification = true } = {}) {
     return;
   }
   if (action !== 'show') return;
+
+  // Hidden by hand and this is just a repeat reminder of the same wait: keep
+  // it down. The event above already refreshed the window's contents.
+  if (!resurfaces(reaction.kind, reaction.urgency, Boolean(buddy?.dismissedAt))) {
+    console.log(`clippy: staying hidden for "${reaction.name}" — you closed it and nothing new happened`);
+    return;
+  }
+  if (buddy) buddy.dismissedAt = 0;
 
   surface(reaction.sessionId, {
     notification:
@@ -3823,6 +3861,9 @@ function handleHookEvent(eventName, kind, payload, ctx) {
   // payload untouched on the wire, then carry the source through our session
   // model so one app can label Claude, Codex, and OpenClaw buddies correctly.
   payload = { ...(payload || {}), agent: AGENTS[ctx?.source] ? ctx.source : 'claude' };
+  // A hook without an id cannot be routed safely. In particular, do not make
+  // it into an "unknown" session that shows up as a stray agent.
+  if (!String(payload.session_id || '').trim()) return undefined;
   noteTerminal(payload, ctx);
 
   if (eventName === 'PermissionRequest') return handlePermissionRequest(payload, ctx);

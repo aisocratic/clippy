@@ -247,3 +247,9 @@ test('handles missing cwd and unknown events gracefully', () => {
   assert.match(r.message, /deadbeef/);
   assert.equal(t.handle('SomethingNew', null, payload('x')), null);
 });
+
+test('ignores hook events without a session id instead of creating an unknown session', () => {
+  const t = new SessionTracker();
+  assert.equal(t.handle('Notification', null, { cwd: '/repo/ghost' }), null);
+  assert.deepEqual(t.counts(), { total: 0, waiting: 0 });
+});

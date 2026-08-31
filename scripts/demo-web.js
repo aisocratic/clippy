@@ -677,12 +677,15 @@ function usagePayloads() {
   };
 
   /** A payload is a session and the three windows — allowances only ever come
-      from Claude Code's own /usage cache (the `official` block), never settings. */
-  const payload = (session, block, week) => ({
+      from Claude Code's own /usage cache (the `official` block), never settings.
+      `codexWeek` is the GPT share main reads from ~/.codex rollouts, so the
+      bench shows the Codex row wherever a machine with Codex on it would. */
+  const payload = (session, block, week, codexWeek = null) => ({
     name: NAME,
     now,
     session,
     windows: { session: block, week, weekOpus: opusOnly(week) },
+    codexWeek,
   });
 
   const busyWeek = win(
@@ -750,6 +753,7 @@ function usagePayloads() {
     ),
 
     // Plenty of spend, nobody has said what the allowance is: shares of the week.
+    // This machine also ran Codex, so the panel carries the GPT week too.
     noplan: payload(
       {
         model: 'claude-opus-5',
@@ -761,7 +765,16 @@ function usagePayloads() {
       win(SESSION_WINDOW_MS, 2.6 * HOUR, {
         'claude-opus-5': totals(48_000, 31_000, 2_400_000, 180_000),
       }),
-      busyWeek
+      busyWeek,
+      win(
+        WEEK_WINDOW_MS,
+        3.8 * 24 * HOUR,
+        {
+          'gpt-5.3-codex': totals(240_000, 130_000, 9_000_000, 0),
+          'gpt-5.3-codex-mini': totals(40_000, 18_000, 900_000, 0),
+        },
+        { sessions: 4 }
+      )
     ),
 
     // A heavy week on the big context window — the shares run hot.

@@ -91,6 +91,9 @@ class SessionTracker {
    * @returns {object|null}     Reaction for the UI, or null if nothing to do
    */
   handle(eventName, kind, payload = {}) {
+    // A malformed hook payload is not a session. Otherwise every missing id
+    // becomes the literal "unknown" and creates a phantom buddy.
+    if (!String(payload.session_id || '').trim()) return null;
     const s = this._upsert(payload);
 
     switch (eventName) {

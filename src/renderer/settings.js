@@ -467,8 +467,10 @@ function renderSessions() {
 
     const show = document.createElement('button');
     show.className = 'session-name';
-    show.textContent = `${labelFor(session.character)} · ${session.name}`;
-    show.title = `Bring ${labelFor(session.character)} to the front`;
+    // The pet name leads: it is unique among the live sessions, where five
+    // agents in one folder would otherwise be five identical rows.
+    show.textContent = `${session.pet || labelFor(session.character)} · ${session.name}`;
+    show.title = `Bring ${session.pet || labelFor(session.character)} (${labelFor(session.character)}) to the front`;
     show.addEventListener('click', () => window.clippySettings.showBuddy(session.sessionId));
 
     const status = document.createElement('span');
@@ -476,16 +478,15 @@ function renderSessions() {
     const agentName = { claude: 'Claude', codex: 'Codex', openclaw: 'OpenClaw' }[session.agent] || 'Claude';
     status.textContent = `${agentName} · ${STATUS_TEXT[session.status] || session.status || ''}`;
 
-    // This one buddy's own. The choice is kept against the session (so the
-    // folder's other agents keep theirs) and against the project (so the repo
-    // still looks the same tomorrow) — see assignCharacter in src/main.js.
-    const assigned =
-      (state.characterBySession || {})[session.sessionId] ||
-      (state.characterByProject || {})[session.name] ||
-      '';
+    // The project name is a label, not an identity. This choice belongs only
+    // to this session, even when another agent runs in the same folder.
+    const assigned = (state.characterBySession || {})[session.sessionId] || '';
     const pick = document.createElement('select');
     pick.className = 'session-pick';
-    pick.title = 'Which buddy this session gets';
+    pick.title =
+      state.buddyMode === 'one'
+        ? 'Face the shared buddy wears while speaking for this session'
+        : 'Which buddy this session gets';
     const auto = document.createElement('option');
     auto.value = '';
     auto.textContent = `Auto (${labelFor(session.character)})`;
@@ -503,10 +504,7 @@ function renderSessions() {
 
     // …and how big it is drawn, kept the same way. A repo you watch out of the
     // corner of your eye can be XS while the one you're in is large.
-    const assignedSize =
-      (state.sizeBySession || {})[session.sessionId] ||
-      (state.sizeByProject || {})[session.name] ||
-      '';
+    const assignedSize = (state.sizeBySession || {})[session.sessionId] || '';
     const sizePick = document.createElement('select');
     sizePick.className = 'session-pick session-size';
     sizePick.title = 'How big this session’s buddy is drawn';
@@ -530,7 +528,12 @@ function renderSessions() {
     const character = state.characters.find((c) => c.id === (assigned || session.character));
     if (character) art.appendChild(poseArt(character, posesOf(character)[0], 28));
 
-    row.append(dot, show, status, art, pick, sizePick);
+    // The buddy picker works in both modes: per-session windows in one-each,
+    // and in one-for-all the shared buddy wears the pick while speaking for
+    // that session (subagents included). Size stays with the solo row in
+    // one-for-all — there is only one window to size.
+    if (state.buddyMode === 'one') row.append(dot, show, status, art, pick);
+    else row.append(dot, show, status, art, pick, sizePick);
     host.appendChild(row);
   }
 }

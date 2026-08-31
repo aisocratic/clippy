@@ -72,6 +72,21 @@
       <div id="feed-log"></div>
     </div>
 
+    <!-- Clicking a compact activity chip opens this two-pane reader. The list
+         stays on the left while the selected entry remains readable in the
+         centre, rather than sending each chip to a separate window. -->
+    <div id="deed-reader" class="hidden">
+      <button class="panel-x" id="deed-reader-close" title="Close" aria-label="Close">×</button>
+      <div id="deed-reader-head">activity log</div>
+      <div id="deed-reader-body">
+        <div id="deed-reader-list" aria-label="Activity entries"></div>
+        <div id="deed-reader-entry">
+          <div id="deed-reader-meta"></div>
+          <pre id="deed-reader-text"></pre>
+        </div>
+      </div>
+    </div>
+
     <div id="qcard" class="hidden">
       <button class="panel-x" id="btn-qok" title="Close" aria-label="Close">×</button>
       <div id="qcard-head"><span id="qcard-tag">asking you</span></div>
@@ -216,7 +231,7 @@
       <button id="btn-settings" class="act" title="Clippy's settings">
         <span class="act-icon" aria-hidden="true">⚙</span><span class="act-label">settings</span>
       </button>
-      <button id="btn-hide" class="act" title="Hide until the next update (Clippy stays on in the menu bar)">
+      <button id="btn-hide" class="act" title="Hide — repeat reminders won't reopen it; anything new will (Clippy stays on in the menu bar)">
         <span class="act-icon" aria-hidden="true">×</span><span class="act-label">hide</span>
       </button>
     </div>
