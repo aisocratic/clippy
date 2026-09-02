@@ -251,8 +251,10 @@ test('a review moves into the reader and can safely return or resolve there', ()
   const preload = read('src', 'preload-reader.js');
   const reader = read('src', 'renderer', 'reader.js');
   const html = read('src', 'renderer', 'reader.html');
+  const styles = read('src', 'renderer', 'reader.css');
 
-  assert.match(main, /if \(payload\.review\) buddyOf\(readerSessionId\)\?\.win\.hide\(\)/);
+  assert.match(main, /const mini = payload\.review \? buddyOf\(readerSessionId\) : null;/);
+  assert.match(main, /if \(mini && !mini\.win\.isDestroyed\(\)\) mini\.win\.hide\(\)/);
   assert.match(main, /ipcMain\.on\('clippy-reader-minimize'/);
   assert.match(main, /showBuddy\(readerSessionId\)/);
   assert.match(main, /ipcMain\.on\('clippy-reader-decide'/);
@@ -264,6 +266,12 @@ test('a review moves into the reader and can safely return or resolve there', ()
   assert.match(html, /id="reader-good">Looks good/);
   assert.match(reader, /window\.readerAPI\.decide\('feedback'/);
   assert.match(reader, /window\.readerAPI\.decide\('ok'\)/);
+
+  // The text scrolls, not the window: a flex item that cannot shrink below its
+  // own content pushes the reply box off the bottom of a long response.
+  const content = styles.slice(styles.indexOf('#content {'), styles.indexOf('#content section'));
+  assert.match(content, /min-height: 0/);
+  assert.match(content, /overflow-y: auto/);
 });
 
 test('the under-Clippy activity preview opens complete entries in a reader window', () => {

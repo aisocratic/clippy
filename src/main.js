@@ -33,12 +33,7 @@ const { identityFor, petNameFor } = require('./identity');
 const { SIZES, sizeList, allCharacters, characterFor, sizeFor } = require('./characters');
 const { ACTIONS } = require('./actions');
 const { windowActionFor } = require('./visibility');
-const {
-  SOLO_KEY,
-  sharesWindow,
-  windowKeyFor: soloWindowKey,
-  successorFor,
-} = require('./buddy-mode');
+const { SOLO_KEY, sharesWindow, windowKeyFor, successorFor } = require('./buddy-mode');
 const { EDGE_OPTIONS, EDGE_IDS, edgeLineup, edgeHome } = require('./arrange');
 const {
   terminalFromHeaders,
@@ -146,14 +141,11 @@ const settings = {
   // session id, and capped, because sessions are many and short-lived.
   characterBySession: {},
   sizeBySession: {},
-  // 'each': a buddy per session, side by side. 'one': a single buddy that
-  // speaks for whichever agent needs you, wearing that agent's face.
-  buddyMode: 'each',
-  // In 'one' mode, the face the single buddy always wears. '' means "let
-  // Clippy pick" — the same casting a session would have got.
+  // The face the one buddy always wears. '' means "let Clippy pick" — the same
+  // casting a session would have got.
   soloCharacter: '',
-  // The one buddy can be a different size from the session buddies. '' keeps
-  // it on the global default, which is also how existing settings files behave.
+  // The one buddy can be drawn at a size of its own. '' keeps it on the global
+  // default, which is also how existing settings files behave.
   soloSize: '',
   size: 'medium', // the size a project gets when it hasn't picked one
   arrangeEdge: '', // screen edge new buddies line up on; '' = the classic corner
@@ -169,7 +161,6 @@ const CHOICES = {
   size: () => Object.keys(SIZES),
   arrangeEdge: () => EDGE_IDS,
   appearanceSound: () => ['', 'pop', 'chime', 'chirp'],
-  buddyMode: () => ['each', 'one'],
   soloCharacter: () => ['', ...characterIds()],
   soloSize: () => ['', ...Object.keys(SIZES)],
   defaultAgent: () => Object.keys(tmux.SPAWNABLE),
@@ -359,9 +350,8 @@ function settingsPayload(buddy) {
       ? {
           character: buddy.character,
           size: sizeForBuddy(buddy),
-          // Is *this* window the one that speaks for everybody? Not the same
-          // question as "is the mode 'one'": buddies that already existed when
-          // the mode changed keep their own windows and are not the manager.
+          // Is *this* window the one that speaks for everybody? A sandbox
+          // buddy has a window of its own and answers no.
           isSolo: buddies.get(SOLO_KEY) === buddy,
         }
       : null),
@@ -397,7 +387,7 @@ function compactSize(buddy) {
   return SIZES[sizeForBuddy(buddy)].win;
 }
 
-/** The manager in one-buddy mode has its own optional size; everyone else is per-session. */
+/** The shared buddy has its own optional size; a sandbox buddy is per-session. */
 function sizeForBuddy(buddy) {
   if (buddy && buddies.get(SOLO_KEY) === buddy && SIZES[settings.soloSize]) {
     return settings.soloSize;
@@ -411,17 +401,6 @@ function replaceAll() {
     if (!buddy.win.isDestroyed()) placeBuddy(buddy, buddy.mode || 'compact');
   }
 }
-
-/**
- * Switching between one-each and one-for-all changes *where the next message
- * goes*, and nothing else.
- *
- * It used to tear every window down and build them again, which is the obvious
- * reading of "a different set of windows" and the wrong one: buddies you had
- * placed, perched and were reading vanished mid-thought because you flipped a
- * setting. Whoever is on screen stays there. The shared buddy appears when it
- * has something to say, which is the only moment it is needed.
- */
 
 /* ---------------- Settings window ---------------- */
 
@@ -581,36 +560,25 @@ function pushSettingsState() {
   }
 }
 
-/* ---------------- One Clippy per session ---------------- */
+/* ---------------- One Clippy for every session ---------------- */
 
-// key -> { win, slot, name, sessionId, pinned }. The key is the session id (or
-// `drive:<id>`); every session that reports in gets its own little buddy so
-// several parallel agents never fight over one window.
+// key -> { win, slot, name, sessionId, pinned }. Every session that reports in
+// lands in the one shared window, under SOLO_KEY: it wears the name, colour and
+// character of whichever agent it is speaking for, so "approve", "go to
+// terminal" and the token panel act on the agent you are looking at. Its
+// `sessionId` is therefore not fixed — it is whoever it is showing right now.
+// The sandbox is the exception: those keys get a window each (see sharesWindow).
 const buddies = new Map();
-
-/**
- * One buddy for everything, when you'd rather not have a desk full of them.
- *
- * In 'one' mode every session shares a single window, and that window wears
- * the face of whichever agent it is currently speaking for — its name, its
- * colour, its character. The buddy's `sessionId` is therefore not fixed: it is
- * whoever it is showing right now, which is what makes "approve", "go to
- * terminal" and the token panel act on the agent you are looking at.
- */
-const sharesSoloWindow = (key) => sharesWindow(settings.buddyMode, key);
-
-/** Which window shows this session: its own, or the shared one. */
-const windowKeyFor = (key) => soloWindowKey(settings.buddyMode, key);
 
 /**
  * The buddy showing `key`.
  *
- * Falls back to the shared window so that every existing per-session lookup
- * keeps working in 'one' mode without each of them having to know about it.
+ * Falls back to the shared window so that every per-session lookup keeps
+ * working without each of them having to know there is only one window.
  */
 function buddyOf(key) {
   if (!key) return null;
-  return buddies.get(key) || (sharesSoloWindow(key) ? buddies.get(SOLO_KEY) || null : null);
+  return buddies.get(key) || (sharesWindow(key) ? buddies.get(SOLO_KEY) || null : null);
 }
 
 /**
@@ -773,9 +741,8 @@ function nextFreeSlot() {
  * the same face across that change, and across a restart.
  */
 function buddyFor(key, name = '', agent = '', identityKey = key) {
-  // In 'one' mode every session lands in the same window; `key` still says
-  // which session this is *about*, and wearIdentity below makes the window
-  // look like it.
+  // Every session lands in the same window; `key` still says which session
+  // this is *about*, and wearIdentity below makes the window look like it.
   const windowKey = windowKeyFor(key);
   const existing = buddies.get(windowKey);
   if (existing) {
@@ -796,7 +763,7 @@ function buddyFor(key, name = '', agent = '', identityKey = key) {
   // against, and this window is created at that size.
   const [compactW, compactH] = compactSize({ name, sessionId: key });
   const { x, y } = homeBounds(slot, compactW, compactH);
-  const identity = identityFor(sharesSoloWindow(key) ? SOLO_KEY : identityKey, name);
+  const identity = identityFor(sharesWindow(key) ? SOLO_KEY : identityKey, name);
   const win = new BrowserWindow({
     width: compactW,
     height: compactH,
@@ -827,7 +794,7 @@ function buddyFor(key, name = '', agent = '', identityKey = key) {
       agent: agent || 'claude',
       // The shared window is named after itself, not after whichever session
       // happened to open it — petNameOf says the same thing once it exists.
-      pet: petNameFor(sharesSoloWindow(key) ? SOLO_KEY : identityKey),
+      pet: petNameFor(sharesWindow(key) ? SOLO_KEY : identityKey),
     },
   });
   // CLIPPY_SANDBOXTOOLS=1 npm start opens an inspector per buddy, detached so it
@@ -894,8 +861,8 @@ function buddyFor(key, name = '', agent = '', identityKey = key) {
     // something else has changed its mind checks this before putting a window
     // on screen — see showBuddy.
     visibilityTurn: 0,
-    // In 'one' mode, which session this window is currently wearing. Equal to
-    // sessionId for a window of its own, and moved by wearIdentity otherwise.
+    // Which session this window is currently wearing. Equal to sessionId for a
+    // sandbox buddy's own window, and moved by wearIdentity otherwise.
     showing: key,
     identityKey,
     agent: agent || 'claude',
@@ -907,7 +874,7 @@ function buddyFor(key, name = '', agent = '', identityKey = key) {
     // give the project a buddy by hand.
     // The shared buddy wears one face whoever it speaks for; a per-session
     // buddy is cast against its siblings so two agents in one project differ.
-    character: sharesSoloWindow(key)
+    character: sharesWindow(key)
       ? soloCharacter()
       : characterFor(
           settings,
@@ -980,11 +947,11 @@ function sourceFor(key) {
 /**
  * Make the shared window wear one session's face.
  *
- * Only in 'one' mode, and only when the session actually changes — the two
- * pushes below re-cast the artwork and re-letter the name plate, which is not
- * something to do on every tool event. Identity goes first because the clip
- * sprites are drawn per session colour, so the character has to be applied
- * against the colour it is about to wear.
+ * Only when the session actually changes — the two pushes below re-cast the
+ * artwork and re-letter the name plate, which is not something to do on every
+ * tool event. Identity goes first because the clip sprites are drawn per
+ * session colour, so the character has to be applied against the colour it is
+ * about to wear.
  */
 function wearIdentity(buddy, sessionId, name = '', agent = '') {
   if (buddy.showing === sessionId) return buddy;
@@ -1005,9 +972,9 @@ function wearIdentity(buddy, sessionId, name = '', agent = '') {
   // did-finish-load handler replays this, so skipping here is not skipping.
   if (!buddy.win.isDestroyed() && !buddy.win.webContents.isLoading()) sendIdentity(buddy);
 
-  // A session arriving in 'one' mode makes no new window, so the settings
-  // window would otherwise never hear about it: every other push happens on
-  // the creation path this deliberately skips.
+  // A session arriving makes no new window, so the settings window would
+  // otherwise never hear about it: every other push happens on the creation
+  // path this deliberately skips.
   pushSettingsState();
   return buddy;
 }
@@ -1061,10 +1028,10 @@ function buddyForSender(sender) {
 /**
  * Send an event to one session's Clippy, creating its window if needed.
  *
- * Every event carries where it came from. That matters most in 'one' mode,
- * where a single window shows cards from several agents: the card has to say
- * whose it is, and the button on it has to name the app *that* session lives
- * in rather than whichever one the window happened to hear about last.
+ * Every event carries where it came from, because a single window shows cards
+ * from several agents: the card has to say whose it is, and the button on it
+ * has to name the app *that* session lives in rather than whichever one the
+ * window happened to hear about last.
  */
 function sendTo(sessionId, event) {
   if (!sessionId) return null;
@@ -2614,8 +2581,10 @@ function openReader(payload) {
   if (win.webContents.isLoading()) win.webContents.once('did-finish-load', send);
   else send();
   // The review moves into this window. Its mini card remains alive underneath
-  // so minimizing or closing without a decision can restore it unchanged.
-  if (payload.review) buddyOf(readerSessionId)?.win.hide();
+  // so minimizing or closing without a decision can restore it unchanged — but
+  // the session may have ended between the click and here, taking its window.
+  const mini = payload.review ? buddyOf(readerSessionId) : null;
+  if (mini && !mini.win.isDestroyed()) mini.win.hide();
   win.show();
   win.focus();
 }
@@ -3417,8 +3386,8 @@ const DIRECT_REPLY_REVIEW_GRACE_MS = 15_000;
 /**
  * A review holds no hook open, so `hideBuddy` cannot see it through the
  * DecisionBroker. Before putting a buddy away after a review, look across the
- * window it belongs to: in one-buddy mode that includes cards from every
- * session wearing the shared window.
+ * window it belongs to, which includes the cards of every session wearing the
+ * shared window.
  */
 function buddyStillHasCards(sessionId) {
   const buddy = buddyOf(sessionId);
@@ -4315,7 +4284,9 @@ app.whenReady().then(async () => {
     });
     readerRequestId = '';
     readerSessionId = '';
-    readerWin.close();
+    // Resolving the review was awaited, and the window can be closed by hand
+    // while that is in flight — by then `readerWin` is already gone.
+    if (readerWin && !readerWin.isDestroyed()) readerWin.close();
   });
 
   // Activity is rendered as a short, ellipsized chip under the buddy. Let a

@@ -10,6 +10,14 @@
  * gives you a control panel that fires the same events main would.
  *
  *   npm run demo:web        # then open http://127.0.0.1:43119
+ *   npm run sandbox         # the same server, opened on /states
+ *
+ * Two pages, both on the real renderer:
+ *
+ *   /         the bench — one buddy, every control, the show run, the fake
+ *             terminal to perch on and the sprite workbench
+ *   /states   the states page — a live tester you click every state into, over
+ *             the lifecycle graph of a prompt
  *
  * The scenarios below are built with the real `describeToolCall` /
  * `activityLabel`, and clicking a card asks the real `toHookResponse` what
@@ -917,6 +925,11 @@ const server = http.createServer(async (req, res) => {
       windowAccess: false, // so the banner is visible while working on it
       appName: 'Electron',
       appPath: '/path/to/clippy/node_modules/electron/dist/Electron.app',
+      soloCharacter: '',
+      soloSize: '',
+      // The one buddy's row, which the settings window always draws above the
+      // sessions — main works its face and name out for real (see settingsState).
+      solo: { character: 'clip', pet: 'Clip', color: '#4fa3d1', size: '', showing: NAME },
       sessions: [
         { sessionId: 'demo-1', name: NAME, color: '#4fa3d1', status: 'working', character: 'clip' },
         // A second agent in the *same* folder as demo-1: the case where picking
@@ -972,8 +985,6 @@ const server = http.createServer(async (req, res) => {
   const rel =
     pathname === '/'
       ? 'index.html'
-      : pathname === '/gallery'
-      ? 'gallery.html'
       : pathname === '/states'
       ? 'states.html'
       : pathname.slice(1);
@@ -983,8 +994,7 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, '127.0.0.1', () => {
   console.log(`📎 Clippy web test bench → http://127.0.0.1:${PORT}`);
-  console.log(`   Sandbox gallery (every state at once) → http://127.0.0.1:${PORT}/gallery`);
-  console.log(`   State atlas (states + triggers) → http://127.0.0.1:${PORT}/states`);
+  console.log(`   States (every state, click one to test it) → http://127.0.0.1:${PORT}/states`);
   console.log('   Serving the real src/renderer with a stubbed clippyAPI.');
   console.log('   (End-to-end still means: npm start + npm run mock-session.)');
   // `npm run sandbox` passes --open <path>: pop the page straight into the

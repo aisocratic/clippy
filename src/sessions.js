@@ -68,6 +68,22 @@ class SessionTracker {
     return s;
   }
 
+  /**
+   * A tool that failed.
+   *
+   * Two hook shapes arrive here — Claude's PostToolUseFailure and a Codex
+   * PostToolUse carrying a non-zero exit — and both end up as the same card,
+   * so the headline, the title and the complete output the reader opens are
+   * decided once. `detail` falls back to the headline when the hook sent
+   * nothing quotable.
+   */
+  _failed(s, tool, detail) {
+    const reaction = this._reaction('failure', 'normal', s, `${tool} failed in “${s.name}”.`);
+    reaction.title = `${tool} failed`;
+    reaction.detail = detail || reaction.message;
+    return reaction;
+  }
+
   _reaction(kind, urgency, s, message) {
     return {
       kind,
@@ -139,18 +155,9 @@ class SessionTracker {
           state: 'done',
           ok,
         };
-        const reaction = this._reaction(
-          ok ? 'activity' : 'failure',
-          ok ? 'low' : 'normal',
-          s,
-          ok ? '' : `${tool} failed in “${s.name}”.`
-        );
-        if (!ok) {
-          const raw = typeof response === 'string' ? response : response ? JSON.stringify(response) : '';
-          reaction.title = `${tool} failed`;
-          reaction.detail = raw || reaction.message;
-        }
-        return reaction;
+        if (ok) return this._reaction('activity', 'low', s, '');
+        const raw = typeof response === 'string' ? response : response ? JSON.stringify(response) : '';
+        return this._failed(s, tool, raw);
       }
 
       case 'PostToolUseFailure': {
@@ -167,17 +174,8 @@ class SessionTracker {
           ok: interrupted,
           error: interrupted ? '' : firstLine(payload.error),
         };
-        const reaction = this._reaction(
-          interrupted ? 'activity' : 'failure',
-          'low',
-          s,
-          interrupted ? '' : `${tool} failed in “${s.name}”.`
-        );
-        if (!interrupted) {
-          reaction.title = `${tool} failed`;
-          reaction.detail = String(payload.error || '').slice(0, 4000) || reaction.message;
-        }
-        return reaction;
+        if (interrupted) return this._reaction('activity', 'low', s, '');
+        return this._failed(s, tool, String(payload.error || '').slice(0, 4000));
       }
 
       case 'PermissionRequest':

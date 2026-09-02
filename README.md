@@ -544,20 +544,17 @@ time; nothing under Docs changes anything.
   own follows the default under **Buddies**.
 - **Sounds** — the only noise Clippy makes: a short cue when a hidden buddy
   appears, off until you pick one. Nothing plays for a buddy already on screen.
-- **Buddies** — **On screen**: *one each*, a buddy per session side by side, or
-  *one for all*, a single buddy that stands in for every agent — for when three
-  agents means three paperclips and you'd rather it didn't. The one buddy keeps
-  **the face you pick** whoever it is speaking for, so there is one look to
-  learn; the name under its feet and the card say which agent it is talking
-  about. Its 💬 chat then has a row of everyone running: talk to the buddy, or
-  pick an agent and type straight into its session. Then every
-  character with all nine of its animations playing side by side (the same
-  layout as the test bench's workbench), and the default size picker
-  (per-project sizes live beside each session above).
-  **Every live session gets its own available buddy**, chosen from the cast by
-  session id, so parallel agents in the same repo do not match. Nothing to
-  configure — click a character here to make it the first choice for projects
-  currently on screen, or set that preference per project under **Sessions**.
+- **Buddies** — **one buddy stands in for every agent**, so three agents running
+  is still one paperclip on your desk rather than three. It keeps **the face you
+  pick** whoever it is speaking for, so there is one look to learn; the name
+  under its feet and the card say which agent it is talking about. Its 💬 chat
+  has a row of everyone running: talk to the buddy, or pick an agent and type
+  straight into its session. Then every character with all nine of its
+  animations playing side by side (the same layout as the test bench's
+  workbench), and the default size picker (per-project sizes live beside each
+  session above). Click a character here to make it the first choice for
+  projects currently on screen, or set that preference per project under
+  **Sessions**.
   There's a link to [openpets.dev/gallery](https://openpets.dev/gallery) for
   more — paste a pet's page link into the **Add a pet** box right there (or into
   `npm run add-sprite-pack -- <pet url>` in a terminal) and it downloads,
@@ -747,20 +744,23 @@ Electron, so end-to-end still means `npm start` plus a real Claude Code session
 - `demo/stub-api.js` — browser stand-in for `src/preload.js`
 - `demo/index.html`, `demo/demo.js`, `demo/demo.css` — the control panel
 
-### The sandbox — every state on one scrolling page
+### The sandbox — see every state, click any state
 
 ```bash
-npm run sandbox         # opens http://127.0.0.1:43119/gallery — no Electron, no app
+npm run sandbox         # opens http://127.0.0.1:43119/states — no Electron, no app
 ```
 
-The fastest design loop: a web page with **every state side by side**, each in
-its own iframe of the **real renderer** — scroll, compare, edit
-`src/renderer/`, reload. No Electron running, no Claude Code attached, nothing
-to click through one state at a time. Held cards are stamped with an hour so
-nothing expires mid-look, each cell sizes itself the way main sizes the real
-window, and the buttons in a cell work (their decisions land nowhere, exactly
-like the bench). States whose whole point is the window physically moving
-(perching, walking to the prompt) are labelled instead of faked.
+The fastest design loop: one page with a **live tester** on top — a big buddy
+in an iframe of the **real renderer**, a character and size picker, and every
+state as a button — over the **lifecycle graph** of a prompt (resting →
+running → each flow's response and outcome), where every node is its own live
+buddy and clicking one plays that state in the tester. Edit `src/renderer/`,
+reload, click. No Electron running, no Claude Code attached. Held cards are
+stamped with an hour so nothing expires mid-look, the frame sizes itself the
+way main sizes the real window, and the buttons in a card work (their decisions
+land nowhere, exactly like the bench). States whose whole point is the window
+physically moving (perching, walking to the prompt) are labelled instead of
+faked.
 
 ### The app sandbox (Electron)
 
@@ -774,7 +774,7 @@ One pinned buddy with no Claude Code behind it, and a small window listing
 every state; clicking one sends the same `clippy-event` payloads the real hook
 handlers send, through the real preload bridge, with real placement and
 sizing. **▦ Show all at once** tiles one buddy per state across your desktop
-(drag them to rearrange); **✕ Clear** puts the gallery away. The token panel
+(drag them to rearrange); **✕ Clear** puts them away. The token panel
 runs on canned numbers, card decisions carry made-up request ids the broker
 declines, and the hook server still runs, so a real session can report in
 alongside.
@@ -785,7 +785,8 @@ perching, tray), `npm start` + `npm run mock-session` for end-to-end.
 
 - `src/sandbox-scenarios.js` — the states, as pure data (with a test that
   keeps every one of them firing something)
-- `demo/gallery.html`, `gallery.js`, `gallery.css` — the scrolling wall
+- `demo/states.html`, `states.js`, `states.css` — the states page: the live
+  tester and the lifecycle graph
 - `src/renderer/sandbox.html`, `sandbox.js`, `sandbox.css` — the app control
   window; `src/preload-sandbox.js` is its bridge: one method,
   `sandboxAPI.fire(id)`
@@ -803,7 +804,7 @@ npm run test:watch  # rerun the focused tests as files change
 npm run check   # syntax-check every JS file, then run the full suite
 npm start       # builds any missing buddies, then launches the app
 npm run dev     # the app under a file watcher — restarts when source changes
-npm run sandbox     # every state on one scrolling web page — no Electron
+npm run sandbox     # every state on one page, click one to test it — no Electron
 npm run sandbox:app  # the app + a sandbox control window, no Claude Code
 npm run demo:web    # the single-state bench in a browser, with the show run
 npm run mock-session  # drive a running app through a realistic session
@@ -829,17 +830,17 @@ Two things worth knowing before changing the UI:
   rendering (`describeToolCall`) and the terse `activityLabel`
 - `src/sessions.js` — session state machine + live `activity`; turns hook
   events into reactions
-- `src/main.js` — Electron main: one window per session, tray, notifications,
-  settings, and the hook handlers (approvals, plans, reviews, questions,
-  activity)
+- `src/main.js` — Electron main: the one buddy window every session shares,
+  tray, notifications, settings, and the hook handlers (approvals, plans,
+  reviews, questions, activity)
 - `src/identity.js` — per-session name and colour, hashed from the project name
 - `src/characters.js` — the cast, the four buddy sizes, and which way each is
   drawn; shared by the main process, the renderer's menu and the web test bench
 - `src/actions.js` — what Clippy does with a session, as data, with the real
   hook JSON for every button; the settings window is rendered from it
-- `src/sandbox-scenarios.js` — the sandbox's states, as data, in the event
-  shapes the real handlers send; the gallery page and `npm run sandbox:app`
-  both play them
+- `src/sandbox-scenarios.js` — the app sandbox's states, as data, in the event
+  shapes the real handlers send; `npm run sandbox:app` plays them (the web
+  states page has a list of its own, in `scripts/demo-web.js`)
 - `src/visibility.js` — when a buddy is allowed on screen (done/asking) and
   when it hides again
 - `src/terminal.js` — finds a session's terminal window (hook-reported tty for

@@ -49,13 +49,8 @@ const payloads = {
 };
 
 window.readerAPI = {
-  onText: (fn) =>
-    setTimeout(
-      () => fn(payloads[readerFlow] || payloads.complete),
-      0
-    ),
+  onText: (fn) => setTimeout(() => fn(payloads[readerFlow] || payloads.complete), 0),
   openSource: () => {},
   minimize: () => {},
   decide: () => {},
-  ready: () => {},
 };

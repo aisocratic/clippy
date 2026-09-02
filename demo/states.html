@@ -3,37 +3,46 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Fox response graph</title>
+  <title>Clippy states — see one, test one</title>
   <link rel="stylesheet" href="/states.css" />
 </head>
 <body>
   <header id="page-head">
     <h1>Fox transitions</h1>
     <nav aria-label="Other workbenches">
-      <a href="/">Single state</a>
-      <a href="/gallery">All states</a>
+      <a href="/">Single state ↗</a>
+      <a href="/settings/">Settings ↗</a>
     </nav>
   </header>
 
   <main>
-    <section class="flow-summary">
-      <div class="view-picker" role="group" aria-label="On Screen buddy mode">
-        <button class="view-option selected" data-view="each" type="button" aria-pressed="true">One each</button>
-        <button class="view-option" data-view="all" type="button" aria-pressed="false">One for all</button>
+    <section class="tester" aria-labelledby="tester-title">
+      <header class="tester-head">
+        <div class="tester-title">
+          <span class="label">Live tester</span>
+          <strong id="tester-title">Click any state — it plays here, in the real renderer</strong>
+        </div>
+        <div class="tester-controls">
+          <label>buddy <select id="pick-character"></select></label>
+          <label>size <select id="pick-size"></select></label>
+          <button id="reset-frame" type="button">↺ Reset buddy</button>
+        </div>
+      </header>
+      <div class="tester-body">
+        <div class="tester-stage">
+          <iframe id="live-frame" title="Live renderer"></iframe>
+          <p id="now-playing" aria-live="polite">Nothing playing yet — pick a state.</p>
+        </div>
+        <div id="scenario-list" class="scenario-list" aria-label="Every sandbox state"></div>
       </div>
-      <p id="mode-note">A buddy per session, side by side — every agent has its own face, colour and spot on screen.</p>
+    </section>
+
+    <section class="flow-summary">
+      <p id="graph-note">The whole lifecycle of a prompt — click a node to play that state above.</p>
       <div class="global-actions">
         <button id="play-all" type="button">▶ Play all</button>
         <button id="reset-all" type="button">↺ Reset animations</button>
       </div>
-    </section>
-
-    <section class="screen-preview" aria-labelledby="screen-title">
-      <header>
-        <span class="label">On Screen</span>
-        <strong id="screen-title">One each</strong>
-      </header>
-      <div id="screen-buddies" aria-live="polite"></div>
     </section>
 
     <section id="flows" aria-label="Fox response graph"></section>

@@ -10,5 +10,4 @@ contextBridge.exposeInMainWorld('readerAPI', {
   openSource: () => ipcRenderer.send('clippy-reader-open-source'),
   minimize: () => ipcRenderer.send('clippy-reader-minimize'),
   decide: (action, message = '') => ipcRenderer.send('clippy-reader-decide', { action, message }),
-  ready: () => ipcRenderer.send('clippy-reader-ready'),
 });

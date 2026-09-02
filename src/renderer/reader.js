@@ -120,5 +120,3 @@ document.addEventListener('keydown', (e) => {
   if (interactive) window.readerAPI.minimize();
   else window.close();
 });
-
-window.readerAPI.ready();

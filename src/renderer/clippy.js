@@ -125,7 +125,8 @@ const btnQgoto = document.getElementById('btn-qgoto');
 
 // sessionId -> { message, urgency, name, lastNudge, snoozedUntil, acknowledged }
 const pending = new Map();
-// requestId -> { id, type: 'approval'|'review', name, title, detail, expiresAt, holdMs }
+// requestId -> { id, type: 'approval'|'review'|'answer'|'failure', name, title,
+// detail, expiresAt, holdMs }
 const requests = new Map();
 let activeRequestId = null;
 let myStatus = 'idle';
@@ -822,8 +823,8 @@ function applyPassLabel(req, { move = false } = {}) {
  * "billing-api · Claude · Ghostty" — who is asking, and from where.
  *
  * Built from the card's own source rather than the window's: one buddy answers
- * for every agent in 'one' mode, so the window's idea of "where" belongs to
- * whichever session spoke last, not to the card being read.
+ * for every agent, so the window's idea of "where" belongs to whichever session
+ * spoke last, not to the card being read.
  */
 function paintWhere(req) {
   const line = [req?.name, req?.agentName, req?.source?.name].filter(Boolean).join(' · ');
@@ -1472,17 +1473,13 @@ function showChatTarget(agent) {
 
 function renderPetTargets(roster) {
   petTo.replaceChildren();
-  const all = (roster && roster.agents) || [];
-  petRoster = all;
-  // With a buddy each, this window speaks for exactly one session, so the row
-  // is a choice between two things rather than a roster: the buddy, or the
-  // agent it is sitting on. It used to be hidden entirely here, because the
-  // status panel carried a box that talked to that agent — and that box is
-  // gone, so this is now the only way to reach it.
-  const agents =
-    settings.buddyMode === 'one'
-      ? all
-      : all.filter((a) => a.sessionId === (roster && roster.showing));
+  // One buddy answers for every agent, so the row is the whole roster: the
+  // buddy, or any session running right now. It used to be hidden when the
+  // window spoke for a single session, because the status panel carried a box
+  // that talked to that agent — and that box is gone, so this is now the only
+  // way to reach it.
+  const agents = (roster && roster.agents) || [];
+  petRoster = agents;
   if (!agents.length) {
     petTo.classList.add('hidden');
     petTarget = '';
@@ -2449,8 +2446,8 @@ function handleEvent(evt) {
         variant: evt.variant || 'tool',
         noPass: !!evt.noPass,
         name: evt.name,
-        // Kept per card, not per window: in one-for-all mode the next card up
-        // may well be a different agent in a different app.
+        // Kept per card, not per window: one buddy answers for every agent, so
+        // the next card up may well be a different one in a different app.
         sessionId: evt.sessionId || '',
         agentName: evt.agentName || '',
         source: evt.source || null,

@@ -187,40 +187,6 @@ function renderSizes() {
   }
 }
 
-// What each choice actually does, said in the panel rather than guessed at.
-const BUDDY_MODES = [
-  {
-    id: 'each',
-    label: 'One each',
-    note:
-      'A buddy per session, side by side — every agent has its own face, colour and ' +
-      'spot on screen. Best when you want to see at a glance how many are running.',
-  },
-  {
-    id: 'one',
-    label: 'One for all',
-    note:
-      'A single buddy that speaks for whichever agent needs you, wearing that ' +
-      "agent's name, colour and face while it does. Best when several agents are " +
-      'running and you would rather not have a desk full of paperclips.',
-  },
-];
-
-function renderBuddyMode() {
-  const host = document.getElementById('buddy-mode');
-  const note = document.getElementById('buddy-mode-note');
-  const current = state.buddyMode === 'one' ? 'one' : 'each';
-  host.replaceChildren();
-  for (const mode of BUDDY_MODES) {
-    const btn = document.createElement('button');
-    btn.className = mode.id === current ? 'on' : '';
-    btn.textContent = mode.label;
-    btn.addEventListener('click', () => set('buddyMode', mode.id));
-    host.appendChild(btn);
-  }
-  note.textContent = BUDDY_MODES.find((mode) => mode.id === current).note;
-}
-
 /**
  * The row for the buddy that stands in for every agent.
  *
@@ -444,15 +410,13 @@ function renderSessions() {
 
   // One buddy for all of them: it goes at the top, because it is the one that
   // answers for every row under it.
-  if (state.buddyMode === 'one') host.appendChild(soloRow());
+  host.appendChild(soloRow());
 
   if (!state.sessions.length) {
     const empty = document.createElement('div');
     empty.className = 'empty-note';
     empty.textContent =
-      state.buddyMode === 'one'
-        ? 'No sessions yet. Start Claude Code or Codex and the buddy above speaks for it.'
-        : 'No sessions yet. Start Claude Code or Codex in a project and its buddy appears here.';
+      'No sessions yet. Start Claude Code or Codex and the buddy above speaks for it.';
     host.appendChild(empty);
     return;
   }
@@ -551,7 +515,6 @@ function set(key, value) {
 function render() {
   renderAccess();
   renderSound();
-  renderBuddyMode();
   renderSizes();
   renderCast();
   renderActions();

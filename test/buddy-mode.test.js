@@ -2,28 +2,12 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert');
-const {
-  SOLO_KEY,
-  normalize,
-  sharesWindow,
-  windowKeyFor,
-  successorFor,
-} = require('../src/buddy-mode');
+const { SOLO_KEY, sharesWindow, windowKeyFor, successorFor } = require('../src/buddy-mode');
 
-test('a buddy each is what happens unless someone asked otherwise', () => {
-  // Every unknown value has to land on today's behaviour: a settings file from
-  // an older build, or a hand-edited one, must not collapse anyone's desk.
-  for (const mode of ['each', undefined, null, '', 'ONE', 'both', 0, {}]) {
-    assert.equal(normalize(mode), 'each', String(mode));
-    assert.equal(sharesWindow(mode, 'abc-123'), false, String(mode));
-    assert.equal(windowKeyFor(mode, 'abc-123'), 'abc-123', String(mode));
-  }
-});
-
-test('one mode puts every session in the same window, without losing whose it is', () => {
-  assert.equal(normalize('one'), 'one');
-  assert.equal(windowKeyFor('one', 'abc-123'), SOLO_KEY);
-  assert.equal(windowKeyFor('one', 'def-456'), SOLO_KEY);
+test('every session lands in the same window, without losing whose it is', () => {
+  assert.equal(sharesWindow('abc-123'), true);
+  assert.equal(windowKeyFor('abc-123'), SOLO_KEY);
+  assert.equal(windowKeyFor('def-456'), SOLO_KEY);
   // The key still says which session an event is *about*; only the window it
   // arrives in changed.
   assert.notEqual(SOLO_KEY, 'abc-123');
@@ -31,20 +15,21 @@ test('one mode puts every session in the same window, without losing whose it is
 
 test('a session Clippy started shares the window like any other', () => {
   for (const key of ['tmux:clippy-app-1', 'drive', 'abc-123']) {
-    assert.equal(windowKeyFor('one', key), SOLO_KEY, key);
+    assert.equal(windowKeyFor(key), SOLO_KEY, key);
   }
 });
 
 test('the sandbox never collapses, because comparing buddies is what it is for', () => {
-  assert.equal(sharesWindow('one', 'sandbox:idle'), false);
-  assert.equal(windowKeyFor('one', 'sandbox:idle'), 'sandbox:idle');
-  assert.equal(windowKeyFor('one', 'sandbox:approval-bash'), 'sandbox:approval-bash');
+  assert.equal(sharesWindow('sandbox:idle'), false);
+  assert.equal(windowKeyFor('sandbox:idle'), 'sandbox:idle');
+  assert.equal(windowKeyFor('sandbox:approval-bash'), 'sandbox:approval-bash');
 });
 
-test('an empty key is nobody, in either mode', () => {
-  assert.equal(sharesWindow('one', ''), false);
-  assert.equal(sharesWindow('one', null), false);
-  assert.equal(windowKeyFor('one', ''), '');
+test('an empty key is nobody', () => {
+  assert.equal(sharesWindow(''), false);
+  assert.equal(sharesWindow(null), false);
+  assert.equal(sharesWindow(undefined), false);
+  assert.equal(windowKeyFor(''), '');
 });
 
 const session = (sessionId, status = 'idle') => ({ sessionId, status, name: sessionId });

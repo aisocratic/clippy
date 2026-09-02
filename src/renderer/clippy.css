@@ -645,22 +645,6 @@ body.flipped #buddy-vector {
   position: static;
 }
 
-#card.failure #card-summary-row {
-  display: flex;
-  align-items: stretch;
-  gap: 7px;
-  margin-top: 7px;
-}
-
-#card.failure #card-preview {
-  flex: 1;
-  min-width: 0;
-  padding: 8px 9px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-s);
-  background: var(--surface-2);
-}
-
 #card.failure #card-detail {
   margin: 0;
   max-height: 58px;
@@ -821,23 +805,29 @@ body.flipped #buddy-vector {
   min-width: 0;
 }
 
-/* A finished response is a scan line, not a second document inside the card.
-   The reader button sits at its right and opens the complete response. */
-#card.review #card-summary-row {
+/* A finished response is a scan line, not a second document inside the card,
+   and a failure preview is the same shape. The reader button sits at the right
+   of the boxed preview and opens the whole thing. */
+#card.review #card-summary-row,
+#card.failure #card-summary-row {
   display: flex;
   align-items: stretch;
   gap: 7px;
   margin-top: 7px;
 }
 
-#card.review #card-preview {
+#card.review #card-preview,
+#card.failure #card-preview {
   flex: 1;
   min-width: 0;
-  padding: 5px 9px;
   border: 1px solid var(--line);
   border-radius: var(--radius-s);
   background: var(--surface-2);
 }
+
+/* A review's rows carry their own padding; a failure is one block of output. */
+#card.review #card-preview { padding: 5px 9px; }
+#card.failure #card-preview { padding: 8px 9px; }
 
 #card.review .review-preview-line {
   min-width: 0;
