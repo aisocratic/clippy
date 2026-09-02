@@ -118,7 +118,7 @@
       };
     },
     moveBy: (dx, dy) => post('move-by', { dx, dy }),
-    hide: () => post('hide'),
+    hide: (opts) => post('hide', opts && opts.lookedAway ? { lookedAway: true } : null),
     quit: () => post('quit'),
   };
 

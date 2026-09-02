@@ -133,6 +133,9 @@ const pending = new Map();
 // detail, expiresAt, holdMs }
 const requests = new Map();
 let activeRequestId = null;
+// Has the user clicked Clippy since it last appeared? Until they have, a click
+// somewhere else on the screen is them doing something else, not a dismissal.
+let engaged = false;
 let myStatus = 'idle';
 let sleepingUntil = 0;
 
@@ -2422,7 +2425,12 @@ window.clippyAPI.onIdentity((id) => {
   applyIdentity();
 });
 
+const APPEARS_FOR = new Set(['attention', 'approval', 'answer', 'question', 'review', 'failure']);
+
 function handleEvent(evt) {
+  // Something new to look at starts the clock again: the user has to click
+  // Clippy before a click elsewhere can put this one away.
+  if (APPEARS_FOR.has(evt.kind)) engaged = false;
   if (evt.status) myStatus = evt.status;
   if (evt.agent && evt.agent !== me.agent) {
     me.agent = evt.agent;
@@ -3163,7 +3171,34 @@ document.documentElement.addEventListener('mouseleave', () => {
   clearTimeout(parkTimer);
   parkTimer = setTimeout(parkPanels, 250);
 });
-window.addEventListener('blur', parkPanels);
+/* ---------- Looking away: a click elsewhere puts Clippy away, once you have
+   clicked it. Clippy pops up while you are doing something else, and the next
+   click you make — on whatever you were doing — used to be the one that took
+   it off the screen, before you had read it. So a click outside only counts
+   after a click on Clippy. A held approval or question stays regardless: the
+   agent is waiting on it, and the reminder brings it back if it is hidden. */
+const holdingDecision = () => {
+  const req = requests.get(activeRequestId);
+  return Boolean(req) && (req.type === 'approval' || req.type === 'answer');
+};
+
+document.addEventListener(
+  'mousedown',
+  () => {
+    engaged = true;
+  },
+  true
+);
+
+window.addEventListener('blur', () => {
+  parkPanels();
+  if (!engaged || document.hidden || holdingDecision()) return;
+  window.clippyAPI.hide({ lookedAway: true });
+});
+
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) engaged = false; // shown again: back to square one
+});
 
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {

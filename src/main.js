@@ -1091,7 +1091,7 @@ function showBuddy(key, { pin = false, mode = 'full' } = {}) {
 }
 
 /** Slip back out of sight once the moment has passed. */
-function hideBuddy(key, { unpin = false } = {}) {
+function hideBuddy(key, { unpin = false, lookedAway = false } = {}) {
   const buddy = buddyOf(key);
   if (!buddy || buddy.win.isDestroyed()) return;
   // Whatever a perch measurement in flight was going to do, this outranks it.
@@ -1102,8 +1102,11 @@ function hideBuddy(key, { unpin = false } = {}) {
     buddy.win.hide();
     return;
   }
-  // Something is still waiting on an answer from this card — don't yank it away.
-  if (broker.hasPending(key)) return;
+  // Something on this window is still waiting on the user — a held card, a
+  // review, a nudge — and every session shares the window, so it may be
+  // another agent's. Ambient chatter from one agent must not put away what
+  // another is asking; the user looking away after dealing with it may.
+  if (!lookedAway && windowHasBusiness(key)) return;
   if (buddy.dock && !buddy.dock.auto) {
     placeBuddy(buddy, 'compact'); // asked-for perch: stays, just gets smaller
     return;
@@ -3405,6 +3408,21 @@ function buddyStillHasCards(sessionId) {
   return broker.list().some((entry) => buddyOf(entry.meta.sessionId) === buddy);
 }
 
+/**
+ * Is anything on this window still waiting for the user? Cards, and nudges
+ * that were actually shown here (one handed to the terminal is the terminal's
+ * business now). Asked before an ambient event is allowed to hide the window.
+ */
+function windowHasBusiness(sessionId) {
+  if (buddyStillHasCards(sessionId)) return true;
+  const buddy = buddyOf(sessionId);
+  if (!buddy) return false;
+  for (const item of attentionInbox.values()) {
+    if (item.state === 'clippy' && buddyOf(item.sessionId) === buddy) return true;
+  }
+  return false;
+}
+
 async function handleStop(payload) {
   const reaction = tracker.handle('Stop', null, payload);
   const agentName = reaction.agentName;
@@ -4589,11 +4607,17 @@ app.whenReady().then(async () => {
     // Carried across the middle of the screen: where he'll settle has changed.
     sendSide(buddy);
   });
-  ipcMain.on('clippy-hide', (e) => {
-    // Hiding by hand also drops the pin, so ambient rules take over again.
+  ipcMain.on('clippy-hide', (e, opts) => {
     const buddy = buddyForSender(e.sender);
-    if (buddy) hideBuddy(buddy.sessionId, { unpin: true });
-    else BrowserWindow.fromWebContents(e.sender)?.hide();
+    if (!buddy) {
+      BrowserWindow.fromWebContents(e.sender)?.hide();
+      return;
+    }
+    // Clicking elsewhere after dealing with Clippy puts it away but keeps a
+    // perch or pin you asked for; the Hide button also drops the pin, so the
+    // ambient rules take over again.
+    if (opts && opts.lookedAway === true) hideBuddy(buddy.sessionId, { lookedAway: true });
+    else hideBuddy(buddy.sessionId, { unpin: true });
   });
   ipcMain.on('clippy-quit', () => app.quit());
   ipcMain.on('clippy-counts', updateTray);
