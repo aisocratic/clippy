@@ -139,8 +139,10 @@ function renderCast() {
   // The face Clippy wears: the one picked here, or main's default for it.
   const wearing = state.soloCharacter || (state.solo && state.solo.character) || '';
 
-  document.getElementById('cast-note').textContent =
-    'Click a buddy and Clippy wears it. ▶ plays its next animation.';
+  const wearingLabel = (state.characters.find((c) => c.id === wearing) || {}).label;
+  document.getElementById('cast-note').textContent = wearingLabel
+    ? `Clippy is wearing ${wearingLabel}. Click another buddy to switch; ▶ plays its next animation.`
+    : 'Click a buddy and Clippy wears it. ▶ plays its next animation.';
 
   for (const character of state.characters) {
     const row = document.createElement('div');
@@ -181,6 +183,12 @@ function renderCast() {
     });
 
     row.append(who, next);
+    if (character.id === wearing) {
+      const badge = document.createElement('span');
+      badge.className = 'cast-wearing';
+      badge.textContent = '✓ Clippy wears this';
+      row.appendChild(badge);
+    }
     if (character.removable) {
       const remove = document.createElement('button');
       remove.className = 'remove-buddy';

@@ -420,7 +420,7 @@ select:disabled {
 .cast {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(128px, 1fr));
-  gap: 11px;
+  gap: 20px 11px; /* room under a card for the "wears this" badge */
 }
 
 .cast-row {
@@ -433,9 +433,36 @@ select:disabled {
   box-shadow: 3px 3px 0 var(--ink);
 }
 
+/* The one Clippy wears: the same yellow as Clippy's own row under Sessions,
+   a heavier shadow, and a badge that says so in words — a tinted background
+   alone was too easy to miss in a grid of twenty cards. */
 .cast-row.on {
-  background: var(--surface-2);
-  box-shadow: 3px 3px 0 var(--accent);
+  background: var(--yellow);
+  box-shadow: 5px 5px 0 var(--ink);
+  transform: translate(-1px, -1px);
+}
+
+.cast-row.on .cast-pose-name {
+  color: var(--ink);
+  opacity: 0.6;
+}
+
+.cast-wearing {
+  position: absolute;
+  left: 50%;
+  bottom: -11px;
+  transform: translateX(-50%);
+  padding: 3px 10px;
+  border: 2px solid var(--ink);
+  border-radius: 999px;
+  background: var(--ink);
+  color: var(--yellow);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  pointer-events: none;
 }
 
 .cast-who {
