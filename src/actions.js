@@ -10,6 +10,10 @@ const { toHookResponse } = require('./decisions');
  * it off, the pose the buddy strikes while it's happening, and — for the
  * interactive ones — the exact JSON each button hands back, straight from
  * `toHookResponse`. If a button's meaning changes, this page changes with it.
+ *
+ * Two audiences read it. The settings window shows `summary` and the buttons'
+ * effects, in plain words; the web bench's feature catalog and the tests keep
+ * `when`, `hook` and the JSON, which are what a developer wants.
  */
 
 const json = (event, action, message, toolInput) =>
@@ -24,6 +28,8 @@ const ACTIONS = [
     scenario: 'approval-bash',
     icon: '🛂',
     title: 'Approve or deny a tool call',
+    summary: 'The agent wants to run a command or edit a file and needs your say-so. ' +
+      'See exactly what, then allow it, deny it with a reason, or answer in the terminal.',
     appliesTo: 'Claude + Codex',
     hook: 'PermissionRequest',
     setting: 'approvals',
@@ -50,6 +56,8 @@ const ACTIONS = [
     scenario: 'approval-plan',
     icon: '📋',
     title: 'Approve or revise a plan',
+    summary: 'Claude has finished planning. Read the plan on the card and approve it, or ' +
+      'send it back with a note.',
     appliesTo: 'Claude',
     hook: 'PermissionRequest (ExitPlanMode)',
     setting: 'approvals',
@@ -70,6 +78,8 @@ const ACTIONS = [
     scenario: 'answer-one',
     icon: '❓',
     title: "Answer the agent's question",
+    summary: 'The agent asks a multiple-choice question. Pick your answer on the card, or ' +
+      'move the question to the terminal.',
     appliesTo: 'Claude + Codex',
     hook: 'PreToolUse (AskUserQuestion / request_user_input)',
     setting: 'answerQuestions',
@@ -94,6 +104,8 @@ const ACTIONS = [
     scenario: 'review',
     icon: '✅',
     title: 'Review a finished turn',
+    summary: 'When a turn finishes, a card shows what the agent said and waits for you. ' +
+      'Sign it off, or type feedback that goes in as the next prompt.',
     appliesTo: 'Claude + Codex',
     hook: 'Stop',
     setting: 'reviewOnStop',
@@ -116,6 +128,8 @@ const ACTIONS = [
     scenario: 'activity-failed',
     icon: '😰',
     title: 'Show when things are going wrong',
+    summary: 'A failed tool, or a context window more than 30% full, makes the buddy sweat ' +
+      'and turns the activity line red.',
     appliesTo: 'Claude + Codex',
     hook: 'PostToolUseFailure',
     when: 'A tool fails, or this session has used more than 30% of its context window.',
@@ -128,6 +142,8 @@ const ACTIONS = [
     scenario: 'activity-stream',
     icon: '⚙',
     title: 'Show what the agent is doing',
+    summary: 'A one-line note under the buddy says what the agent is up to right now: ' +
+      '“Running: npm test”, “✓ done”, “⚠ Bash failed”.',
     appliesTo: 'Claude + Codex',
     hook: 'PreToolUse / PostToolUse',
     when: 'Any meaningful tool runs — Bash, Edit, Write, WebFetch, Task, MCP tools. ' +
@@ -141,6 +157,8 @@ const ACTIONS = [
     scenario: 'attention-urgent',
     icon: '🔴',
     title: "Nudge when a session needs you",
+    summary: 'When a session is waiting on you, the buddy bounces and shows a bubble, and ' +
+      'reminds you every 90 seconds until you answer or snooze it.',
     appliesTo: 'Claude notifications · both agents for held cards',
     hook: 'Notification',
     when: 'A prompt is waiting in the terminal, or Claude has been waiting on your reply.',
@@ -154,6 +172,8 @@ const ACTIONS = [
     scenario: 'story',
     icon: '👇',
     title: 'Walk to the prompt and point at it',
+    summary: 'When something goes back to the terminal, the buddy walks down to the prompt ' +
+      'and points at where to type.',
     setting: 'autoPerch',
     when: 'Something goes back to the terminal — you sent it there, or a card timed out — ' +
       'while Clippy is perched on that window.',
@@ -166,6 +186,8 @@ const ACTIONS = [
     scenario: 'story',
     icon: '📌',
     title: "Sit on the session's own window",
+    summary: "The buddy sits on the top-right corner of the session's own window and " +
+      'follows it around, instead of waiting in a corner of the screen.',
     setting: 'autoPerch',
     when: 'A buddy has something to say and we can find the window its session runs in.',
     shows: "He appears on that terminal's top-right corner and follows it around, " +
@@ -178,6 +200,8 @@ const ACTIONS = [
     scenario: 'story',
     icon: '📊',
     title: 'Report context and spend',
+    summary: "Click the buddy for how much context is left, what this session has spent, " +
+      "and today's and this week's totals, read from the agent's own transcripts.",
     appliesTo: 'Claude + Codex',
     when: "You ask for it — click the buddy, then Stats & token usage.",
     shows: 'How much context is left, what this session has spent, and the totals for ' +
@@ -190,6 +214,8 @@ const ACTIONS = [
     scenario: 'drive',
     icon: '🕹',
     title: 'Run a session of its own',
+    summary: 'Start a Clippy-driven Claude session from the menu bar and type into its ' +
+      'transcript panel. Needs the Agent SDK.',
     appliesTo: 'Claude',
     when: 'You start a Clippy-driven session from the menu bar (needs the Agent SDK).',
     shows: 'A transcript panel you can type into — Clippy answers its permission ' +
@@ -202,6 +228,8 @@ const ACTIONS = [
     scenario: 'story',
     icon: '🚀',
     title: 'Start an agent itself',
+    summary: 'Pick New agent in the menu bar to start Claude or Codex in a folder, or over ' +
+      'SSH. It runs in its own tmux session and keeps going if you quit Clippy.',
     appliesTo: 'Claude + Codex',
     when: 'You pick New agent in the menu bar and choose a folder — or an SSH host.',
     shows: 'A buddy for a session Clippy started, in a tmux session it owns. Typing at ' +
@@ -216,6 +244,8 @@ const ACTIONS = [
     scenario: 'story',
     icon: '📜',
     title: 'Read what a session it started is saying',
+    summary: "For sessions Clippy started, even over SSH, the buddy reads the agent's own " +
+      'transcript and shows the latest message in its bubble.',
     appliesTo: 'Claude + Codex',
     when: 'Continuously, for sessions Clippy started — including over SSH, where hooks ' +
       'report to the other machine and never reach here.',
@@ -230,6 +260,8 @@ const ACTIONS = [
     scenario: 'story',
     icon: '💬',
     title: 'Talk to the buddy, and through it to your agents',
+    summary: 'Press 💬 to chat with the buddy itself, or pick one of your running agents ' +
+      'and type straight into its session.',
     appliesTo: 'Clippy itself',
     when: 'You press 💬 under the buddy.',
     shows: 'A word with the pet itself — its own small model, no tools, and nothing ' +
@@ -247,6 +279,8 @@ const ACTIONS = [
     scenario: 'story',
     icon: '🤫',
     title: 'Stay out of the way when you are already there',
+    summary: "If the session's window is already in front of you, Clippy stays quiet and " +
+      "lets the agent's own prompt appear where you are typing. The tray still counts it.",
     appliesTo: 'Claude + Codex',
     setting: 'quietWhenFocused',
     when: 'A session wants you and the window it runs in is the one you are ' +
@@ -265,6 +299,8 @@ const ACTIONS = [
     scenario: 'story',
     icon: '💬',
     title: 'Tell us how it is going',
+    summary: 'A thumb and a box under Feedback. It goes privately to the people who make ' +
+      'Clippy and carries only your words and the build number.',
     appliesTo: 'Clippy itself',
     when: 'You open Settings → Feedback, pick a thumb, and press send. Never on its own.',
     shows: 'A thumb and a box. It goes privately to the people who make Clippy — not ' +

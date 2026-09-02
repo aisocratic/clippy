@@ -729,38 +729,25 @@ select:disabled {
   color: var(--ink);
 }
 
-.action dl {
-  display: grid;
-  grid-template-columns: 66px 1fr;
-  gap: 4px 12px;
-  font-size: 11.5px;
-  margin-bottom: 10px;
-}
-
-.action dt {
-  color: var(--faint);
-  text-transform: uppercase;
-  font-size: 9.5px;
-  letter-spacing: 0.06em;
-  padding-top: 2px;
-}
-
-.action dd {
+.action-summary {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
   color: var(--muted);
 }
 
 .choices {
   display: flex;
-  flex-direction: column;
+  flex-wrap: wrap;
   gap: 6px;
+  margin-top: 10px;
 }
 
 .choice {
-  display: flex;
+  display: inline-flex;
   align-items: baseline;
-  gap: 10px;
-  flex-wrap: wrap;
-  padding: 8px 10px;
+  gap: 6px;
+  padding: 5px 10px;
   background: var(--surface-2);
   border: 1px solid var(--line-soft);
   border-radius: 9px;
@@ -774,23 +761,8 @@ select:disabled {
 }
 
 .choice-effect {
-  flex: 1;
-  min-width: 140px;
-  font-size: 11.5px;
+  font-size: 11px;
   color: var(--muted);
-}
-
-.choice-json {
-  width: 100%;
-  overflow-x: auto;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 10.5px;
-  color: #2f6b47;
-  white-space: pre;
-}
-
-.choice-json.empty {
-  color: var(--faint);
 }
 
 /* ---------- Window access ---------- */

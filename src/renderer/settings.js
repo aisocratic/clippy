@@ -299,13 +299,9 @@ function renderActions() {
     title.textContent = action.title;
     head.append(icon, title);
 
-    if (action.hook) {
-      const tag = document.createElement('span');
-      tag.className = 'tag';
-      tag.textContent = action.hook;
-      tag.title = 'the lifecycle hook that triggers this';
-      head.appendChild(tag);
-    }
+    // The hook name and the JSON each button answers with are for developers;
+    // they live on the web bench's feature catalog. Here: who it applies to,
+    // whether it is switched on, and what it does in plain words.
     if (action.appliesTo) {
       const tag = document.createElement('span');
       tag.className = 'tag';
@@ -323,17 +319,11 @@ function renderActions() {
       head.appendChild(off);
     }
 
-    const dl = document.createElement('dl');
-    for (const [term, value] of [['When', action.when], ['You see', action.shows]]) {
-      if (!value) continue;
-      const dt = document.createElement('dt');
-      dt.textContent = term;
-      const dd = document.createElement('dd');
-      dd.textContent = value;
-      dl.append(dt, dd);
-    }
+    const summary = document.createElement('p');
+    summary.className = 'action-summary';
+    summary.textContent = action.summary || action.when;
 
-    card.append(head, dl);
+    card.append(head, summary);
 
     if (action.choices) {
       const choices = document.createElement('div');
@@ -346,17 +336,8 @@ function renderActions() {
         label.textContent = choice.label;
         const effect = document.createElement('span');
         effect.className = 'choice-effect';
-        effect.textContent = `— ${choice.effect}`;
+        effect.textContent = choice.effect;
         row.append(label, effect);
-        // A choice with no json answers no hook (the review card's buttons) —
-        // showing "{}" there would claim a response that never happens.
-        if (choice.json) {
-          const json = document.createElement('code');
-          json.className = `choice-json${choice.json === '{}' ? ' empty' : ''}`;
-          json.textContent =
-            choice.json === '{}' ? '{}  · no opinion, the agent carries on as normal' : choice.json;
-          row.append(json);
-        }
         choices.appendChild(row);
       }
       card.appendChild(choices);
