@@ -118,8 +118,7 @@ function createHookServer({ onEvent, getStatus, onStatusline, onFocus, port = 43
       received += chunk.length;
       if (tooBig) {
         // Already refused. What is still arriving is dropped on the floor
-        // rather than hung up on mid-upload, so the sender gets to read the
-        // answer instead of a connection reset — and one that will not stop
+        // rather than hung up on mid-upload — and a sender that will not stop
         // talking is cut off anyway.
         if (received > MAX_BODY * 8) req.destroy();
         return;
@@ -127,15 +126,20 @@ function createHookServer({ onEvent, getStatus, onStatusline, onFocus, port = 43
       if (received > MAX_BODY) {
         tooBig = true;
         chunks.length = 0; // nothing over the limit is ever kept
+      } else {
+        chunks.push(chunk);
+      }
+    });
+
+    req.on('end', () => {
+      if (tooBig) {
+        // Answered only now, once the sender has finished: ending the response
+        // mid-upload makes Node 18 and 20 close the socket under it, and the
+        // sender sees a connection reset instead of the 413 it was owed.
         res.writeHead(413, { 'Content-Type': 'application/json' });
         res.end('{"error":"body too large"}');
         return;
       }
-      chunks.push(chunk);
-    });
-
-    req.on('end', () => {
-      if (tooBig) return;
       let payload = {};
       try {
         const body = chunks.length ? Buffer.concat(chunks, received).toString('utf8') : '';
