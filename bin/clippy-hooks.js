@@ -68,6 +68,11 @@ const SPECS = [
   { event: 'PostToolUseFailure', matcher: MEANINGFUL_TOOLS },
   { event: 'UserPromptSubmit' },
   { event: 'SessionEnd' },
+  // Subagents report on the parent's session id; these two are how the app
+  // knows one started and stopped, so it can list it under the session and
+  // say "Delegating to Explore" instead of going quiet.
+  { event: 'SubagentStart' },
+  { event: 'SubagentStop' },
 ];
 
 // Codex implements the same core lifecycle hook protocol, but currently has

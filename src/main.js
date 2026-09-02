@@ -31,7 +31,6 @@ const { PetChat } = require('./pet-chat');
 const { checkDrift, checkCodexDrift, checkOpenclawDrift, installToFiles } = require('../bin/clippy-hooks');
 const { identityFor, petNameFor } = require('./identity');
 const { SIZES, sizeList, allCharacters, characterFor, sizeFor } = require('./characters');
-const { ACTIONS } = require('./actions');
 const { windowActionFor } = require('./visibility');
 const { SOLO_KEY, sharesWindow, windowKeyFor, successorFor } = require('./buddy-mode');
 const { EDGE_OPTIONS, EDGE_IDS, edgeLineup, edgeHome } = require('./arrange');
@@ -144,10 +143,7 @@ const settings = {
   // The face the one buddy always wears. '' means "let Clippy pick" — the same
   // casting a session would have got.
   soloCharacter: '',
-  // The one buddy can be drawn at a size of its own. '' keeps it on the global
-  // default, which is also how existing settings files behave.
-  soloSize: '',
-  size: 'medium', // the size a project gets when it hasn't picked one
+  size: 'medium', // how big Clippy is drawn
   arrangeEdge: '', // screen edge new buddies line up on; '' = the classic corner
   // …and the sessions Clippy starts itself (see spawnAgent).
   defaultAgent: 'claude', // which agent a recent project re-opens with
@@ -162,7 +158,6 @@ const CHOICES = {
   arrangeEdge: () => EDGE_IDS,
   appearanceSound: () => ['', 'pop', 'chime', 'chirp'],
   soloCharacter: () => ['', ...characterIds()],
-  soloSize: () => ['', ...Object.keys(SIZES)],
   defaultAgent: () => Object.keys(tmux.SPAWNABLE),
   attachTerminal: () => Object.keys(ATTACH_APPS),
 };
@@ -273,12 +268,6 @@ function setSetting(key, value) {
   // for a new height once it has re-measured, but this keeps the bare buddy
   // from sitting in the wrong box in the meantime.
   if (key === 'size') replaceAll();
-  // The shared buddy has its own optional size. Re-lay only that window so
-  // changing it never makes a desk full of session buddies jump around.
-  if (key === 'soloSize') {
-    const solo = buddies.get(SOLO_KEY);
-    if (solo && !solo.win.isDestroyed()) placeBuddy(solo, solo.mode || 'compact');
-  }
   // A different face for the shared buddy is a look, not a rebuild — but the
   // window is holding the old one until it is told.
   if (key === 'soloCharacter') {
@@ -347,9 +336,6 @@ function compactSize(buddy) {
 
 /** The shared buddy has its own optional size; a sandbox buddy is per-session. */
 function sizeForBuddy(buddy) {
-  if (buddy && buddies.get(SOLO_KEY) === buddy && SIZES[settings.soloSize]) {
-    return settings.soloSize;
-  }
   return sizeFor(settings, buddy?.name || '', buddy?.sessionId || '');
 }
 
@@ -486,7 +472,6 @@ async function checkForAutomaticUpdate() {
 function settingsState() {
   return {
     ...settingsPayload(),
-    actions: ACTIONS,
     port: PORT,
     // Which copy of Clippy this is — the Updates section's offline half.
     build: localBuild(path.join(__dirname, '..')),
@@ -501,7 +486,6 @@ function settingsState() {
       character: soloCharacter(),
       pet: petNameFor(SOLO_KEY),
       color: identityFor(SOLO_KEY, 'clippy').color,
-      size: settings.soloSize || '',
       // Who it is speaking for at the moment, if anyone.
       showing: buddies.get(SOLO_KEY)?.name || '',
     },
@@ -511,9 +495,13 @@ function settingsState() {
       agent: s.agent,
       color: identityFor(s.sessionId, s.name).color,
       status: s.status,
-      // Who this session's buddy is right now — which is what "Auto" means in
-      // the picker next to it.
       character: buddyOf(s.sessionId)?.character || characterFor(settings, s.name, s.sessionId),
+      // The helpers this session has running, listed under it.
+      subagents: (s.subagents || []).map((sub) => ({
+        id: sub.id,
+        type: sub.type,
+        label: sub.activity?.label || '',
+      })),
     })),
   };
 }
@@ -989,8 +977,15 @@ let soloFace = '';
 function soloCharacter() {
   if (soloFace) return soloFace;
   const chosen = settings.soloCharacter;
+  const ids = characterIds();
+  // Nothing picked: the app is named after the paperclip, so that is who the
+  // one buddy is — not whichever face the cast happens to hash to.
   soloFace =
-    chosen && characterIds().includes(chosen) ? chosen : characterFor(settings, 'clippy', SOLO_KEY);
+    chosen && ids.includes(chosen)
+      ? chosen
+      : ids.includes('clip')
+        ? 'clip'
+        : characterFor(settings, 'clippy', SOLO_KEY);
   return soloFace;
 }
 

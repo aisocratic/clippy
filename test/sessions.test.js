@@ -314,3 +314,59 @@ test('terminal and transcript learned for a session nobody tracks do not pile up
   assert.ok(t.terminalFor('s1'));
   assert.equal(t.transcriptFor('s1'), real);
 });
+
+test('a subagent is listed under its session and its work shows on the activity line', () => {
+  const t = new SessionTracker();
+  t.handle('SessionStart', null, payload('s1'));
+
+  // SubagentStart arrives on the parent's session id, with the helper's own
+  // id and type. It is not a session: the count does not move.
+  const started = t.handle('SubagentStart', null, {
+    ...payload('s1'),
+    agent_id: 'a-1',
+    agent_type: 'Explore',
+  });
+  assert.equal(started.kind, 'activity');
+  assert.equal(started.activity.label, 'Delegating to Explore');
+  assert.deepEqual(t.counts(), { total: 1, waiting: 0 });
+  assert.deepEqual(
+    t.list()[0].subagents.map((sub) => [sub.id, sub.type]),
+    [['a-1', 'Explore']]
+  );
+
+  // Its tool calls fire the same hooks, stamped with the subagent — so the
+  // line says who is doing what, and the helper's row says the same.
+  const tool = t.handle('PreToolUse', null, {
+    ...payload('s1'),
+    agent_id: 'a-1',
+    agent_type: 'Explore',
+    tool_name: 'Bash',
+    tool_input: { command: 'npm test', description: 'run the tests' },
+  });
+  assert.match(tool.activity.label, /^Explore: /);
+  assert.equal(tool.activity.agentType, 'Explore');
+  assert.match(t.list()[0].subagents[0].activity.label, /npm test|run the tests/);
+
+  // Gone when it stops; the session carries on.
+  const stopped = t.handle('SubagentStop', null, { ...payload('s1'), agent_id: 'a-1', agent_type: 'Explore' });
+  assert.equal(stopped.kind, 'activity');
+  assert.equal(stopped.activity.label, 'Explore finished');
+  assert.deepEqual(t.list()[0].subagents, []);
+  assert.equal(t.list()[0].status, 'working');
+});
+
+test('a subagent never announced is learned from its first tool call, and one without an id is ignored', () => {
+  const t = new SessionTracker();
+  t.handle('PreToolUse', null, {
+    ...payload('s1'),
+    agent_id: 'a-9',
+    tool_name: 'Edit',
+    tool_input: { file_path: '/repo/a.js' },
+  });
+  assert.deepEqual(
+    t.list()[0].subagents.map((sub) => [sub.id, sub.type]),
+    [['a-9', 'subagent']]
+  );
+  assert.equal(t.handle('SubagentStart', null, payload('s1')), null);
+  assert.equal(t.handle('SubagentStop', null, { ...payload('s1'), agent_id: 42 }), null);
+});

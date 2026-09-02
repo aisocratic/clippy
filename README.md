@@ -109,6 +109,7 @@ interactive — their HTTP response is the hook's decision:
 | `PostToolUseFailure` *(same tools)* | ⚠ surfaces the failure and its first error line |
 | `Notification` (`permission_prompt`) | 🔴 Urgent bounce — a prompt is waiting in the terminal |
 | `Notification` (`idle_prompt`) | 🟡 Reminder — Claude has been waiting for your reply |
+| `SubagentStart` / `SubagentStop` | a helper the session spun up: listed under it in Settings → Sessions, and the activity line says "Delegating to Explore" and then "Explore: Running: npm test" while it works |
 | `UserPromptSubmit` | clears alerts & pending cards for that session (you're on it) |
 | `SessionEnd` | the session's buddy leaves the screen. (There's deliberately no `SessionStart` hook: a session announces itself with its first real activity) |
 | `statusLine` *(Claude Code only)* | a small 📎 tucked against the right edge of the line under the input box — cmd+click it (iTerm2, Ghostty, kitty, WezTerm) to open this session's buddy. Installed only if you don't already have a statusline of your own |
@@ -530,14 +531,13 @@ would at least make the row say "Clippy" instead of "Electron".
 
 Click **📎 in the menu bar** and Clippy's settings window opens (right-click for
 the quick menu — sessions, Drive mode, quit). It's the one part of Clippy you sit
-and read. The rail splits it in two — **Settings**, which is Sessions, Sounds,
-Buddies and Updates, and **Docs**, which is the feature catalogue. One page at a
-time; nothing under Docs changes anything.
+and read: Sessions, Sounds, Buddies, Updates and Feedback, one page at a time.
 
-- **Sessions** — Clippy's own row at the top, with the pickers for **its face
-  and its size**, and under it every agent connected to it: project name, which
-  agent, what it is doing. Clippy never changes with the session, so the agent
-  rows have nothing to pick; click one and Clippy comes to the front for it.
+- **Sessions** — Clippy's own row at the top, saying which agent it is speaking
+  for and what it wears, and under it every agent connected to it: project
+  name, which agent, what it is doing. Clippy never changes with the session, so
+  the agent rows have nothing to pick; click one and Clippy comes to the front
+  for it.
 - **Sounds** — the only noise Clippy makes: a short cue when a hidden buddy
   appears, off until you pick one. Nothing plays for a buddy already on screen.
 - **Buddies** — **one buddy stands in for every agent**, so three agents running
@@ -545,10 +545,9 @@ time; nothing under Docs changes anything.
   pick** whoever it is speaking for, so there is one look to learn; the name
   under its feet and the card say which agent it is talking about. Its 💬 chat
   has a row of everyone running: talk to the buddy, or pick an agent and type
-  straight into its session. Then every character with all nine of its
-  animations playing side by side (the same layout as the test bench's
-  workbench), and the default size picker. Clicking a character here plays its
-  next animation; the face Clippy wears is picked on its row under **Sessions**.
+  straight into its session. This is the one place Clippy's look is set: the
+  size picker, and the cast — click a character and Clippy wears it (the
+  paperclip until you do); ▶ on a card plays its next animation.
   There's a link to [openpets.dev/gallery](https://openpets.dev/gallery) for
   more — paste a pet's page link into the **Add a pet** box right there (or into
   `npm run add-sprite-pack -- <pet url>` in a terminal) and it downloads,
@@ -559,25 +558,22 @@ time; nothing under Docs changes anything.
   Along with **Feedback** below, these are the only times Clippy talks to
   anything but localhost — and never on its own.
 - **Feedback** — a thumb and a box, going privately to the people who make
-  Clippy. Not a review and not a testimonial: it lands in AI Socratic's own
-  database and nothing written there is shown on the website or anywhere
-  public. It's the only thing Clippy ever sends that came from you, it goes
-  only when you press send, and it carries nothing but the
-  thumb, your words, and the build number — no project names, no paths, no
-  code, and nothing that says who you are (`src/feedback.js` is the whole
-  payload, and a test holds it to that).
-- **Clippy's features** — the one page under **Docs**, and the full catalogue:
-  what triggers each behaviour, which hook it rides on, what you see, and — for
-  anything that answers on your behalf — **the exact JSON Claude Code receives**
-  for each button. Those strings come from the same `toHookResponse` the app
-  answers with (`src/actions.js`), so the page can't drift from the behaviour,
-  and a test asserts it.
-(Clicking a session's name brings its buddy to the front.)
+  Clippy. It's the only thing Clippy ever sends that came from you, it goes
+  only when you press send, and it carries nothing but the thumb, your words,
+  and the build number — no project names, no paths, no code, and nothing that
+  says who you are (`src/feedback.js` is the whole payload, and a test holds it
+  to that).
+
+The full catalogue of what Clippy does — what triggers each behaviour, which
+hook it rides on, and the exact JSON Claude Code receives for each button —
+lives in `src/actions.js`, rendered on the web bench's feature catalog. The
+strings come from the same `toHookResponse` the app answers with, and a test
+asserts it.
 
 The on/off switches for what Clippy answers aren't in this window at all: they
 live in **📎 menu bar → Quick settings**, one right-click from anywhere. Turn one
 off and that moment goes back to the terminal exactly as if Clippy weren't
-running — *Clippy's features* marks the affected entries **off**.
+running.
 
 ## Bring your own buddy (sprite-sheet themes)
 

@@ -1007,18 +1007,24 @@ async function handle(req, res) {
       size: 'medium',
       characters: allCharacters(),
       sizes: sizeList(),
-      actions: ACTIONS,
       port: 43117,
       windowAccess: false, // so the banner is visible while working on it
       appName: 'Electron',
       appPath: '/path/to/clippy/node_modules/electron/dist/Electron.app',
       soloCharacter: '',
-      soloSize: '',
       // The one buddy's row, which the settings window always draws above the
       // sessions — main works its face and name out for real (see settingsState).
-      solo: { character: 'clip', pet: 'Clip', color: '#4fa3d1', size: '', showing: NAME },
+      solo: { character: 'clip', pet: 'Clip', color: '#4fa3d1', showing: NAME },
       sessions: [
-        { sessionId: 'demo-1', name: NAME, color: '#4fa3d1', status: 'working', character: 'clip' },
+        {
+          sessionId: 'demo-1',
+          name: NAME,
+          color: '#4fa3d1',
+          status: 'working',
+          character: 'clip',
+          // A helper it has running, drawn one step in under its row.
+          subagents: [{ id: 'a-1', type: 'Explore', label: 'Explore: Reading webhook.js' }],
+        },
         // A second agent in the *same* folder as demo-1: the case where picking
         // a pet for one row must leave the other row alone.
         { sessionId: 'demo-1b', name: NAME, color: '#d18f4f', status: 'idle', character: 'clod' },

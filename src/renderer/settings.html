@@ -18,8 +18,6 @@
     <a class="rail-link" href="#buddies">Buddies</a>
     <a class="rail-link" href="#updates">Updates</a>
     <a class="rail-link" href="#feedback">Feedback</a>
-    <p class="rail-group">Docs</p>
-    <a class="rail-link" href="#actions">Clippy&#39;s features</a>
     <div id="rail-meta">
       <a id="maker-link" href="https://aisocratic.org">by AI Socratic ↗</a>
       <div id="rail-foot">
@@ -36,8 +34,8 @@
           <button id="btn-new-agent" class="panel-action"><span aria-hidden="true">+</span> New agent</button>
         </div>
         <p>Clippy is the one buddy on your desk, and it speaks for whichever agent needs
-           you. Its face and size are set on its row; the agents connected to it are
-           listed underneath. Click one to bring Clippy to the front for it.</p>
+           you. The agents connected to it are listed underneath, with any helpers they
+           have running. Click one to bring Clippy to the front for it.</p>
       </header>
       <div id="access" class="access hidden"></div>
 
@@ -70,10 +68,8 @@
           <h1>Buddies</h1>
           <button id="btn-add-buddy" class="panel-action"><span aria-hidden="true">+</span> Add a buddy</button>
         </div>
-        <p>Every character in the cast, with all nine of its animations playing side by
-           side. Which buddy a session gets is picked beside it under
-           <a href="#sessions">Sessions</a>; this is where you set the default size and
-           add new ones.</p>
+        <p>Which buddy Clippy is, and how big. Click one in the cast to wear it; add
+           more with the button above.</p>
       </header>
 
       <div class="field-row">
@@ -81,10 +77,8 @@
           <label>Size</label>
           <div id="sizes" class="segmented"></div>
         </div>
-        <p class="field-note">The size a project gets when it hasn’t picked one — each can
-           override it beside its name under Sessions. Pixel sprites scale by whole numbers
-           (XS is the exception, at 1.5×); SVG buddies stay smooth at every size. A buddy keeps
-           its size whether or not a card is open.</p>
+        <p class="field-note">Pixel sprites scale by whole numbers (XS is 1.5×); SVG buddies
+           stay smooth at every size. Clippy keeps its size whether or not a card is open.</p>
       </div>
 
       <p class="field-note" id="cast-note"></p>
@@ -123,14 +117,8 @@
     <section id="feedback" class="panel">
       <header class="panel-head">
         <h1>Feedback</h1>
-        <p>How is Clippy going? This goes <b>privately to the people who make Clippy</b>
-           &mdash; straight to the AI Socratic team's inbox, and nowhere else. It isn't a
-           review, it isn't published, and nothing you write here appears on the website
-           or anywhere public.</p>
-        <p>It's also the only thing Clippy ever sends that came from you. It leaves only
-           when you press send, and it carries nothing but the thumb, your words, and
-           which build you're on &mdash; no project names, no paths, no code, and nothing
-           that says who you are.</p>
+        <p>How is Clippy going? This goes privately to the people who make it, only when
+           you press send, and carries just the thumb, your words and the build number.</p>
       </header>
 
       <div class="feedback-box">
@@ -159,8 +147,7 @@
                nothing anywhere on its own, so pressing send has to be a choice
                made knowing the destination, not a surprise afterwards. -->
           <p class="consent-note">
-            <b>Send feedback</b> sends this to the AI Socratic team at
-            <b>aisocratic.org</b>. They'll read it; nobody else will.
+            Goes to the AI Socratic team at <b>aisocratic.org</b>. Nobody else sees it.
           </p>
 
           <div class="feedback-actions">
@@ -169,16 +156,6 @@
           </div>
         </div>
       </div>
-    </section>
-
-    <!-- Docs, not a setting: nothing here changes anything, so it lives in its
-         own group in the rail rather than at the end of the settings list. -->
-    <section id="actions" class="panel">
-      <header class="panel-head">
-        <h1>Clippy's features</h1>
-        <p>What the buddy does with your sessions, and which buttons answer for you.</p>
-      </header>
-      <div id="action-list" class="actions"></div>
     </section>
 
   </main>

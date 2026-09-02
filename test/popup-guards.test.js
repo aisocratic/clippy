@@ -161,15 +161,18 @@ test('a compact buddy can grow past its fallback size instead of clipping its ow
   assert.match(body, /workArea\.height - WIN_GAP \* 2/);
 });
 
-test('the main buddy has an independent size picker and a name-only plate', () => {
+test('the main buddy is sized and cast in one place, and wears a name-only plate', () => {
   const main = read('src', 'main.js');
   const settings = read('src', 'renderer', 'settings.js');
   const renderer = read('src', 'renderer', 'clippy.js');
   const styles = read('src', 'renderer', 'clippy.css');
 
-  assert.match(main, /soloSize: ''/);
-  assert.match(main, /soloSize: \(\) => \['', \.\.\.Object\.keys\(SIZES\)\]/);
-  assert.match(settings, /set\('soloSize', sizePick\.value\)/);
+  // One size and one face for the one buddy: the Buddies panel sets both, and
+  // there is no second, per-window size to disagree with it.
+  assert.doesNotMatch(main, /soloSize/);
+  assert.doesNotMatch(settings, /soloSize/);
+  assert.match(settings, /set\('soloCharacter', character\.id\)/);
+  assert.match(settings, /set\('size', size\.id\)/);
   assert.match(renderer, /whoSub\.textContent = solo \? ''/);
   assert.match(styles, /body\.solo #who-sub\s*\{\s*display: none/s);
 });

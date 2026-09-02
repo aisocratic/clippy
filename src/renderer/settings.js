@@ -20,7 +20,7 @@ const STATUS_TEXT = {
 
 // One flat object, exactly as main sends it: the settings themselves plus the
 // rosters and catalogue the page is drawn from.
-let state = { characters: [], sizes: [], actions: [], sessions: [] };
+let state = { characters: [], sizes: [], sessions: [] };
 const sheetTimers = [];
 const previewPose = new Map();
 
@@ -136,22 +136,23 @@ function posesOf(character) {
 function renderCast() {
   const host = document.getElementById('cast');
   host.replaceChildren();
-  const sessions = state.sessions || [];
-  const onDuty = new Set(sessions.map((s) => s.character));
+  // The face Clippy wears: the one picked here, or main's default for it.
+  const wearing = state.soloCharacter || (state.solo && state.solo.character) || '';
 
   document.getElementById('cast-note').textContent =
-    "Click a buddy to see its next animation. Choose Clippy's face under Sessions.";
+    'Click a buddy and Clippy wears it. ▶ plays its next animation.';
 
   for (const character of state.characters) {
     const row = document.createElement('div');
-    row.className = `cast-row${onDuty.has(character.id) ? ' on' : ''}`;
+    row.className = `cast-row${character.id === wearing ? ' on' : ''}`;
 
     const who = document.createElement('button');
     who.className = 'cast-who';
     const poses = posesOf(character);
     const poseIndex = (previewPose.get(character.id) || 0) % poses.length;
     const pose = poses[poseIndex];
-    who.title = `Show ${character.label}'s next animation`;
+    who.title = `Clippy wears ${character.label}`;
+    who.setAttribute('aria-pressed', String(character.id === wearing));
 
     const art = document.createElement('span');
     art.className = 'cast-art';
@@ -163,14 +164,23 @@ function renderCast() {
     poseName.className = 'cast-pose-name';
     poseName.textContent = pose.label;
     who.append(art, name, poseName);
-    // The whole page, not only the cast: clearing the timers stops the session
-    // rows' sprites too, and they only come back when their art is rebuilt.
-    who.addEventListener('click', () => {
+    who.addEventListener('click', () => set('soloCharacter', character.id));
+
+    // Every buddy has nine animations; this steps through them without
+    // choosing. The whole page re-renders, not only the cast: clearing the
+    // timers stops the session rows' sprites too, and they only come back
+    // when their art is rebuilt.
+    const next = document.createElement('button');
+    next.className = 'cast-next';
+    next.textContent = '▶';
+    next.title = `Play ${character.label}'s next animation`;
+    next.setAttribute('aria-label', `Play ${character.label}'s next animation`);
+    next.addEventListener('click', () => {
       previewPose.set(character.id, (poseIndex + 1) % poses.length);
       render();
     });
 
-    row.appendChild(who);
+    row.append(who, next);
     if (character.removable) {
       const remove = document.createElement('button');
       remove.className = 'remove-buddy';
@@ -208,10 +218,10 @@ function renderSizes() {
 /**
  * Clippy's own row: the one buddy that stands in for every agent.
  *
- * It wears the highlight and says which agent it is speaking for right now;
- * its face and size are chosen here and nowhere else, because Clippy never
- * changes with the session. The sessions are listed under it, smaller and
- * indented, as the agents connected to it.
+ * It wears the highlight and says which agent it is speaking for right now.
+ * Its face and size are chosen under Buddies, because Clippy never changes
+ * with the session. The sessions are listed under it, smaller and indented,
+ * as the agents connected to it.
  */
 function soloRow() {
   const solo = state.solo || {};
@@ -237,114 +247,20 @@ function soloRow() {
   const character = state.characters.find((c) => c.id === solo.character);
   if (character) art.appendChild(poseArt(character, posesOf(character)[0], 28));
 
-  // A dropdown, not a row of every character: the cast grows every time a
-  // sprite pack is installed, and a segmented control grew with it.
-  const pick = document.createElement('select');
-  pick.className = 'session-pick';
-  pick.title = 'Which face Clippy wears';
-  const auto = document.createElement('option');
-  auto.value = '';
-  auto.textContent = `Auto (${labelFor(solo.character)})`;
-  pick.appendChild(auto);
-  for (const option of state.characters) {
-    const opt = document.createElement('option');
-    opt.value = option.id;
-    opt.textContent = option.label;
-    pick.appendChild(opt);
-  }
-  pick.value = state.soloCharacter || '';
-  pick.addEventListener('change', () => set('soloCharacter', pick.value));
+  // Which face and how big are chosen under Buddies, the one place for both;
+  // this row only shows the result.
+  const look = document.createElement('a');
+  look.className = 'session-look';
+  look.href = '#buddies';
+  look.textContent = `${labelFor(solo.character)} · ${SIZE_LABEL[state.size] || state.size}`;
+  look.title = 'Change under Buddies';
 
-  const sizePick = document.createElement('select');
-  sizePick.className = 'session-pick session-size';
-  sizePick.title = 'How big Clippy is drawn';
-  const autoSize = document.createElement('option');
-  autoSize.value = '';
-  autoSize.textContent = `Default (${SIZE_LABEL[state.size] || state.size})`;
-  sizePick.appendChild(autoSize);
-  for (const size of state.sizes) {
-    const option = document.createElement('option');
-    option.value = size.id;
-    option.textContent = SIZE_LABEL[size.id] || size.id;
-    sizePick.appendChild(option);
-  }
-  sizePick.value = solo.size || '';
-  sizePick.addEventListener('change', () => set('soloSize', sizePick.value));
-
-  row.append(dot, show, status, art, pick, sizePick);
+  row.append(dot, show, status, art, look);
   return row;
 }
 
 function renderSound() {
   document.getElementById('appearance-sound').value = state.appearanceSound || '';
-}
-
-/* ---------- Clippy's Features ---------- */
-
-function renderActions() {
-  const host = document.getElementById('action-list');
-  host.replaceChildren();
-
-  for (const action of state.actions) {
-    const card = document.createElement('div');
-    card.className = 'action';
-
-    const head = document.createElement('div');
-    head.className = 'action-head';
-    const icon = document.createElement('span');
-    icon.className = 'action-icon';
-    icon.textContent = action.icon;
-    const title = document.createElement('span');
-    title.className = 'action-title';
-    title.textContent = action.title;
-    head.append(icon, title);
-
-    // The hook name and the JSON each button answers with are for developers;
-    // they live on the web bench's feature catalog. Here: who it applies to,
-    // whether it is switched on, and what it does in plain words.
-    if (action.appliesTo) {
-      const tag = document.createElement('span');
-      tag.className = 'tag';
-      tag.textContent = action.appliesTo;
-      tag.title = 'supported agents';
-      head.appendChild(tag);
-    }
-    // Say plainly when this one is switched off, and where the switch is: the
-    // catalogue would otherwise promise behaviour that can't happen.
-    if (action.setting && !state[action.setting]) {
-      const off = document.createElement('span');
-      off.className = 'tag off';
-      off.textContent = 'off';
-      off.title = 'turned off in the 📎 menu bar → Quick settings';
-      head.appendChild(off);
-    }
-
-    const summary = document.createElement('p');
-    summary.className = 'action-summary';
-    summary.textContent = action.summary || action.when;
-
-    card.append(head, summary);
-
-    if (action.choices) {
-      const choices = document.createElement('div');
-      choices.className = 'choices';
-      for (const choice of action.choices) {
-        const row = document.createElement('div');
-        row.className = 'choice';
-        const label = document.createElement('span');
-        label.className = 'choice-label';
-        label.textContent = choice.label;
-        const effect = document.createElement('span');
-        effect.className = 'choice-effect';
-        effect.textContent = choice.effect;
-        row.append(label, effect);
-        choices.appendChild(row);
-      }
-      card.appendChild(choices);
-    }
-
-    host.appendChild(card);
-  }
 }
 
 /* ---------- Sessions ---------- */
@@ -443,6 +359,24 @@ function renderSessions() {
 
     row.append(dot, show, status);
     agents.appendChild(row);
+
+    // The subagents it has running, one step further in: a helper of this
+    // agent, with what it is doing. They come and go with the task.
+    for (const sub of session.subagents || []) {
+      const subRow = document.createElement('div');
+      subRow.className = 'session agent-session subagent-session';
+      const subDot = document.createElement('span');
+      subDot.className = 'dot';
+      subDot.style.background = session.color || '#9aa3ad';
+      const subName = document.createElement('span');
+      subName.className = 'session-name';
+      subName.textContent = sub.type;
+      const subStatus = document.createElement('span');
+      subStatus.className = 'session-status';
+      subStatus.textContent = sub.label || 'working…';
+      subRow.append(subDot, subName, subStatus);
+      agents.appendChild(subRow);
+    }
   }
   host.appendChild(agents);
 }
@@ -466,7 +400,6 @@ function render() {
   renderSound();
   renderSizes();
   renderCast();
-  renderActions();
   renderSessions();
 
   const text = document.getElementById('server-text');

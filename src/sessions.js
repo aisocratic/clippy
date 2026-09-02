@@ -61,6 +61,10 @@ class SessionTracker {
         cwd: payload.cwd || '',
         status: IDLE,
         activity: null,
+        // The subagents this session has running: agent_id -> { id, type,
+        // activity, startedAt }. They share the session (and the buddy); what
+        // they do is shown as this session's activity, labelled with the type.
+        subagents: new Map(),
         updatedAt: 0,
       };
       this.sessions.set(id, s);
@@ -98,7 +102,36 @@ class SessionTracker {
     const tool = payload.tool_name || 'tool';
     s.status = WORKING;
     s.activity = { tool, label: activityLabel(tool, payload.tool_input), state, ok };
+    // A tool run by a subagent is still this session's work, said with the
+    // subagent's name in front so the line reads "Explore: Running: npm test".
+    const sub = this._subagent(s, payload);
+    if (sub) {
+      sub.activity = { ...s.activity };
+      s.activity = { ...s.activity, label: `${sub.type}: ${s.activity.label}`, agentType: sub.type };
+    }
     return tool;
+  }
+
+  /**
+   * The subagent a hook came from, if any. Claude Code stamps `agent_id` and
+   * `agent_type` on every hook fired inside a subagent, on the parent's
+   * session id. One that was never announced (its SubagentStart predates this
+   * install, say) is learned from its first tool call.
+   */
+  _subagent(s, payload) {
+    const id = typeof payload.agent_id === 'string' ? payload.agent_id : '';
+    if (!id) return null;
+    let sub = s.subagents.get(id);
+    if (!sub) {
+      sub = {
+        id,
+        type: typeof payload.agent_type === 'string' && payload.agent_type ? payload.agent_type : 'subagent',
+        activity: null,
+        startedAt: Date.now(),
+      };
+      s.subagents.set(id, sub);
+    }
+    return sub;
   }
 
   _reaction(kind, urgency, s, message) {
@@ -176,6 +209,33 @@ class SessionTracker {
         s.activity.error = interrupted ? '' : firstLine(payload.error);
         if (interrupted) return this._reaction('activity', 'low', s, '');
         return this._failed(s, tool, String(payload.error || '').slice(0, 4000));
+      }
+
+      case 'SubagentStart': {
+        // A subagent is a helper the session spun up, not a session of its
+        // own: it reports on the parent's id and the buddy speaks for both.
+        // It is listed under the session and its work shows on the activity
+        // line, so delegating never looks like the agent going quiet.
+        const sub = this._subagent(s, payload);
+        if (!sub) return null;
+        s.status = WORKING;
+        s.activity = {
+          tool: 'Agent',
+          label: `Delegating to ${sub.type}`,
+          state: 'start',
+          ok: true,
+          agentType: sub.type,
+        };
+        return this._reaction('activity', 'low', s, '');
+      }
+
+      case 'SubagentStop': {
+        const sub = this._subagent(s, payload);
+        if (!sub) return null;
+        s.subagents.delete(sub.id);
+        s.status = WORKING;
+        s.activity = { tool: 'Agent', label: `${sub.type} finished`, state: 'done', ok: true };
+        return this._reaction('activity', 'low', s, '');
       }
 
       case 'PermissionRequest':
@@ -333,6 +393,7 @@ class SessionTracker {
   list() {
     return [...this.sessions.values()].map((s) => ({
       ...s,
+      subagents: [...s.subagents.values()],
       terminal: this.terminals.get(s.sessionId) || null,
     }));
   }
