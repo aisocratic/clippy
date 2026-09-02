@@ -7,7 +7,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const { execFileSync } = require('node:child_process');
-const { localBuild, checkForUpdates } = require('../src/updates');
+const { localBuild, checkForUpdates, isNewerVersion } = require('../src/updates');
 const { checksumFrom, installerScript, verifiedDmg, BUNDLE_ID } = require('../src/auto-update');
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'clippy-updates-'));
@@ -83,6 +83,25 @@ test('the packaged app measures itself against the newest release', async () => 
   assert.equal(stale.upToDate, false);
   assert.match(stale.release.dmg, /v0\.3\.0.*\.dmg$/);
   assert.match(stale.release.checksum, /v0\.3\.0.*\.dmg\.sha256$/);
+});
+
+test('a build ahead of the newest release is not offered a downgrade', async () => {
+  // A local package of main, or a tagged version whose release is still a
+  // draft, is newer than anything published. Telling it "out of date" put the
+  // older DMG one click away — and that click really did install v0.3.1 over
+  // a 0.3.2 build.
+  const dir = tmp();
+  fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ version: '0.3.2' }));
+  const ahead = await checkForUpdates(dir, ghRelease('v0.3.1'));
+  assert.equal(ahead.upToDate, true);
+
+  assert.equal(isNewerVersion('0.3.2', '0.3.1'), true);
+  assert.equal(isNewerVersion('0.10.0', '0.9.9'), true, 'numeric, not lexical');
+  assert.equal(isNewerVersion('1.0.0', '0.99.99'), true);
+  assert.equal(isNewerVersion('0.3.1', '0.3.2'), false);
+  assert.equal(isNewerVersion('0.3.1', '0.3.1'), false);
+  assert.equal(isNewerVersion('v0.3.2', '0.3.1'), false, 'tags are stripped before they get here');
+  assert.equal(isNewerVersion(undefined, '0.3.1'), false);
 });
 
 test('an installed update needs the exact DMG checksum and a safe replacement helper', () => {
