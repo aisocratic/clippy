@@ -68,10 +68,13 @@ function approval(toolName, toolInput, extra = {}) {
 
 /** An ambient activity line, labelled by the real activityLabel(). */
 function activity(toolName, toolInput, { state = 'start', ok = true } = {}) {
+  const label = activityLabel(toolName, toolInput);
   return evt({
-    kind: 'activity',
+    kind: ok ? 'activity' : 'failure',
     status: 'working',
-    activity: { tool: toolName, label: activityLabel(toolName, toolInput), state, ok },
+    title: ok ? '' : `${toolName} failed`,
+    detail: ok ? '' : `The ${label.toLowerCase()} command failed. Read the complete output for details.`,
+    activity: { tool: toolName, label, state, ok },
   });
 }
 
@@ -144,12 +147,12 @@ function SHOW_RUN() {
   at(1300, { event: activity('Edit', { file_path: '/repo/src/webhook.js' }) });
   at(1300, { event: activity('Bash', { description: 'run the test suite', command: 'npm test' }) });
   at(1600, {
-    note: 'A failed tool turns the line red — and the buddy starts sweating',
+    note: 'A failed tool opens a compact problem preview with Read for the complete output',
     event: activity('Bash', { description: 'run the test suite', command: 'npm test' }, { state: 'done', ok: false }),
   });
 
   at(1800, {
-    note: 'Urgent nudge — bouncing buddy, speech bubble, Got it / Snooze',
+    note: 'Urgent nudge — bouncing buddy and a dismissible speech bubble',
     event: evt({ kind: 'attention', urgency: 'urgent', status: 'needs_permission', message: `Claude needs permission in “${NAME}”.` }),
   });
 
@@ -197,7 +200,14 @@ function SHOW_RUN() {
     note: 'Review card — Looks good, or send Claude back with feedback',
     ref: 'stop',
     holdSecs: 20,
-    event: evt({ kind: 'review', status: 'waiting', message: 'Claude finished: “Added retry with backoff to the billing webhook — 42 tests pass.”' }),
+    event: evt({
+      kind: 'review',
+      status: 'waiting',
+      title: 'Claude Finished',
+      prompt: 'Make invoice posting resilient to transient failures and add coverage for retries.',
+      message: 'Claude finished: “Added retry with backoff to the billing webhook — 42 tests pass.”',
+      detail: 'Added retry with exponential backoff to the billing webhook. All 42 tests pass.',
+    }),
   });
   at(6500, { ref: 'stop', event: evt({ kind: 'request-closed', outcome: 'timeout', timedOut: true }) });
 
@@ -306,7 +316,7 @@ const SCENARIOS = [
     id: 'activity-failed',
     group: 'Ambient',
     label: 'Tool failed',
-    hint: 'A failed tool turns the activity line red.',
+    hint: 'A failed tool opens a compact problem preview with a Read button.',
     steps: [
       {
         event: activity(
@@ -323,7 +333,7 @@ const SCENARIOS = [
     id: 'attention-urgent',
     group: 'Nudges',
     label: 'Needs you (urgent)',
-    hint: 'Bouncing buddy + speech bubble. Got it / Snooze 5m.',
+    hint: 'Bouncing buddy + dismissible speech bubble. Sleep durations live in the right-click menu.',
     steps: [
       {
         event: evt({
@@ -447,7 +457,12 @@ const SCENARIOS = [
         event: evt({
           kind: 'review',
           status: 'waiting',
+          title: 'Claude Finished',
+          prompt: 'Make invoice posting resilient to transient failures and add coverage for retries.',
           message: 'Claude finished: “Added retry with backoff to the billing webhook — 42 tests pass.”',
+          detail:
+            'Added `withRetry()` around postInvoice — 3 attempts with exponential backoff, ' +
+            '200ms base, and 409 treated as success. Both paths are covered and all 42 tests pass.',
         }),
       },
     ],
@@ -927,6 +942,19 @@ const server = http.createServer(async (req, res) => {
     return file ? sendFile(res, file) : sendJson(res, { error: 'bad path' }, 400);
   }
 
+  if (pathname === '/reader') {
+    res.writeHead(302, { Location: '/reader/' });
+    return res.end();
+  }
+  if (pathname === '/reader/') return servePage(res, 'reader.html', 'reader.js', 'reader-stub.js');
+  if (pathname === '/reader/reader-stub.js') {
+    return sendFile(res, path.join(DEMO_DIR, 'reader-stub.js'));
+  }
+  if (pathname.startsWith('/reader/')) {
+    const file = safeJoin(RENDERER_DIR, pathname.slice('/reader/'.length));
+    return file ? sendFile(res, file) : sendJson(res, { error: 'bad path' }, 400);
+  }
+
   if (pathname === '/renderer' ) {
     res.writeHead(302, { Location: '/renderer/' });
     return res.end();
@@ -941,7 +969,14 @@ const server = http.createServer(async (req, res) => {
     return file ? sendFile(res, file) : sendJson(res, { error: 'bad path' }, 400);
   }
 
-  const rel = pathname === '/' ? 'index.html' : pathname === '/gallery' ? 'gallery.html' : pathname.slice(1);
+  const rel =
+    pathname === '/'
+      ? 'index.html'
+      : pathname === '/gallery'
+      ? 'gallery.html'
+      : pathname === '/states'
+      ? 'states.html'
+      : pathname.slice(1);
   const file = safeJoin(DEMO_DIR, rel);
   return file ? sendFile(res, file) : sendJson(res, { error: 'bad path' }, 400);
 });
@@ -949,6 +984,7 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, '127.0.0.1', () => {
   console.log(`📎 Clippy web test bench → http://127.0.0.1:${PORT}`);
   console.log(`   Sandbox gallery (every state at once) → http://127.0.0.1:${PORT}/gallery`);
+  console.log(`   State atlas (states + triggers) → http://127.0.0.1:${PORT}/states`);
   console.log('   Serving the real src/renderer with a stubbed clippyAPI.');
   console.log('   (End-to-end still means: npm start + npm run mock-session.)');
   // `npm run sandbox` passes --open <path>: pop the page straight into the

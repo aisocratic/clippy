@@ -139,7 +139,18 @@ class SessionTracker {
           state: 'done',
           ok,
         };
-        return this._reaction('activity', 'low', s, ok ? '' : `${tool} failed in “${s.name}”.`);
+        const reaction = this._reaction(
+          ok ? 'activity' : 'failure',
+          ok ? 'low' : 'normal',
+          s,
+          ok ? '' : `${tool} failed in “${s.name}”.`
+        );
+        if (!ok) {
+          const raw = typeof response === 'string' ? response : response ? JSON.stringify(response) : '';
+          reaction.title = `${tool} failed`;
+          reaction.detail = raw || reaction.message;
+        }
+        return reaction;
       }
 
       case 'PostToolUseFailure': {
@@ -156,12 +167,17 @@ class SessionTracker {
           ok: interrupted,
           error: interrupted ? '' : firstLine(payload.error),
         };
-        return this._reaction(
-          'activity',
+        const reaction = this._reaction(
+          interrupted ? 'activity' : 'failure',
           'low',
           s,
           interrupted ? '' : `${tool} failed in “${s.name}”.`
         );
+        if (!interrupted) {
+          reaction.title = `${tool} failed`;
+          reaction.detail = String(payload.error || '').slice(0, 4000) || reaction.message;
+        }
+        return reaction;
       }
 
       case 'PermissionRequest':

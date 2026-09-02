@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Fox response graph</title>
+  <link rel="stylesheet" href="/states.css" />
+</head>
+<body>
+  <header id="page-head">
+    <h1>Fox transitions</h1>
+    <nav aria-label="Other workbenches">
+      <a href="/">Single state</a>
+      <a href="/gallery">All states</a>
+    </nav>
+  </header>
+
+  <main>
+    <section class="flow-summary">
+      <div class="view-picker" role="group" aria-label="On Screen buddy mode">
+        <button class="view-option selected" data-view="each" type="button" aria-pressed="true">One each</button>
+        <button class="view-option" data-view="all" type="button" aria-pressed="false">One for all</button>
+      </div>
+      <p id="mode-note">A buddy per session, side by side — every agent has its own face, colour and spot on screen.</p>
+      <div class="global-actions">
+        <button id="play-all" type="button">▶ Play all</button>
+        <button id="reset-all" type="button">↺ Reset animations</button>
+      </div>
+    </section>
+
+    <section class="screen-preview" aria-labelledby="screen-title">
+      <header>
+        <span class="label">On Screen</span>
+        <strong id="screen-title">One each</strong>
+      </header>
+      <div id="screen-buddies" aria-live="polite"></div>
+    </section>
+
+    <section id="flows" aria-label="Fox response graph"></section>
+  </main>
+
+  <template id="stage-template">
+    <article class="stage" tabindex="0">
+      <header>
+        <span class="step" aria-hidden="true"></span>
+        <h3></h3>
+      </header>
+      <div class="preview"></div>
+    </article>
+  </template>
+
+  <script src="/states.js"></script>
+</body>
+</html>

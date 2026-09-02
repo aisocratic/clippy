@@ -57,7 +57,7 @@ const tmux = require('./tmux');
 const { SpawnedSessions, buddyKeyFor, rememberProject } = require('./spawned');
 const { chatWorkspace, ensureChatWorkspace } = require('./workspace');
 const { TRUST_PROMPT, paneStartupState, prepareAgentWorkspace } = require('./agent-startup');
-const { resolveSession, createReader, readTail, turnsFrom, lastSaid } = require('./transcript');
+const { resolveSession, createReader, readTail, turnsFrom, lastSaid, lastPrompt } = require('./transcript');
 const { createRemoteReader, controlPathFor, ensureControlDir } = require('./transport');
 const { startAgentWatch } = require('./agent-watch');
 const {
@@ -2566,17 +2566,21 @@ function chatFor(buddy) {
 const readerTitles = new Map();
 
 let readerWin = null;
+let readerSessionId = '';
+let readerRequestId = '';
 
 /**
- * A plain window for a long message.
+ * A focused window for a long message or finished-turn review.
  *
  * One at a time, reused: opening a second card's text replaces what is in it
  * rather than littering the desktop with paperclip windows. Deliberately not
- * always-on-top and not tied to the buddy — the point is that it can be left
- * open, dragged to another display, and read while the buddy gets on with
- * whatever else it is doing.
+ * always-on-top — the point is that it can be left open, dragged to another
+ * display, and read comfortably. A review temporarily takes over from the mini
+ * card and carries that buddy and the two review actions.
  */
 function openReader(payload) {
+  readerSessionId = String(payload.sessionId || '');
+  readerRequestId = payload.review ? String(payload.requestId || '') : '';
   if (!readerWin || readerWin.isDestroyed()) {
     readerWin = new BrowserWindow({
       width: 620,
@@ -2594,7 +2598,12 @@ function openReader(payload) {
       },
     });
     readerWin.on('closed', () => {
+      const restore = readerRequestId && pendingReviews.has(readerRequestId);
+      const sessionId = readerSessionId;
       readerWin = null;
+      readerSessionId = '';
+      readerRequestId = '';
+      if (restore && sessionId) showBuddy(sessionId);
     });
     readerWin.loadFile(path.join(__dirname, 'renderer', 'reader.html'));
   }
@@ -2604,6 +2613,9 @@ function openReader(payload) {
   };
   if (win.webContents.isLoading()) win.webContents.once('did-finish-load', send);
   else send();
+  // The review moves into this window. Its mini card remains alive underneath
+  // so minimizing or closing without a decision can restore it unchanged.
+  if (payload.review) buddyOf(readerSessionId)?.win.hide();
   win.show();
   win.focus();
 }
@@ -3198,7 +3210,12 @@ function emitPassive(reaction, { osNotification = true } = {}) {
   // Once the agent is moving again, an old terminal hand-off is no longer a
   // recovery path. Removing it here also covers terminal-native approvals,
   // which do not necessarily emit another UserPromptSubmit hook.
-  if (reaction.kind === 'activity' || reaction.kind === 'clear' || reaction.kind === 'remove') {
+  if (
+    reaction.kind === 'activity' ||
+    reaction.kind === 'failure' ||
+    reaction.kind === 'clear' ||
+    reaction.kind === 'remove'
+  ) {
     forgetAttentionForSession(reaction.sessionId);
   }
   updateTray();
@@ -3457,17 +3474,29 @@ async function handleStop(payload) {
   // below only when there is more of it than the headline already shows.
   const firstLine = (recap.split('\n').find((l) => l.trim()) || '').trim();
   const short = firstLine.length > 90 ? `${firstLine.slice(0, 90).trim()}…` : firstLine;
+  // The headline answers "which request just finished?", while the green row
+  // below previews what the agent answered. Transcript parsing already drops
+  // injected environment and hook messages, so this is the person's prompt.
+  const turns = await readTail(transcriptPathFor(reaction.sessionId), {
+    agent: reaction.agent,
+    limit: 40,
+    maxChars: FULL_DETAIL_MAX,
+  });
+  const prompt = lastPrompt(turns).replace(/\s+/g, ' ').trim();
+  const reviewTitle = `${agentName} Finished`;
 
   const id = `review-${++reviewSeq}`;
   pendingReviews.set(id, reaction.sessionId);
-  rememberWhole(id, reaction.sessionId, whole === recap ? '' : whole, `${agentName} finished`);
+  rememberWhole(id, reaction.sessionId, whole === recap ? '' : whole, reviewTitle);
   sendTo(reaction.sessionId, {
     ...reaction,
     kind: 'review',
     message: short
       ? `${agentName} finished: “${short}”`
       : `${agentName} finished in “${reaction.name}”. Looks good, or should it keep going?`,
-    detail: recap !== firstLine ? recap : '',
+    title: reviewTitle,
+    prompt,
+    detail: recap,
     truncated: whole !== recap,
     counts: tracker.counts(),
     requestId: id,
@@ -4215,25 +4244,78 @@ app.whenReady().then(async () => {
    * "read all" made the same floating panel taller until it ran out of screen,
    * and it still could not be moved to a second display or left open beside
    * the work it describes. This is an ordinary window: resizable, movable,
-   * closable, not always-on-top, and it carries text and nothing else, so a
-   * window left open somewhere can never answer a hook by accident.
+   * closable and not always-on-top. Finished-turn reviews also carry an
+   * explicit reply composer and sign-off action; ordinary long messages remain
+   * read-only.
    */
   ipcMain.on('clippy-open-reader', (e, requestId, mine) => {
     const buddy = buddyForSender(e.sender);
     if (!buddy) return;
     const id = String(requestId || '');
     const held = wholeMessages.get(id);
-    if (held && held.sessionId !== buddy.sessionId) return;
+    if (held && buddyOf(held.sessionId) !== buddy) return;
+    // A shared buddy may be showing another session's card. Accept that id
+    // only when it belongs to this same buddy window; otherwise use the
+    // renderer's own session as the safe fallback.
+    const requestedSessionId = String(mine?.sessionId || '');
+    const sessionId =
+      (held && held.sessionId) ||
+      (requestedSessionId && buddyOf(requestedSessionId) === buddy ? requestedSessionId : buddy.sessionId);
+    const source = sourceFor(sessionId);
     // Main only keeps a copy of what it had to *cut*. Most messages arrive
     // whole and are never stored, so the card's own copy is the text — and is
     // the only one for anything main never truncated.
     const text = (held && held.text) || String(mine?.text || '');
     if (!text) return;
+    const review = pendingReviews.has(id);
     openReader({
       title: readerTitles.get(id) || String(mine?.title || '') || 'From the agent',
       where: buddy.name,
+      prompt: String(mine?.prompt || ''),
       text,
+      sessionId,
+      canOpenSource: Boolean(tracker.terminalFor(sessionId) || tmuxRecordFor(sessionId)),
+      sourceName: source.name || 'source',
+      requestId: id,
+      review,
+      buddy: mine?.buddy || null,
     });
+  });
+
+  ipcMain.on('clippy-reader-open-source', (e) => {
+    if (!readerWin || readerWin.isDestroyed() || e.sender !== readerWin.webContents) return;
+    if (readerSessionId) openSessionWindow(readerSessionId);
+  });
+
+  ipcMain.on('clippy-reader-minimize', (e) => {
+    if (!readerWin || readerWin.isDestroyed() || e.sender !== readerWin.webContents) return;
+    readerWin.hide();
+    if (readerRequestId && pendingReviews.has(readerRequestId) && readerSessionId) {
+      showBuddy(readerSessionId);
+    }
+  });
+
+  ipcMain.on('clippy-reader-decide', async (e, payload) => {
+    if (!readerWin || readerWin.isDestroyed() || e.sender !== readerWin.webContents) return;
+    const id = readerRequestId;
+    const sessionId = readerSessionId;
+    const action = String(payload?.action || '');
+    const message = typeof payload?.message === 'string' ? payload.message.trim() : '';
+    if (!id || !pendingReviews.has(id) || !['ok', 'feedback'].includes(action)) return;
+    if (action === 'feedback' && !message) return;
+    await resolveReview(id, action, message);
+    // The hidden mini renderer did not originate this decision, so explicitly
+    // remove its copy before the window can ever be shown again.
+    sendTo(sessionId, {
+      kind: 'request-closed',
+      requestId: id,
+      sessionId,
+      outcome: action,
+      counts: tracker.counts(),
+    });
+    readerRequestId = '';
+    readerSessionId = '';
+    readerWin.close();
   });
 
   // Activity is rendered as a short, ellipsized chip under the buddy. Let a
@@ -4245,7 +4327,16 @@ app.whenReady().then(async () => {
     const title = String(payload?.title || 'Activity log').trim() || 'Activity log';
     const text = String(payload?.text || '');
     if (!text) return;
-    openReader({ title, where: buddy.name, text });
+    const sessionId = buddy.sessionId;
+    const source = sourceFor(sessionId);
+    openReader({
+      title,
+      where: buddy.name,
+      text,
+      sessionId,
+      canOpenSource: Boolean(tracker.terminalFor(sessionId) || tmuxRecordFor(sessionId)),
+      sourceName: source.name || 'source',
+    });
   });
 
   ipcMain.handle('clippy-card-full', (e, requestId) => {

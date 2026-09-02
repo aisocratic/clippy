@@ -11,11 +11,50 @@
        point of it is that a 4000-character plan has nowhere to go on a 300px
        panel floating over the desktop. -->
   <header id="head">
+    <div id="reader-tools">
+      <button id="open-source" class="tool-button hidden" aria-label="Open source" title="Open source">
+        <svg class="source-arrow" viewBox="0 0 16 16" aria-hidden="true">
+          <path d="M5 11 11 5M6 5h5v5" />
+        </svg>
+      </button>
+      <button id="minimize-reader" class="tool-button hidden"
+              aria-label="Return to the mini review" title="Return to the mini review">−</button>
+    </div>
     <div id="who"></div>
     <div id="what"></div>
   </header>
-  <main id="body" class="markdown"></main>
+  <div id="workspace">
+    <main id="content">
+      <section id="prompt-section" class="hidden">
+        <h2>Prompt</h2>
+        <div id="prompt" class="markdown"></div>
+      </section>
+      <section id="response-section">
+        <h2 id="response-label" class="hidden">Response</h2>
+        <div id="response-row">
+          <aside id="buddy-rail" class="hidden" aria-label="Response author">
+            <div id="reader-buddy">
+              <img id="reader-buddy-image" class="hidden" alt="" />
+              <div id="reader-buddy-sheet" class="hidden"></div>
+              <div id="reader-buddy-vector" class="hidden"></div>
+            </div>
+            <div id="reader-buddy-name"></div>
+          </aside>
+          <div id="body" class="markdown"></div>
+        </div>
+      </section>
+    </main>
+  </div>
+  <footer id="review-actions" class="hidden">
+    <textarea id="reply-input" rows="2" spellcheck="false"
+              placeholder="Reply to the agent…"></textarea>
+    <div id="review-buttons">
+      <button id="send-reply" disabled>Send</button>
+      <button id="reader-good">Looks good</button>
+    </div>
+  </footer>
   <script src="markdown.js"></script>
+  <script src="vector-buddies.js"></script>
   <script src="reader.js"></script>
 </body>
 </html>

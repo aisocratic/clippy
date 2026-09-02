@@ -10,7 +10,6 @@ document.addEventListener('click', (event) => {
 });
 
 const REMIND_AFTER_MS = 90 * 1000; // re-bounce if a session is still ignored
-const SNOOZE_MS = 5 * 60 * 1000;
 const CHECK_INTERVAL_MS = 15 * 1000;
 const EXTEND_THROTTLE_MS = 5 * 1000; // while typing, ask main to extend the hold
 const GHOST_GRACE_MS = 5 * 1000; // how long past its deadline a card may linger
@@ -45,6 +44,9 @@ const cardQueue = document.getElementById('card-queue');
 const cardPager = document.getElementById('card-pager');
 const cardWhere = document.getElementById('card-where');
 const cardTitle = document.getElementById('card-title');
+const cardPromptRow = document.getElementById('card-prompt-row');
+const cardPromptPreview = document.getElementById('card-prompt-preview');
+const cardResponseLabel = document.getElementById('card-response-label');
 const cardDetail = document.getElementById('card-detail');
 const cardMore = document.getElementById('btn-card-more');
 const cardOptions = document.getElementById('card-options');
@@ -95,6 +97,8 @@ const menuName = document.getElementById('menu-name');
 const menuStatus = document.getElementById('menu-status');
 const menuWaiting = document.getElementById('menu-waiting');
 const menuFeed = document.getElementById('menu-feed');
+const menuSleep = document.getElementById('menu-sleep');
+const menuSleepOptions = document.getElementById('menu-sleep-options');
 
 const sheetEl = document.getElementById('buddy-sheet');
 const vectorEl = document.getElementById('buddy-vector');
@@ -125,6 +129,7 @@ const pending = new Map();
 const requests = new Map();
 let activeRequestId = null;
 let myStatus = 'idle';
+let sleepingUntil = 0;
 
 const STATUS_TEXT = {
   idle: 'idle — waiting for a prompt',
@@ -407,6 +412,20 @@ function buddyArt(pose) {
   return `assets/themes/${who}/${tint}${pose}.gif`;
 }
 
+/** Enough of this buddy's current look to draw it in the review window. */
+function readerBuddy() {
+  const sheet = currentSheet();
+  const vector = currentVector();
+  return {
+    kind: vector ? 'vector' : sheet ? 'sheet' : 'image',
+    src: !vector && !sheet ? buddyArt(poseFor('excited')) : '',
+    vector: vector || '',
+    sheet: sheet || null,
+    color: me.color,
+    label: me.pet,
+  };
+}
+
 /** The pose that fits what's happening — falling back to what this buddy has. */
 function poseFor(name) {
   const character = (settings.characters || []).find((c) => c.id === settings.character);
@@ -665,7 +684,8 @@ function syncMenuItems() {
   const waiting = [...pending.values()].some((p) => !p.acknowledged);
   menuWaiting.classList.toggle('hidden', !waiting);
   menuName.textContent = me.name;
-  menuStatus.textContent = SHORT_STATUS[myStatus] || myStatus;
+  const sleeping = sleepingUntil > Date.now();
+  menuStatus.textContent = sleeping ? 'sleeping' : SHORT_STATUS[myStatus] || myStatus;
 }
 
 function openMenu() {
@@ -674,6 +694,8 @@ function openMenu() {
   usageEl.classList.add('hidden');
   petEl.classList.add('hidden');
   bubbleEl.classList.add('hidden');
+  menuSleepOptions.classList.add('hidden');
+  menuSleep.querySelector('.caret').textContent = '›';
   syncMenuItems();
   menuEl.classList.remove('hidden');
   syncMode();
@@ -734,12 +756,14 @@ function showStack() {
  */
 function applySource() {
   const go = source.goLabel || 'go to terminal ↗';
-  btnGoto.textContent = go;
+  // The card header has very little room. Its destination is explained by the
+  // delayed tooltip; the control itself stays a stable, compact arrow.
   btnQgoto.textContent = go;
   const tip = source.name
     ? `Bring ${source.name} to the front`
     : "Bring this session's window to the front";
-  btnGoto.title = tip;
+  btnGoto.dataset.tooltip = tip;
+  btnGoto.setAttribute('aria-label', tip);
   btnQgoto.title = tip;
 }
 
@@ -804,6 +828,7 @@ function applyPassLabel(req, { move = false } = {}) {
 function paintWhere(req) {
   const line = [req?.name, req?.agentName, req?.source?.name].filter(Boolean).join(' · ');
   cardWhere.textContent = line;
+  cardWhere.style.setProperty('--card-agent', req?.color || me.color);
   cardWhere.classList.toggle('hidden', !line);
 }
 
@@ -2064,6 +2089,8 @@ function showNextRequest(id = null) {
 
   const isApproval = next.type === 'approval';
   const isAnswer = next.type === 'answer';
+  const isReview = next.type === 'review';
+  const isFailure = next.type === 'failure';
   const isPlan = next.variant === 'plan';
   // A plan is a page, not a blurb: the card grows (clippy.css) and syncMode
   // asks main for a window wide and tall enough to read it in.
@@ -2075,12 +2102,16 @@ function showNextRequest(id = null) {
   // session that window heard from most recently.
   if (next.source) source = { ...source, ...next.source };
   applySource();
-  btnCardX.title =
-    next.type === 'review'
+  const closeTip =
+    isReview || isFailure
       ? 'Close'
       : `Close — ${there(next)} will ask you there instead`;
+  btnCardX.dataset.tooltip = closeTip;
+  btnCardX.setAttribute('aria-label', closeTip);
   paintWhere(next);
-  cardTitle.textContent = next.title;
+  cardTitle.textContent = isReview ? `${next.agentName || 'Claude'} Finished` : next.title;
+  cardEl.classList.toggle('review', isReview);
+  cardEl.classList.toggle('failure', isFailure);
 
   // Answerable multiple-choice question — option buttons. The answer is fed
   // straight back to the agent (Claude: updatedInput.answers; Codex: the
@@ -2115,9 +2146,15 @@ function showNextRequest(id = null) {
   // A glance, not a page: the rest is a button away, in a window that can hold
   // it. `next.detail` is kept whole so the reader has something to show even
   // when main had nothing left to send.
-  const shown = summarise(next.detail || '');
-  setMarkdown(cardDetail, shown);
+  const promptShown = isReview ? summarise(next.prompt || '', 110).replace(/\s+/g, ' ') : '';
+  cardPromptPreview.textContent = promptShown;
+  cardPromptRow.classList.toggle('hidden', !promptShown);
+  cardResponseLabel.classList.toggle('hidden', !isReview);
+  const shown = summarise(next.detail || '', isReview ? 150 : isFailure ? 180 : 220);
+  if (isReview) cardDetail.textContent = shown.replace(/\s+/g, ' ');
+  else setMarkdown(cardDetail, shown);
   cardDetail.classList.toggle('hidden', !shown);
+  cardMore.textContent = isReview || isFailure ? 'Read' : 'read it all ↗';
   offerTheRest({ ...next, truncated: next.truncated || shown !== (next.detail || '') });
   cardInput.value = next.draft || '';
   cardInput.placeholder = isPlan
@@ -2132,8 +2169,8 @@ function showNextRequest(id = null) {
   btnAllow.classList.toggle('hidden', !isApproval);
   btnDeny.classList.toggle('hidden', !isApproval);
   btnPass.classList.toggle('hidden', !isApproval || next.noPass); // Drive has no terminal
-  btnGood.classList.toggle('hidden', isApproval);
-  btnFeedback.classList.toggle('hidden', isApproval);
+  btnGood.classList.toggle('hidden', isApproval || isFailure);
+  btnFeedback.classList.toggle('hidden', isApproval || isFailure);
   // On a review card the first click on "Send feedback" opens the box, so the
   // button starts enabled; once the box is open it disables until there's text.
   btnFeedback.disabled = false;
@@ -2160,6 +2197,12 @@ function showNextRequest(id = null) {
  * height.
  */
 function offerTheRest(req) {
+  // A finished-response card is deliberately only one line. Reading is always
+  // available beside it, even when the complete answer happened to be short.
+  if (req.type === 'review' || req.type === 'failure') {
+    cardMore.classList.toggle('hidden', !req.detail);
+    return;
+  }
   const boxed =
     !cardDetail.classList.contains('hidden') &&
     cardDetail.scrollHeight > cardDetail.clientHeight + 2;
@@ -2192,7 +2235,19 @@ cardMore.addEventListener('click', () => {
   // and went away the moment the card was answered. A long message wants a
   // page, and a page wants a window.
   const req = requests.get(activeRequestId);
-  if (req) window.clippyAPI.openReader(req.id, { title: req.title, text: req.detail || req.title });
+  if (req) {
+    if (req.type === 'failure') {
+      window.clippyAPI.openActivityReader(req.title || 'Failure details', req.detail || req.title);
+      return;
+    }
+    window.clippyAPI.openReader(req.id, {
+      title: req.title,
+      prompt: req.prompt || '',
+      text: req.detail || req.title,
+      sessionId: req.sessionId || '',
+      buddy: readerBuddy(),
+    });
+  }
 });
 
 /** "+2 more": how many held requests are stacked up behind this card. */
@@ -2399,7 +2454,9 @@ function handleEvent(evt) {
         sessionId: evt.sessionId || '',
         agentName: evt.agentName || '',
         source: evt.source || null,
-        title: evt.kind === 'approval' ? evt.title : evt.message,
+        color: evt.color || me.color,
+        title: evt.kind === 'approval' ? evt.title : evt.title || evt.message,
+        prompt: evt.prompt || '',
         detail: evt.detail || '',
         // Main kept the rest of it; "read all" comes and gets it.
         truncated: !!evt.truncated,
@@ -2408,6 +2465,27 @@ function handleEvent(evt) {
       });
       if (!activeRequestId) showNextRequest();
       else showQueueDepth(); // another one queued behind the open card
+      break;
+    }
+    case 'failure': {
+      const activity = evt.activity || {};
+      showActivity(evt.name, activity);
+      const id = evt.requestId || `failure-${evt.sessionId || 'session'}-${Date.now()}`;
+      requests.set(id, {
+        id,
+        type: 'failure',
+        name: evt.name,
+        sessionId: evt.sessionId || '',
+        agentName: evt.agentName || '',
+        source: evt.source || null,
+        color: evt.color || me.color,
+        title: evt.title || `${activity.tool || 'Tool'} failed`,
+        detail: evt.detail || activity.error || evt.message || activity.label || 'The tool failed.',
+        expiresAt: 0,
+        holdMs: 1,
+      });
+      if (!activeRequestId) showNextRequest(id);
+      else showQueueDepth();
       break;
     }
     case 'answer': {
@@ -2422,6 +2500,7 @@ function handleEvent(evt) {
         sessionId: evt.sessionId || '',
         agentName: evt.agentName || '',
         source: evt.source || null,
+        color: evt.color || me.color,
         title: evt.title || `${evt.agentName || 'The agent'} is asking you`,
         questions: evt.questions || [],
         expiresAt,
@@ -2555,7 +2634,7 @@ function handleEvent(evt) {
         urgency: evt.urgency,
         name: evt.name,
         lastNudge: 0,
-        snoozedUntil: 0,
+        snoozedUntil: sleepingUntil,
         acknowledged: false,
       };
       pending.set(evt.sessionId, p);
@@ -2784,6 +2863,12 @@ btnCardX.addEventListener('click', () => {
   const req = requests.get(activeRequestId);
   if (!req) return;
   if (req.type === 'review') return decide('ok');
+  if (req.type === 'failure') {
+    requests.delete(activeRequestId);
+    showNextRequest();
+    render();
+    return window.clippyAPI.hide();
+  }
   // An answerable question is waved away; an approval is passed back. Both end
   // up as {} on the wire — the agent asks for itself.
   decide(req.type === 'answer' ? 'dismiss' : 'pass');
@@ -2830,13 +2915,6 @@ btnFix.addEventListener('click', () => {
 
 document.getElementById('btn-ok').addEventListener('click', () => {
   for (const p of pending.values()) p.acknowledged = true;
-  hideBubble();
-  render();
-});
-
-document.getElementById('btn-snooze').addEventListener('click', () => {
-  const until = Date.now() + SNOOZE_MS;
-  for (const p of pending.values()) p.snoozedUntil = until;
   hideBubble();
   render();
 });
@@ -3083,6 +3161,24 @@ document.addEventListener('keydown', (e) => {
     hideUsage();
     hidePet();
   }
+});
+
+menuSleep.addEventListener('click', () => {
+  const opening = menuSleepOptions.classList.contains('hidden');
+  menuSleepOptions.classList.toggle('hidden', !opening);
+  menuSleep.querySelector('.caret').textContent = opening ? '⌄' : '›';
+  syncMode();
+});
+
+document.querySelectorAll('.menu-sleep-for').forEach((button) => {
+  button.addEventListener('click', () => {
+    const minutes = Number(button.dataset.minutes) || 5;
+    sleepingUntil = Date.now() + minutes * 60 * 1000;
+    for (const p of pending.values()) p.snoozedUntil = sleepingUntil;
+    hideBubble();
+    closeMenu();
+    render();
+  });
 });
 
 menuWaiting.addEventListener('click', () => {

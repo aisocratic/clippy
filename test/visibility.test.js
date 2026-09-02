@@ -5,7 +5,7 @@ const assert = require('node:assert');
 const { windowActionFor } = require('../src/visibility');
 
 test('Clippy shows up when Claude is done or wants something', () => {
-  for (const kind of ['attention', 'approval', 'answer', 'question', 'review']) {
+  for (const kind of ['attention', 'approval', 'answer', 'question', 'review', 'failure']) {
     assert.equal(windowActionFor(kind), 'show', kind);
   }
 });

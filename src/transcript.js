@@ -344,6 +344,15 @@ function lastSaid(turns) {
   return '';
 }
 
+/** The latest real prompt the person sent, excluding injected hook machinery. */
+function lastPrompt(turns) {
+  for (let i = (turns || []).length - 1; i >= 0; i--) {
+    const turn = turns[i];
+    if (turn.role === 'user' && turn.kind === 'prompt') return turn.text;
+  }
+  return '';
+}
+
 /** A cold start: the last `limit` turns of a transcript, oldest first. */
 async function readTail(
   file,
@@ -450,6 +459,7 @@ module.exports = {
   turnsFrom,
   readTail,
   lastSaid,
+  lastPrompt,
   createReader,
   dayDirsBetween,
   sameDir,

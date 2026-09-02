@@ -420,7 +420,7 @@ port first wins.
 - **Drag Clippy** anywhere; he floats above full-screen apps on all Spaces, and
   he stays put where you dropped him — cards and the right-click menu grow
   around him instead of nudging him sideways.
-- **Got it** acknowledges everything; **Snooze 5m** pauses the nagging.
+- **Got it** acknowledges everything; the buddy's right-click menu can sleep notifications for 5 minutes, 15 minutes, or 1 hour.
 - The red badge and the menu bar `📎 N` show how many sessions need you.
 - **hide** (hover below Clippy) hides that buddy early; **Show “name”** in the
   menu bar brings it back and keeps it on screen until you hide it again.

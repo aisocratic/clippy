@@ -13,8 +13,21 @@ const {
   dayDirsBetween,
   createReader,
   readTail,
+  lastPrompt,
   localIo,
 } = require('../src/transcript');
+
+test('the latest real user prompt can title a finished response', () => {
+  assert.equal(
+    lastPrompt([
+      { role: 'user', kind: 'prompt', text: 'fix the header' },
+      { role: 'assistant', kind: 'say', text: 'working' },
+      { role: 'user', kind: 'notice', text: '<system-reminder>hidden</system-reminder>' },
+      { role: 'user', kind: 'prompt', text: 'make the response one line' },
+    ]),
+    'make the response one line'
+  );
+});
 
 const tmp = (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clippy-resolve-'));

@@ -44,10 +44,13 @@ function approval(requestId, toolName, toolInput, extra = {}) {
 
 /** An ambient activity line, labelled by the real activityLabel(). */
 function activity(toolName, toolInput, { state = 'start', ok = true } = {}) {
+  const label = activityLabel(toolName, toolInput);
   return evt({
-    kind: 'activity',
+    kind: ok ? 'activity' : 'failure',
     status: 'working',
-    activity: { tool: toolName, label: activityLabel(toolName, toolInput), state, ok },
+    title: ok ? '' : `${toolName} failed`,
+    detail: ok ? '' : `The ${label.toLowerCase()} command failed. Read the complete output for details.`,
+    activity: { tool: toolName, label, state, ok },
   });
 }
 
@@ -105,7 +108,7 @@ const DEV_SCENARIOS = [
     id: 'tool-failed',
     group: 'Ambient',
     label: 'Tool failed',
-    hint: 'A failed tool turns the activity line red and the buddy starts sweating.',
+    hint: 'A failed tool opens a compact problem preview with a Read button.',
     events: [
       activity(
         'Bash',
@@ -118,7 +121,7 @@ const DEV_SCENARIOS = [
     id: 'nudge-urgent',
     group: 'Nudges',
     label: 'Needs you (urgent)',
-    hint: 'Bouncing buddy, speech bubble, Got it / Snooze 5m.',
+    hint: 'Bouncing buddy and a dismissible speech bubble. Sleep durations are in the right-click menu.',
     events: [
       evt({
         kind: 'attention',
@@ -208,6 +211,8 @@ const DEV_SCENARIOS = [
         status: 'waiting',
         requestId: 'dev-review',
         holdSecs: 30,
+        title: 'Claude Finished',
+        prompt: 'Make invoice posting resilient to transient failures and add coverage for retries.',
         message:
           'Claude finished: “Added `withRetry()` around postInvoice — 3 attempts with ' +
           'exponential backoff, 200ms base…”',

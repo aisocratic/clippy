@@ -11,7 +11,6 @@
       <!-- (x) on a held card never answers it. It hands the decision back to
            the agent, which then asks wherever it normally would — so closing
            this is always safe, and never silently an "allow". -->
-      <button class="panel-x" id="btn-card-x" title="Close" aria-label="Close">×</button>
       <div id="card-head">
         <!-- Several agents waiting at once: step through them without
              answering any. Each keeps its own deadline and its own half-typed
@@ -21,19 +20,39 @@
           <button id="card-next" class="pager" title="Next card (→)" aria-label="Next card">›</button>
         </span>
         <span id="card-queue" class="hidden"></span>
-        <button id="btn-goto" class="dim hidden"
-                title="Bring this session's terminal window to the front">go to terminal ↗</button>
+        <span id="card-head-tools">
+          <button id="btn-goto" class="dim delayed-tip hidden"
+                  aria-label="Open this session's window"
+                  data-tooltip="Open this session's window">
+            <svg class="source-arrow" viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M5 11 11 5M6 5h5v5" />
+            </svg>
+          </button>
+          <button class="panel-x delayed-tip" id="btn-card-x"
+                  aria-label="Close this card" data-tooltip="Close this card">×</button>
+        </span>
       </div>
       <!-- Which agent, in which project, in which window. One buddy can answer
            for several sessions at once, so "who is asking" cannot be left to
            the name plate under its feet — it belongs on the card itself. -->
       <div id="card-where" class="hidden"></div>
       <div id="card-title"></div>
-      <div id="card-detail" class="markdown hidden"></div>
-      <!-- Only when there is more of the message than the card is showing:
-           either it was cut before it got here, or it doesn't fit the box. -->
-      <button id="btn-card-more" class="dim hidden"
-              title="Open the whole message in a window you can resize and leave open">read it all ↗</button>
+      <div id="card-summary-row">
+        <div id="card-preview">
+          <div id="card-prompt-row" class="review-preview-line hidden">
+            <span class="review-preview-label">Prompt</span>
+            <span id="card-prompt-preview" class="review-preview-text"></span>
+          </div>
+          <div id="card-response-row" class="review-preview-line">
+            <span id="card-response-label" class="review-preview-label hidden">Response</span>
+            <div id="card-detail" class="markdown hidden"></div>
+          </div>
+        </div>
+        <!-- Review cards always offer the full response in a separate reader.
+             Other cards show this only when their preview was shortened. -->
+        <button id="btn-card-more" class="dim hidden"
+                title="Open the whole message in a window you can resize and leave open">read it all ↗</button>
+      </div>
       <div id="card-options" class="hidden"></div>
       <textarea id="card-input" rows="2" spellcheck="false"></textarea>
       <div id="card-actions">
@@ -41,7 +60,7 @@
         <button id="btn-deny" class="bad">Deny</button>
         <button id="btn-pass" class="dim">Ask me in terminal</button>
         <button id="btn-good" class="good">Looks good</button>
-        <button id="btn-feedback" class="bad">Send feedback</button>
+        <button id="btn-feedback" class="bad">Reply</button>
         <button id="btn-submit" class="good">Submit answer</button>
       </div>
       <div id="card-countdown"><div id="card-countdown-fill"></div></div>
@@ -150,7 +169,6 @@
       <div id="bubble-text" class="markdown"></div>
       <div id="bubble-actions">
         <button id="btn-fix" class="good hidden">Open Settings ↗</button>
-        <button id="btn-snooze">Snooze 5m</button>
       </div>
     </div>
 
@@ -162,6 +180,14 @@
     <div id="menu" class="hidden">
       <div id="menu-head">
         <span id="menu-name">session</span><span id="menu-status">idle</span>
+      </div>
+
+      <button id="menu-sleep" class="menu-item"><span class="mi">🌙</span>Sleep notifications<span class="caret">›</span></button>
+      <div id="menu-sleep-options" class="submenu hidden" aria-label="Sleep notifications for">
+        <span class="submenu-label">Sleep for</span>
+        <button class="menu-item menu-sleep-for" data-minutes="5">5 minutes</button>
+        <button class="menu-item menu-sleep-for" data-minutes="15">15 minutes</button>
+        <button class="menu-item menu-sleep-for" data-minutes="60">1 hour</button>
       </div>
 
       <button id="menu-waiting" class="menu-item hidden"><span class="mi">📨</span>See what's waiting</button>
