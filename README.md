@@ -534,14 +534,10 @@ and read. The rail splits it in two — **Settings**, which is Sessions, Sounds,
 Buddies and Updates, and **Docs**, which is the feature catalogue. One page at a
 time; nothing under Docs changes anything.
 
-- **Sessions** — everything reporting in right now, each with the buddy it's
-  wearing and pickers to **give that session a buddy and a size of its own**.
-  A pick lands on that one row: two agents in the same folder are two buddies,
-  and dressing one never dresses the other. It is also remembered against the
-  folder, so the repo still looks the same tomorrow when that session id is
-  gone — the folder's other agents are pinned to what they were wearing at that
-  moment so they don't come along for the ride. A session with no size of its
-  own follows the default under **Buddies**.
+- **Sessions** — Clippy's own row at the top, with the pickers for **its face
+  and its size**, and under it every agent connected to it: project name, which
+  agent, what it is doing. Clippy never changes with the session, so the agent
+  rows have nothing to pick; click one and Clippy comes to the front for it.
 - **Sounds** — the only noise Clippy makes: a short cue when a hidden buddy
   appears, off until you pick one. Nothing plays for a buddy already on screen.
 - **Buddies** — **one buddy stands in for every agent**, so three agents running
@@ -551,10 +547,8 @@ time; nothing under Docs changes anything.
   has a row of everyone running: talk to the buddy, or pick an agent and type
   straight into its session. Then every character with all nine of its
   animations playing side by side (the same layout as the test bench's
-  workbench), and the default size picker (per-project sizes live beside each
-  session above). Click a character here to make it the first choice for
-  projects currently on screen, or set that preference per project under
-  **Sessions**.
+  workbench), and the default size picker. Clicking a character here plays its
+  next animation; the face Clippy wears is picked on its row under **Sessions**.
   There's a link to [openpets.dev/gallery](https://openpets.dev/gallery) for
   more — paste a pet's page link into the **Add a pet** box right there (or into
   `npm run add-sprite-pack -- <pet url>` in a terminal) and it downloads,

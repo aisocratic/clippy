@@ -180,7 +180,9 @@ const ATTACH_APPS = { terminal: 'Terminal', iterm: 'iTerm' };
 const spawnableAgent = (id) => (Object.hasOwn(tmux.SPAWNABLE, String(id)) ? String(id) : '');
 
 // Settings a renderer must never set directly: each is a collection with its
-// own writer (assignCharacter, rememberRecentProject, saveSpawned).
+// own writer (rememberRecentProject, saveSpawned) or, for the per-project
+// casting maps, a leftover from when a session could be dressed on its own —
+// still read by characterFor, no longer written by anyone.
 const MANAGED = [
   'characterByProject',
   'sizeByProject',
@@ -222,97 +224,6 @@ function loadSettings() {
   } catch {
     // first run / unreadable -> defaults
   }
-}
-
-/** Give one project a buddy of its own (or '' to go back to the automatic one). */
-// How many per-session choices to remember. Trimmed oldest-first rather than
-// grown forever; for string keys, insertion order is age order.
-const SESSION_ASSIGN_CAP = 60;
-
-function rememberForSession(map, sessionId, value) {
-  const next = { ...map };
-  delete next[sessionId]; // re-setting means "most recent", not "keeps its spot"
-  if (value) next[sessionId] = value;
-  const keys = Object.keys(next);
-  for (const stale of keys.slice(0, Math.max(0, keys.length - SESSION_ASSIGN_CAP))) {
-    delete next[stale];
-  }
-  return next;
-}
-
-/**
- * Pin every *other* live buddy in this folder to what it is wearing now.
- *
- * A choice is written against the session and against the project: the session
- * half is what makes it this buddy's and not its twin's, the project half is
- * what makes the folder look the same tomorrow, when this session id is long
- * gone. But the project half would drag the neighbours along, since a buddy
- * with no choice of its own follows the project — so they are given their
- * current look explicitly, first. Nobody moves except the one you picked.
- */
-function pinSiblings(sessionId, name, { size = false } = {}) {
-  for (const other of buddies.values()) {
-    if (other.sessionId === sessionId || other.name !== name) continue;
-    if (size) {
-      if ((settings.sizeBySession || {})[other.sessionId]) continue;
-      settings.sizeBySession = rememberForSession(
-        settings.sizeBySession,
-        other.sessionId,
-        sizeFor(settings, other.name, other.sessionId)
-      );
-    } else {
-      if ((settings.characterBySession || {})[other.sessionId]) continue;
-      settings.characterBySession = rememberForSession(
-        settings.characterBySession,
-        other.sessionId,
-        other.character
-      );
-    }
-  }
-}
-
-/** Give one session's buddy a character (or '' to go back to the automatic one). */
-function assignCharacter(sessionId, character) {
-  if (!sessionId) return;
-  const name = buddyOf(sessionId)?.name || tracker.cwdFor(sessionId).split('/').pop() || '';
-  if (!name) return;
-  const wanted = character && characterIds().includes(character) ? character : '';
-
-  pinSiblings(sessionId, name);
-  settings.characterBySession = rememberForSession(settings.characterBySession, sessionId, wanted);
-
-  const byProject = { ...settings.characterByProject };
-  if (wanted) byProject[name] = wanted;
-  else delete byProject[name];
-  settings.characterByProject = byProject;
-
-  saveSettings();
-  soloFace = ''; // the automatic pick reads these two maps
-  recast();
-  pushSettingsState();
-  sendSettings();
-}
-
-/** Give one project a size of its own (or '' to fall back to the default). */
-function assignSize(sessionId, size) {
-  if (!sessionId) return;
-  const name = buddyOf(sessionId)?.name || tracker.cwdFor(sessionId).split('/').pop() || '';
-  if (!name) return;
-  const wanted = size && SIZES[size] ? size : '';
-
-  pinSiblings(sessionId, name, { size: true });
-  settings.sizeBySession = rememberForSession(settings.sizeBySession, sessionId, wanted);
-
-  const byProject = { ...settings.sizeByProject };
-  if (wanted) byProject[name] = wanted;
-  else delete byProject[name];
-  settings.sizeByProject = byProject;
-
-  saveSettings();
-  // The window that buddy lives in just changed shape.
-  replaceAll();
-  pushSettingsState();
-  sendSettings();
 }
 
 /**
@@ -4624,14 +4535,6 @@ app.whenReady().then(async () => {
     if (what === 'accessibility') askForWindowAccess(null, { force: true });
     if (what === 'copy-path') clipboard.writeText(appBundlePath());
     pushSettingsState();
-  });
-  ipcMain.on('clippy-settings-assign', (_e, payload) => {
-    const { sessionId, character } = payload || {};
-    assignCharacter(String(sessionId || ''), String(character || ''));
-  });
-  ipcMain.on('clippy-settings-assign-size', (_e, payload) => {
-    const { sessionId, size } = payload || {};
-    assignSize(String(sessionId || ''), String(size || ''));
   });
   /**
    * Feedback from the settings window.

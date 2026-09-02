@@ -140,7 +140,7 @@ function renderCast() {
   const onDuty = new Set(sessions.map((s) => s.character));
 
   document.getElementById('cast-note').textContent =
-    'Click a buddy to see its next animation. Choose which session wears it under Sessions.';
+    "Click a buddy to see its next animation. Choose Clippy's face under Sessions.";
 
   for (const character of state.characters) {
     const row = document.createElement('div');
@@ -206,12 +206,12 @@ function renderSizes() {
 }
 
 /**
- * The row for the buddy that stands in for every agent.
+ * Clippy's own row: the one buddy that stands in for every agent.
  *
- * Built from the same pieces as a session row — dot, name, art, a picker —
- * because it is the same kind of thing: a buddy you can look at and re-cast.
- * What it is *not* is a session, so it wears the highlight and says what it is
- * doing rather than which agent it is.
+ * It wears the highlight and says which agent it is speaking for right now;
+ * its face and size are chosen here and nowhere else, because Clippy never
+ * changes with the session. The sessions are listed under it, smaller and
+ * indented, as the agents connected to it.
  */
 function soloRow() {
   const solo = state.solo || {};
@@ -224,8 +224,8 @@ function soloRow() {
 
   const show = document.createElement('button');
   show.className = 'session-name';
-  show.textContent = `${solo.pet || 'One buddy'} · every agent`;
-  show.title = 'Bring the one buddy to the front';
+  show.textContent = 'Clippy';
+  show.title = 'Bring Clippy to the front';
   show.addEventListener('click', () => window.clippySettings.showBuddy('solo'));
 
   const status = document.createElement('span');
@@ -241,7 +241,7 @@ function soloRow() {
   // sprite pack is installed, and a segmented control grew with it.
   const pick = document.createElement('select');
   pick.className = 'session-pick';
-  pick.title = 'Which buddy stands in for every agent';
+  pick.title = 'Which face Clippy wears';
   const auto = document.createElement('option');
   auto.value = '';
   auto.textContent = `Auto (${labelFor(solo.character)})`;
@@ -257,7 +257,7 @@ function soloRow() {
 
   const sizePick = document.createElement('select');
   sizePick.className = 'session-pick session-size';
-  sizePick.title = 'How big the main buddy is drawn';
+  sizePick.title = 'How big Clippy is drawn';
   const autoSize = document.createElement('option');
   autoSize.value = '';
   autoSize.textContent = `Default (${SIZE_LABEL[state.size] || state.size})`;
@@ -407,22 +407,24 @@ function renderSessions() {
   const host = document.getElementById('session-list');
   host.replaceChildren();
 
-  // One buddy for all of them: it goes at the top, because it is the one that
-  // answers for every row under it.
+  // Clippy at the top; every agent connected to it underneath.
   host.appendChild(soloRow());
 
   if (!state.sessions.length) {
     const empty = document.createElement('div');
     empty.className = 'empty-note';
-    empty.textContent =
-      'No sessions yet. Start Claude Code or Codex and the buddy above speaks for it.';
+    empty.textContent = 'No agents yet. Start Claude Code or Codex and Clippy speaks for it.';
     host.appendChild(empty);
     return;
   }
 
+  const agents = document.createElement('div');
+  agents.className = 'agents';
   for (const session of state.sessions) {
+    // An agent row says who and how it is doing, and nothing about looks:
+    // Clippy never changes with the session, so there is nothing to pick here.
     const row = document.createElement('div');
-    row.className = 'session';
+    row.className = 'session agent-session';
 
     const dot = document.createElement('span');
     dot.className = 'dot';
@@ -430,8 +432,8 @@ function renderSessions() {
 
     const show = document.createElement('button');
     show.className = 'session-name';
-    show.textContent = `${labelFor(session.character)} · ${session.name}`;
-    show.title = `Bring ${labelFor(session.character)} to the front`;
+    show.textContent = session.name;
+    show.title = 'Bring Clippy to the front for this agent';
     show.addEventListener('click', () => window.clippySettings.showBuddy(session.sessionId));
 
     const status = document.createElement('span');
@@ -439,63 +441,10 @@ function renderSessions() {
     const agentName = { claude: 'Claude', codex: 'Codex', openclaw: 'OpenClaw' }[session.agent] || 'Claude';
     status.textContent = `${agentName} · ${STATUS_TEXT[session.status] || session.status || ''}`;
 
-    // This one buddy's own. The choice is kept against the session (so the
-    // folder's other agents keep theirs) and against the project (so the repo
-    // still looks the same tomorrow) — see assignCharacter in src/main.js.
-    const assigned =
-      (state.characterBySession || {})[session.sessionId] ||
-      (state.characterByProject || {})[session.name] ||
-      '';
-    const pick = document.createElement('select');
-    pick.className = 'session-pick';
-    pick.title = 'Which buddy this session gets';
-    const auto = document.createElement('option');
-    auto.value = '';
-    auto.textContent = `Auto (${labelFor(session.character)})`;
-    pick.appendChild(auto);
-    for (const character of state.characters) {
-      const option = document.createElement('option');
-      option.value = character.id;
-      option.textContent = character.label;
-      pick.appendChild(option);
-    }
-    pick.value = assigned;
-    pick.addEventListener('change', () =>
-      window.clippySettings.assign(session.sessionId, pick.value)
-    );
-
-    // …and how big it is drawn, kept the same way. A repo you watch out of the
-    // corner of your eye can be XS while the one you're in is large.
-    const assignedSize =
-      (state.sizeBySession || {})[session.sessionId] ||
-      (state.sizeByProject || {})[session.name] ||
-      '';
-    const sizePick = document.createElement('select');
-    sizePick.className = 'session-pick session-size';
-    sizePick.title = 'How big this session’s buddy is drawn';
-    const autoSize = document.createElement('option');
-    autoSize.value = '';
-    autoSize.textContent = `Default (${SIZE_LABEL[state.size] || state.size})`;
-    sizePick.appendChild(autoSize);
-    for (const size of state.sizes) {
-      const option = document.createElement('option');
-      option.value = size.id;
-      option.textContent = SIZE_LABEL[size.id] || size.id;
-      sizePick.appendChild(option);
-    }
-    sizePick.value = assignedSize;
-    sizePick.addEventListener('change', () =>
-      window.clippySettings.assignSize(session.sessionId, sizePick.value)
-    );
-
-    const art = document.createElement('span');
-    art.className = 'session-art';
-    const character = state.characters.find((c) => c.id === (assigned || session.character));
-    if (character) art.appendChild(poseArt(character, posesOf(character)[0], 28));
-
-    row.append(dot, show, status, art, pick, sizePick);
-    host.appendChild(row);
+    row.append(dot, show, status);
+    agents.appendChild(row);
   }
+  host.appendChild(agents);
 }
 
 /* ---------- Wiring ---------- */

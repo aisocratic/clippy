@@ -882,6 +882,41 @@ select:disabled {
   image-rendering: pixelated;
 }
 
+/* The agents connected to Clippy: smaller, pushed right under its row, with a
+   line down the left tying them to it. They carry no pickers — Clippy's look
+   is Clippy's, whoever it is speaking for. */
+.agents {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-left: 34px;
+  padding-left: 14px;
+  border-left: 2px solid var(--line);
+}
+
+.agent-session {
+  gap: 9px;
+  padding: 6px 12px;
+  border-width: 1px;
+  border-color: var(--line);
+  box-shadow: none;
+  background: var(--surface-2);
+}
+
+.agent-session .session-name {
+  font-size: 11.5px;
+  font-weight: 500;
+}
+
+.agent-session .dot {
+  width: 7px;
+  height: 7px;
+}
+
+.agent-session .session-status {
+  font-size: 10.5px;
+}
+
 /* The size picker beside it holds four short words, so it never needs the
    room the character list does. */
 .session-size {

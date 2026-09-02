@@ -135,6 +135,4 @@ test('the shared buddy keeps one face, and drops it whenever it could change', (
   assert.match(main, /const forgetFaces = \(\) => \{\s*castCache = null;\s*soloFace = '';/);
   const setting = main.slice(main.indexOf("if (key === 'soloCharacter')"));
   assert.match(setting.slice(0, 200), /soloFace = ''/, 'a new choice is picked again');
-  const assign = main.slice(main.indexOf('function assignCharacter('));
-  assert.match(assign.slice(0, 1400), /soloFace = ''/, 'an assignment is picked again');
 });
