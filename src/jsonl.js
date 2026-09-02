@@ -78,10 +78,16 @@ async function readBackward(file, visit, { chunkBytes = TAIL_BYTES, maxLineBytes
       const bytes = filled === block.length ? block : block.subarray(0, filled);
       let lineEnd = bytes.length;
 
-      for (let i = bytes.length - 1; i >= 0; i--) {
-        if (bytes[i] !== 0x0a) continue; // JSONL is delimited by LF
+      // `lastIndexOf` is a native scan for the delimiter; walking the block a
+      // byte at a time in JS costs more than reading it did, and a transcript
+      // is tens of megabytes of blocks.
+      let search = bytes.length - 1;
+      while (search >= 0) {
+        const i = bytes.lastIndexOf(0x0a, search); // JSONL is delimited by LF
+        if (i === -1) break;
         const head = bytes.subarray(i + 1, lineEnd);
         lineEnd = i;
+        search = i - 1;
         if (head.length + partsBytes > maxLineBytes) {
           lineParts = [];
           partsBytes = 0;
@@ -169,8 +175,10 @@ async function readForward(
       const bytes = filled === block.length ? block : block.subarray(0, filled);
 
       let from = 0;
-      for (let i = 0; i < bytes.length; i++) {
-        if (bytes[i] !== 0x0a) continue;
+      for (;;) {
+        // Native delimiter scan; see readBackward.
+        const i = bytes.indexOf(0x0a, from);
+        if (i === -1) break;
         const piece = bytes.subarray(from, i);
         from = i + 1;
         if (restBytes + piece.length <= maxLineBytes) {

@@ -12,6 +12,24 @@ const { setMarkdown } = window.ClippyMarkdown;
 let interactive = false;
 let buddyTimer = null;
 
+/**
+ * A link in the text opens in the browser, not in here.
+ *
+ * This is the one window built for reading a long answer, and the links in it
+ * did nothing at all: main refuses to navigate any Clippy window (its preload
+ * would follow it to wherever it landed), and the reader's bridge — unlike the
+ * buddy's — has no openExternal to offer instead. `window.open` is the path
+ * main leaves open for exactly this: its window-open handler hands an https URL
+ * to the browser and denies the window. Only markdown.js writes these anchors,
+ * and only after the href has survived safeHttpsUrl.
+ */
+document.addEventListener('click', (event) => {
+  const link = event.target.closest?.('a[data-clippy-external]');
+  if (!link) return;
+  event.preventDefault();
+  if (link.protocol === 'https:') window.open(link.href, '_blank', 'noopener');
+});
+
 function renderBuddy(buddy) {
   clearInterval(buddyTimer);
   buddyTimer = null;
@@ -50,7 +68,9 @@ function renderBuddy(buddy) {
   const height = spec.frameHeight * scale;
   sheet.style.width = `${width}px`;
   sheet.style.height = `${height}px`;
-  sheet.style.backgroundImage = `url("${pose.file}")`;
+  // Escaped even though main vets sheet filenames: a quote in here would end
+  // the url() and turn the rest of the name into style.
+  sheet.style.backgroundImage = `url("${CSS.escape(pose.file)}")`;
   sheet.style.backgroundSize = `${width * spec.columns}px ${height * spec.rows}px`;
   sheet.style.backgroundPosition = `0 -${pose.row * height}px`;
   sheet.classList.remove('hidden');

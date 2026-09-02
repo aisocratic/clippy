@@ -135,7 +135,7 @@ function preloadStageImages() {
 
 /* ---------------- the message protocol, shared by every frame ---------------- */
 
-const post = (win, type, payload) => win.postMessage({ __clippyDemo: true, type, payload }, '*');
+const { post, isBridgeMessage } = window.ClippyBench;
 
 /** Frames start empty and say 'ready' when clippy.js is listening. Until then
  *  everything — settings, events, and the timers of a running story — waits. */
@@ -271,25 +271,19 @@ function playSteps(steps, tag, label, button) {
   });
 }
 
-/** Steps the page performs rather than the renderer. */
-function runAction(action) {
-  switch (action.do) {
-    case 'usage':
-      sendOrQueue(live, 'poke', { button: 'left' });
-      break;
-    case 'usage-close':
-    case 'poke-menu':
-      sendOrQueue(live, 'poke-menu', { item: action.item || 'btn-usage-close' });
-      break;
-    case 'set':
-      live.settings = { ...live.settings, [action.key]: action.value };
-      if (action.key === 'character') pickCharacter.value = action.value;
-      if (action.key === 'size') pickSize.value = action.value;
+/** Steps the page performs rather than the renderer. The dispatcher is shared
+ *  with the bench (demo/bridge.js); dock and walk-to-prompt move a real window,
+ *  and a frame has nothing to move, so they are simply not offered here. */
+const runAction = (action) =>
+  window.ClippyBench.runAction(action, {
+    send: (type, payload) => sendOrQueue(live, type, payload),
+    setSetting: (key, value) => {
+      live.settings = { ...live.settings, [key]: value };
+      if (key === 'character') pickCharacter.value = value;
+      if (key === 'size') pickSize.value = value;
       sendOrQueue(live, 'settings', live.settings);
-      break;
-    // dock / walk-to-prompt move a real window; a frame has nothing to move.
-  }
-}
+    },
+  });
 
 const motionOnly = (scenario) =>
   (scenario.steps || []).length > 0 &&
@@ -607,8 +601,8 @@ function resetAllFlows() {
 }
 
 window.addEventListener('message', (event) => {
+  if (!isBridgeMessage(event)) return;
   const message = event.data;
-  if (!message || message.__clippyDemo !== true) return;
   const state = frames.find((frame) => frame.iframe.contentWindow === event.source);
   if (!state) return;
   if (message.type === 'ready') {

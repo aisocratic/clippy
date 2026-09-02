@@ -24,6 +24,18 @@ let state = { characters: [], sizes: [], actions: [], sessions: [] };
 const sheetTimers = [];
 const previewPose = new Map();
 
+/**
+ * Sprite previews are stepped by an interval each, and every render builds new
+ * elements for them — so the old timers have to go, or they carry on stepping
+ * nodes that are no longer on the page. One call at the top of render() covers
+ * the cast, the sessions and the solo row together; the clearing used to live
+ * at two call sites instead, and the third — every click on a size or a sound,
+ * which goes through set() — left another set of intervals running.
+ */
+function clearSheetTimers() {
+  while (sheetTimers.length) clearInterval(sheetTimers.pop());
+}
+
 /* ---------- Buddies ---------- */
 
 /**
@@ -34,6 +46,10 @@ function poseArt(character, pose, height = 64) {
   if (character.vector) {
     const colour = (state.sessions[0] || {}).color || '#9aa3ad';
     const svg = window.ClippyVectors.create(character.vector, pose.name, colour);
+    // A character naming a drawing this build does not have gets nothing rather
+    // than taking the whole page down with it — the same guard the buddy
+    // window uses for the same call.
+    if (!svg) return document.createElement('span');
     svg.style.height = `${height}px`;
     svg.style.width = `${Math.round(height * 0.8)}px`;
     return svg;
@@ -55,7 +71,8 @@ function poseArt(character, pose, height = 64) {
   el.className = 'sheet';
   el.style.width = `${w}px`;
   el.style.height = `${h}px`;
-  el.style.backgroundImage = `url("${pose.file}")`;
+  // Escaped even though main vets sheet filenames: a quote would end the url().
+  el.style.backgroundImage = `url("${CSS.escape(pose.file)}")`;
   el.style.backgroundSize = `${w * columns}px ${h * rows}px`;
   el.style.backgroundRepeat = 'no-repeat';
 
@@ -146,10 +163,11 @@ function renderCast() {
     poseName.className = 'cast-pose-name';
     poseName.textContent = pose.label;
     who.append(art, name, poseName);
+    // The whole page, not only the cast: clearing the timers stops the session
+    // rows' sprites too, and they only come back when their art is rebuilt.
     who.addEventListener('click', () => {
       previewPose.set(character.id, (poseIndex + 1) % poses.length);
-      while (sheetTimers.length) clearInterval(sheetTimers.pop());
-      renderCast();
+      render();
     });
 
     row.appendChild(who);
@@ -513,6 +531,7 @@ function set(key, value) {
 }
 
 function render() {
+  clearSheetTimers();
   renderAccess();
   renderSound();
   renderSizes();
@@ -534,8 +553,6 @@ for (const link of document.querySelectorAll('a[href^="https://"]')) {
 }
 
 window.clippySettings.onState((next) => {
-  // Sprite animations are re-created on every render; drop the old timers.
-  while (sheetTimers.length) clearInterval(sheetTimers.pop());
   state = { ...state, ...next };
   render();
   syncRailSelection();

@@ -104,8 +104,27 @@ function ancestorsOf(pid, table, { maxHops = 12 } = {}) {
   return chain;
 }
 
-/** AppleScript string literal (the only characters that matter are " and \). */
-const q = (s) => `"${String(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+/**
+ * An AppleScript string literal.
+ *
+ * `"` and `\` are the two characters that would end the literal or start an
+ * escape, and a line break is the third: AppleScript has no multi-line string,
+ * so a raw newline is a *syntax error* in the middle of the script, not a
+ * character in the string. Folder names are allowed newlines on macOS
+ * (`mkdir $'a\nb'`), and one reaching the window hint used to break the whole
+ * script — every window lookup failing for as long as that project was open.
+ * The three escapes AppleScript does understand (\n, \r, \t) cover it; any
+ * other control character is dropped, since none of them can be typed at a
+ * terminal usefully and none of them survive a script literal.
+ */
+const q = (s) =>
+  `"${String(s)
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"')
+    .replace(/\n/g, '\\n')
+    .replace(/\r/g, '\\r')
+    .replace(/\t/g, '\\t')
+    .replace(/[\x00-\x1f\x7f]/g, '')}"`;
 
 // Every script answers with "x,y,w,h" (screen coords, top-left origin) or the
 // literal "none" so one parser handles them all.

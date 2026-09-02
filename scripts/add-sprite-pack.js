@@ -120,28 +120,50 @@ function imageSize(file) {
 }
 
 /**
+ * A URL we are willing to pull an archive from. Packs are third-party archives
+ * that get unpacked and copied into the app's own asset folder, so the download
+ * has to be authenticated by TLS (plain http is somebody else's zip) and come
+ * from the catalog this script actually knows. The catalog's own zips live on
+ * zip.openpets.dev, hence the subdomain match — and the catalog is remote JSON,
+ * so the URLs it hands back go through here too, not just the ones typed in.
+ */
+function packUrl(value) {
+  let url;
+  try {
+    url = new URL(String(value));
+  } catch {
+    throw new Error(`not a usable pack URL: ${value}`);
+  }
+  if (url.protocol !== 'https:') {
+    throw new Error(`sprite packs are only downloaded over https, got ${url.protocol}//`);
+  }
+  if (!/(^|\.)openpets\.dev$/i.test(url.hostname)) {
+    throw new Error(`only openpets.dev URLs (or direct .zip links on it) are understood, got ${url.hostname}`);
+  }
+  return url.href;
+}
+
+/**
  * Which zip a URL or bare pet id means, given the openpets catalog. Pure so
  * it can be tested without the network: a direct .zip URL is itself; a pet
  * page URL carries its slug in /pets/<slug>/; anything else is tried as an id.
  */
 function zipUrlFor(arg, pets) {
   if (/^https?:\/\//i.test(arg)) {
-    const url = new URL(arg);
-    if (url.pathname.endsWith('.zip')) return arg;
-    if (!/(^|\.)openpets\.dev$/i.test(url.hostname)) {
-      throw new Error(`only openpets.dev URLs (or direct .zip links) are understood, got ${url.hostname}`);
-    }
+    const href = packUrl(arg);
+    if (new URL(href).pathname.endsWith('.zip')) return href;
+    const url = new URL(href);
     const slug = (url.pathname.match(/\/pets\/([^/]+)/) || [])[1];
     const wanted = slug || url.pathname.split('/').filter(Boolean).pop() || '';
     const pet = pets.find(
       (p) => p.id === wanted || String(p.zip || '').includes(`/pets/${wanted}/`)
     );
     if (!pet || !pet.zip) throw new Error(`no pet matching “${wanted}” in the openpets catalog`);
-    return pet.zip;
+    return packUrl(pet.zip);
   }
   const pet = pets.find((p) => p.id === arg || String(p.zip || '').includes(`/pets/${arg}/`));
   if (!pet || !pet.zip) throw new Error(`no pet named “${arg}” in the openpets catalog`);
-  return pet.zip;
+  return packUrl(pet.zip);
 }
 
 /**
@@ -164,10 +186,47 @@ async function catalogPets(manifest, getJson) {
   return loaded.flatMap((page) => (Array.isArray(page?.pets) ? page.pets : []));
 }
 
-/** Fetch a URL-or-id pack into a temp folder and hand back that folder. */
+/**
+ * The response body with the cap applied *while* it arrives rather than after.
+ * arrayBuffer() buffers whatever the server chooses to send before anyone gets
+ * to check its size, so a hostile or broken host could hand us gigabytes and
+ * the 50MB test would only run once the memory was already gone.
+ */
+async function readCapped(res, limit) {
+  const declared = Number(res.headers.get('content-length'));
+  if (declared > limit) throw new Error(`zip is ${declared} bytes — over the 50MB cap`);
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of res.body) {
+    size += chunk.length;
+    if (size > limit) throw new Error(`zip is over the 50MB cap`);
+    chunks.push(Buffer.from(chunk));
+  }
+  return Buffer.concat(chunks);
+}
+
+/**
+ * A zip can carry symlinks, and ditto restores them faithfully: a pack whose
+ * "sheet.webp" is really a link to something in the home directory would be
+ * copied into the app's asset folder as if it were art. No sprite pack needs
+ * links, so one anywhere in the tree fails the install.
+ */
+function assertNoLinks(dir) {
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (entry.isSymbolicLink()) {
+      throw new Error(`the pack contains a symlink (${entry.name}) — refusing to install it`);
+    }
+    if (entry.isDirectory()) assertNoLinks(path.join(dir, entry.name));
+  }
+}
+
+/**
+ * Fetch a URL-or-id pack into a temp folder. Returns the folder holding the
+ * pack and the temp root the caller has to delete afterwards.
+ */
 async function fetchPack(arg) {
   const getJson = async (url) => {
-    const res = await fetch(url, { headers: { 'User-Agent': 'clippy-for-claude' } });
+    const res = await fetch(packUrl(url), { headers: { 'User-Agent': 'clippy-for-claude' } });
     if (!res.ok) throw new Error(`openpets catalog answered ${res.status}`);
     return res.json();
   };
@@ -176,8 +235,7 @@ async function fetchPack(arg) {
   console.log(`downloading ${zipUrl}`);
   const zipRes = await fetch(zipUrl, { headers: { 'User-Agent': 'clippy-for-claude' } });
   if (!zipRes.ok) throw new Error(`download answered ${zipRes.status}`);
-  const buf = Buffer.from(await zipRes.arrayBuffer());
-  if (buf.length > MAX_ZIP_BYTES) throw new Error(`zip is ${buf.length} bytes — over the 50MB cap`);
+  const buf = await readCapped(zipRes, MAX_ZIP_BYTES);
   if (buf.slice(0, 2).toString('ascii') !== 'PK') throw new Error('that is not a zip file');
 
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'clippy-pack-'));
@@ -189,7 +247,8 @@ async function fetchPack(arg) {
   // Awaited, not sync: the settings window's "add a pet" runs this on the
   // Electron main process, which must not freeze while a 50MB zip unpacks.
   await execFileAsync('ditto', ['-x', '-k', zipFile, out]);
-  return out;
+  assertNoLinks(out);
+  return { dir: out, tmp };
 }
 
 /**
@@ -200,9 +259,22 @@ async function fetchPack(arg) {
  */
 async function installPack(src, opts = {}) {
   // A URL or a name that isn't a folder here: fetch it from openpets.dev.
-  // Packs zip up either flat or inside a folder of their own name.
   const fetched = /^https?:\/\//i.test(src) || !fs.existsSync(path.resolve(src));
-  let dir = fetched ? await fetchPack(src) : path.resolve(src);
+  if (!fetched) return installFromFolder(path.resolve(src), opts);
+  const { dir, tmp } = await fetchPack(src);
+  try {
+    return installFromFolder(dir, opts);
+  } finally {
+    // Otherwise every install leaves the zip and its unpacked copy — up to
+    // 100MB a go — sitting in the temp directory for the OS to deal with.
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
+/** The install proper, from a folder on disk. Packs zip up either flat or
+ *  inside a folder of their own name, so look one level down for the pet.json. */
+function installFromFolder(from, opts) {
+  let dir = from;
   if (!fs.existsSync(path.join(dir, 'pet.json'))) {
     const nested = fs
       .readdirSync(dir, { withFileTypes: true })
@@ -227,7 +299,11 @@ async function installPack(src, opts = {}) {
       ''
   );
   const sheetFile = path.join(dir, sheetName);
-  if (!sheetName || !fs.existsSync(sheetFile)) throw new Error(`no sprite sheet in ${dir}`);
+  // lstat, not exists: the sheet has to be a real file in the pack, never a
+  // link the archive planted pointing at something else on this machine.
+  if (!sheetName || !fs.lstatSync(sheetFile, { throwIfNoEntry: false })?.isFile()) {
+    throw new Error(`no sprite sheet in ${dir}`);
+  }
 
   // The id becomes a folder name under THEMES_DIR, so it must be a plain name:
   // no separators (sanitized away) and never just dots.
@@ -302,4 +378,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { imageSize, zipUrlFor, catalogPets, installPack };
+module.exports = { imageSize, packUrl, zipUrlFor, catalogPets, assertNoLinks, installPack };

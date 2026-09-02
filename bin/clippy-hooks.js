@@ -397,16 +397,52 @@ function defaultAgents() {
 function readSettings(settingsPath) {
   if (!fs.existsSync(settingsPath)) return {};
   const raw = fs.readFileSync(settingsPath, 'utf8');
+  let parsed;
   try {
-    return raw.trim() ? JSON.parse(raw) : {};
+    parsed = raw.trim() ? JSON.parse(raw) : {};
   } catch (err) {
     throw new Error(`${settingsPath} is not valid JSON; fix it first (${err.message})`);
   }
+  // An array or a bare string is valid JSON and would sail through — and then
+  // lose everything it held the moment we hang hooks off it and stringify it
+  // back. Refuse it the same way we refuse a file that doesn't parse at all.
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error(`${settingsPath} is not valid JSON settings (expected an object); fix it first`);
+  }
+  return parsed;
 }
 
+/**
+ * Replace the settings file in one step.
+ *
+ * This edits the user's real ~/.claude/settings.json, and a plain writeFileSync
+ * truncates it before it writes a byte: a crash, a full disk or two installs
+ * racing each other left them with no Claude Code config at all. Writing a
+ * sibling temp file and renaming over the target makes the swap atomic — a
+ * reader sees either the old file or the new one, never half of one.
+ *
+ * The rename lands on the resolved path, so a settings.json symlinked into a
+ * dotfiles repo still points there afterwards, and the existing file's mode is
+ * carried over (a new one is 0600: these commands are the user's own business).
+ */
 function writeSettings(settingsPath, settings) {
   fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
-  fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n');
+  let target = settingsPath;
+  let mode = 0o600;
+  try {
+    target = fs.realpathSync(settingsPath);
+    mode = fs.statSync(target).mode & 0o777;
+  } catch {
+    // no file there yet — write a fresh one at the path we were given
+  }
+  const tmp = path.join(path.dirname(target), `.${path.basename(target)}.${process.pid}.tmp`);
+  try {
+    fs.writeFileSync(tmp, JSON.stringify(settings, null, 2) + '\n', { mode });
+    fs.renameSync(tmp, target);
+  } catch (err) {
+    fs.rmSync(tmp, { force: true });
+    throw err;
+  }
 }
 
 function openclawTarget(settingsPath) {
@@ -525,6 +561,8 @@ module.exports = {
   installOpenclawHooks,
   installToFiles,
   settingsPathFor,
+  readSettings,
+  writeSettings,
   uninstallHooks,
   uninstallOpenclawHooks,
   listInstalled,

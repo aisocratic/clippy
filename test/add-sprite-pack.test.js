@@ -2,7 +2,10 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { zipUrlFor, catalogPets } = require('../scripts/add-sprite-pack');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { zipUrlFor, catalogPets, assertNoLinks } = require('../scripts/add-sprite-pack');
 
 // A slice of the real catalog's shape: id, and a zip whose path carries the
 // gallery slug.
@@ -23,6 +26,37 @@ test('a direct zip link is taken as-is; other hosts are refused', () => {
   const direct = 'https://zip.openpets.dev/pets/nori-openpets/nori.zip';
   assert.equal(zipUrlFor(direct, []), direct);
   assert.throws(() => zipUrlFor('https://example.com/pets/nori/', PETS), /openpets\.dev/);
+});
+
+test('a pack is only ever downloaded over https, from openpets.dev', () => {
+  // A pack is an archive we unpack and copy into the app's asset folder, so
+  // plaintext http (anyone on the wire chooses the bytes) is refused outright.
+  assert.throws(
+    () => zipUrlFor('http://zip.openpets.dev/pets/nori-openpets/nori.zip', PETS),
+    /https/
+  );
+  assert.throws(() => zipUrlFor('http://openpets.dev/pets/tmuxai-openpets/', PETS), /https/);
+  // …and so is a direct .zip link on somebody else's host.
+  assert.throws(() => zipUrlFor('https://evil.example/pets/nori.zip', PETS), /openpets\.dev/);
+
+  // The catalog itself is remote JSON, so the URL it hands back gets the same
+  // treatment as one that was typed in.
+  const hijacked = [{ id: 'nori', zip: 'http://evil.example/nori.zip' }];
+  assert.throws(() => zipUrlFor('nori', hijacked), /https/);
+});
+
+test('a pack carrying a symlink is refused rather than installed', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clippy-pack-links-'));
+  fs.mkdirSync(path.join(dir, 'art'));
+  fs.writeFileSync(path.join(dir, 'art', 'sheet.webp'), 'RIFF');
+  assert.doesNotThrow(() => assertNoLinks(dir));
+
+  // ditto restores a zip's symlinks faithfully, so a "sheet" that is really a
+  // link to something in the home directory would otherwise be copied in as art.
+  fs.symlinkSync(path.join(os.homedir(), '.ssh', 'id_rsa'), path.join(dir, 'art', 'secret.webp'));
+  assert.throws(() => assertNoLinks(dir), /symlink/);
+
+  fs.rmSync(dir, { recursive: true, force: true });
 });
 
 test('a pet the catalog has never heard of says so', () => {

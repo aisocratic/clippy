@@ -23,6 +23,7 @@
  */
 
 const fsp = require('node:fs/promises');
+const os = require('node:os');
 const path = require('node:path');
 const { readBackward, readForward, parseLine, EMPTY } = require('./jsonl');
 
@@ -106,6 +107,49 @@ const encodeProjectDir = (cwd) => String(cwd).replace(/[/._]/g, '-');
 /** Where Claude Code will write a session we named ourselves. */
 const claudeTranscriptPath = (projectsDir, cwd, sessionId) =>
   path.join(projectsDir, encodeProjectDir(cwd), `${sessionId}.jsonl`);
+
+/**
+ * The directories an agent keeps its transcripts in.
+ *
+ * Computed once: this sits on the path that records every hook's
+ * `transcript_path`, which is several times a second while a session is busy.
+ */
+let cachedRoots = null;
+function transcriptRoots() {
+  if (!cachedRoots) {
+    const home = os.homedir();
+    cachedRoots = [
+      process.env.CLAUDE_CONFIG_DIR,
+      process.env.CODEX_HOME,
+      path.join(home, '.claude'),
+      path.join(home, '.codex'),
+      path.join(home, '.openclaw'),
+    ]
+      .filter(Boolean)
+      .map((dir) => path.resolve(dir));
+  }
+  return cachedRoots;
+}
+
+/**
+ * Is this a path we are willing to open as a transcript?
+ *
+ * `transcript_path` arrives inside a hook payload — i.e. from outside the app —
+ * and everything downstream opens it: the usage sweep, the recap on a review
+ * card, the "recent messages" panel. A forged hook must not be able to point
+ * Clippy at `~/.ssh/id_rsa` and have its contents read into a card, so a path
+ * is taken only if it is a `.jsonl` file inside one of the agent directories.
+ *
+ * Containment is by resolved prefix, so `..` cannot climb out. Symlinks are
+ * deliberately not resolved: anything able to plant one inside `~/.claude` can
+ * already write there, and the check has to stay synchronous to sit on the
+ * hook path.
+ */
+function isTranscriptPath(file, roots = transcriptRoots()) {
+  if (typeof file !== 'string' || !file.endsWith('.jsonl') || file.includes('\0')) return false;
+  const resolved = path.resolve(file);
+  return roots.some((root) => resolved.startsWith(root + path.sep));
+}
 
 /** Two paths pointing at the same directory, give or take a trailing slash. */
 const sameDir = (a, b) =>
@@ -462,6 +506,8 @@ module.exports = {
   lastPrompt,
   createReader,
   dayDirsBetween,
+  isTranscriptPath,
+  transcriptRoots,
   sameDir,
   localIo,
   MAX_CATCHUP,

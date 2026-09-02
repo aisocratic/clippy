@@ -37,6 +37,9 @@ function loadDemoApi() {
   const window = {
     parent: { postMessage() {} },
     addEventListener() {},
+    // The stub posts at its parent by origin rather than to '*', so the fake
+    // window needs the one every real one has.
+    location: { origin: 'http://127.0.0.1:43119', search: '' },
   };
   const document = {
     readyState: 'complete',
@@ -159,7 +162,7 @@ test('a buddy can show what the session Clippy started has been saying', () => {
   assert.match(html, /id="menu-feed"/);
   // The panel has to be in PANELS, or syncMode never measures it and the
   // window stays buddy-sized around it.
-  assert.match(buddy, /const PANELS = \[[^\]]*'feed'/);
+  assert.match(buddy, /const PANELS = \[[^\]]*feedEl/);
   // Reachable in one click from the action bar, not only by knowing to
   // right-click. (This used to assert `CONTROL_HOSTS` contained 'feed' — the
   // row was re-parented into whichever panel was open, and the feed was one of

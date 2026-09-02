@@ -141,7 +141,10 @@ function normalizeAnswerLists(raw) {
   }
   if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return null;
 
-  const answers = {};
+  // No prototype: a question literally called `__proto__` is a key like any
+  // other here, and assigning it on a plain object would silently vanish (or
+  // reshape the object) instead of becoming an answer.
+  const answers = Object.create(null);
   for (const [question, value] of Object.entries(obj)) {
     const list = (Array.isArray(value) ? value : [value])
       .map((v) => String(v ?? '').trim())
@@ -162,7 +165,7 @@ function normalizeAnswers(raw) {
   }
   if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return null;
 
-  const answers = {};
+  const answers = Object.create(null); // see normalizeAnswerLists
   for (const [question, value] of Object.entries(obj)) {
     const text = Array.isArray(value)
       ? value.map((v) => String(v ?? '').trim()).filter(Boolean).join(', ')
@@ -199,11 +202,13 @@ function toHookResponse(event, action, message = '', { toolInput, source, toolNa
       const answers = action === 'answer' ? normalizeAnswerLists(message) : null;
       if (!answers) return {}; // pass / dismiss / timeout -> native Codex picker
 
-      const byId = {};
+      // Both the question text and the id come from the tool's own arguments,
+      // so neither is allowed to name a prototype slot instead of a key.
+      const byId = Object.create(null);
       for (const q of Array.isArray(toolInput?.questions) ? toolInput.questions : []) {
-        const selected = answers[q.question];
+        const selected = q && typeof q.question === 'string' ? answers[q.question] : null;
         if (!selected || !q.id) continue;
-        byId[q.id] = { answers: selected };
+        byId[String(q.id)] = { answers: selected };
       }
       if (Object.keys(byId).length === 0) return {};
 
@@ -258,8 +263,21 @@ function toHookResponse(event, action, message = '', { toolInput, source, toolNa
   return {};
 }
 
-const clipTo = (s, n) =>
-  String(s ?? '').length > n ? `${String(s).slice(0, n)}…` : String(s ?? '');
+const clipTo = (s, n) => {
+  const text = String(s ?? '');
+  return text.length > n ? `${text.slice(0, n)}…` : text;
+};
+
+/** `JSON.stringify` that survives whatever an agent put in a tool's arguments. */
+function safeJson(value) {
+  try {
+    return JSON.stringify(value, null, 1) ?? '';
+  } catch {
+    // Circular, a BigInt, a throwing toJSON — the card is worth showing without
+    // its detail, and a thrown card is a hook nobody ever answers.
+    return '';
+  }
+}
 
 /* What "read all" is allowed to hand back. A card cut at 400 characters is a
    card doing its job; a 4MB file pasted into a window over someone's desktop
@@ -275,12 +293,17 @@ const FULL_DETAIL_MAX = 20000;
  * to show the rest.
  */
 function describeToolCall(toolName, toolInput = {}) {
-  const card = describeWith(toolName, toolInput, (s, n = 700) => clipTo(s, n));
-  const whole = describeWith(toolName, toolInput, (s) => clipTo(s, FULL_DETAIL_MAX));
+  // The two passes render the same fields at two different lengths. Tool input
+  // comes from the agent and can be most of a megabyte, so the one part that is
+  // expensive to build — an unknown tool's JSON dump — is built once and shared
+  // rather than stringified twice for the sake of clipping it twice.
+  const shared = {};
+  const card = describeWith(toolName, toolInput, (s, n = 700) => clipTo(s, n), shared);
+  const whole = describeWith(toolName, toolInput, (s) => clipTo(s, FULL_DETAIL_MAX), shared);
   return { ...card, fullDetail: whole.detail === card.detail ? '' : whole.detail };
 }
 
-function describeWith(toolName, toolInput, clip) {
+function describeWith(toolName, toolInput, clip, shared = {}) {
   switch (toolName) {
     case 'Bash':
       return {
@@ -337,7 +360,8 @@ function describeWith(toolName, toolInput, clip) {
       return { title: first.question ? clip(first.question, 90) : 'The agent is asking a question', detail };
     }
     default:
-      return { title: `Use tool: ${toolName}`, detail: clip(JSON.stringify(toolInput, null, 1), 400) };
+      if (shared.json === undefined) shared.json = safeJson(toolInput);
+      return { title: `Use tool: ${toolName}`, detail: clip(shared.json, 400) };
   }
 }
 

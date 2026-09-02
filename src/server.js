@@ -8,6 +8,36 @@ const MAX_BODY = 1024 * 1024; // 1 MB
 // missing param, i.e. hooks from an older install) is treated as Claude.
 const KNOWN_SOURCES = new Set(['claude', 'codex', 'openclaw']);
 
+// The names a loopback client can legitimately have dialled us by.
+const LOOPBACK_NAMES = new Set(['127.0.0.1', 'localhost', '::1', '[::1]']);
+
+/**
+ * Is this request really from a program on this machine talking to loopback?
+ *
+ * Two things a listener on 127.0.0.1 with no authentication has to refuse:
+ *
+ *  - A page in the user's browser POSTing to us. A cross-origin `fetch`, a
+ *    `no-cors` fetch and a plain `<form>` POST all carry an `Origin` header,
+ *    and no hook ever does — curl doesn't send one and neither does Node's
+ *    `fetch` — so an Origin header is proof the sender is a web page. It could
+ *    otherwise forge approvals, answer questions on the user's behalf, or point
+ *    `transcript_path` at a file it wants read.
+ *  - DNS rebinding, which is how a page reaches us *without* an Origin header:
+ *    evil.com resolves to 127.0.0.1, so the page's own origin is ours and the
+ *    request is same-origin. The give-away is `Host`, which still says
+ *    evil.com — a real local client always names loopback and our own port.
+ */
+function fromLoopbackClient(req, port, bindHost) {
+  if (req.headers.origin) return false;
+  const host = req.headers.host;
+  if (!host) return true; // HTTP/1.0; no browser ever omits it
+  const parts = /^(\[[^\]]+\]|[^:]+)(?::(\d+))?$/.exec(String(host));
+  if (!parts) return false;
+  if (parts[2] && Number(parts[2]) !== port) return false;
+  const name = parts[1].toLowerCase();
+  return LOOPBACK_NAMES.has(name) || name === String(bindHost).toLowerCase();
+}
+
 /**
  * Tiny dependency-free HTTP server that receives Claude Code, Codex, and
  * OpenClaw hook events.
@@ -18,7 +48,9 @@ const KNOWN_SOURCES = new Set(['claude', 'codex', 'openclaw']);
  * Click-through from the terminal: GET  /focus?session=<id>
  * Debugging endpoint:              GET  /status
  *
- * Binds to 127.0.0.1 only — this never listens on the network.
+ * Binds to 127.0.0.1 only — this never listens on the network — and answers
+ * only requests that look like they came from a program on this machine
+ * (see `fromLoopbackClient`); anything a browser page sends is refused.
  *
  * `onEvent` may return (a promise of) a JSON-serializable object; it becomes
  * the response body, which interactive hooks echo to stdout as their decision.
@@ -37,6 +69,12 @@ const KNOWN_SOURCES = new Set(['claude', 'codex', 'openclaw']);
 function createHookServer({ onEvent, getStatus, onStatusline, onFocus, port = 43117, host = '127.0.0.1' }) {
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, `http://${host}`);
+
+    if (!fromLoopbackClient(req, server.address()?.port ?? port, host)) {
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      res.end('{"error":"forbidden"}');
+      return;
+    }
 
     if (req.method === 'GET' && url.pathname === '/status') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -67,21 +105,40 @@ function createHookServer({ onEvent, getStatus, onStatusline, onFocus, port = 43
 
     const eventName = match ? match[1] : null;
     const kind = url.searchParams.get('kind');
-    let body = '';
+    // Kept as buffers, not concatenated into a string as they arrive: a chunk
+    // boundary falls wherever the socket says, and decoding each one on its own
+    // mangles any UTF-8 character straddling it — which a hook payload carrying
+    // a file's contents hits routinely. Counting bytes also makes the cap mean
+    // what it says.
+    const chunks = [];
+    let received = 0;
     let tooBig = false;
 
     req.on('data', (chunk) => {
-      body += chunk;
-      if (body.length > MAX_BODY) {
-        tooBig = true;
-        req.destroy();
+      received += chunk.length;
+      if (tooBig) {
+        // Already refused. What is still arriving is dropped on the floor
+        // rather than hung up on mid-upload, so the sender gets to read the
+        // answer instead of a connection reset — and one that will not stop
+        // talking is cut off anyway.
+        if (received > MAX_BODY * 8) req.destroy();
+        return;
       }
+      if (received > MAX_BODY) {
+        tooBig = true;
+        chunks.length = 0; // nothing over the limit is ever kept
+        res.writeHead(413, { 'Content-Type': 'application/json' });
+        res.end('{"error":"body too large"}');
+        return;
+      }
+      chunks.push(chunk);
     });
 
     req.on('end', () => {
       if (tooBig) return;
       let payload = {};
       try {
+        const body = chunks.length ? Buffer.concat(chunks, received).toString('utf8') : '';
         payload = body ? JSON.parse(body) : {};
       } catch {
         // Hook payloads should always be JSON, but never punish the sender.

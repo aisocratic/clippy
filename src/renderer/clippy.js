@@ -97,6 +97,10 @@ const menuName = document.getElementById('menu-name');
 const menuStatus = document.getElementById('menu-status');
 const menuWaiting = document.getElementById('menu-waiting');
 const menuFeed = document.getElementById('menu-feed');
+// The two ways in to the same panel, revealed together whenever there turns
+// out to be something to show. Held here because a busy session reaches for
+// them on every transcript event.
+const btnMessages = document.getElementById('btn-messages');
 const menuSleep = document.getElementById('menu-sleep');
 const menuSleepOptions = document.getElementById('menu-sleep-options');
 
@@ -193,7 +197,10 @@ const WIN_MARGIN = 42;
 /** The plan card is a page, so its window is the wide panel plus that margin. */
 const PLAN_WIN_W = 500 + WIN_MARGIN;
 
-const PANELS = ['card', 'bubble', 'qcard', 'usage', 'pet', 'drive', 'feed', 'menu'];
+// Everything that can occupy the space above the buddy's head. Held as
+// elements, not ids: syncMode runs on every event this window hears, and asks
+// three separate questions of this list each time.
+const PANELS = [cardEl, bubbleEl, qcardEl, usageEl, petEl, driveEl, feedEl, menuEl];
 
 // When we last asked main for a different window, and how long afterwards a
 // mouseleave is treated as the layout moving rather than the pointer.
@@ -234,7 +241,9 @@ function contentHeight(panelShowing = true) {
    up the action bar steps aside — it would be one more thing to read at the
    moment you can least afford it. Everything else (stats, chat, the feed) is
    something you opened, and the bar stays available underneath. */
-const DEMANDING = ['card', 'qcard', 'menu'];
+const DEMANDING = [cardEl, qcardEl, menuEl];
+
+const isOpen = (el) => !el.classList.contains('hidden');
 
 /**
  * Where hide/chat live right now.
@@ -247,7 +256,6 @@ const DEMANDING = ['card', 'qcard', 'menu'];
  * accounts for wherever the row ended up.
  */
 function placeControls() {
-  const open = (id) => !document.getElementById(id).classList.contains('hidden');
   // The bar lives under the buddy and stays there. It used to be re-parented
   // into whichever panel was open, so the same two buttons appeared in a
   // different place depending on what you had up — and while a card was
@@ -260,10 +268,11 @@ function placeControls() {
   if (controlsEl.parentElement !== stageEl) stageEl.insertBefore(controlsEl, whoEl);
   // A card or a question is a set of actions already waiting on an answer;
   // a second row underneath is one more thing to read at the worst moment.
-  controlsEl.classList.toggle('hidden', DEMANDING.some(open));
+  const demanding = DEMANDING.some(isOpen);
+  controlsEl.classList.toggle('hidden', demanding);
   // Reading something you opened: keep the bar up without needing the pointer
   // on the buddy, since the pointer is on the panel.
-  document.body.classList.toggle('reading', PANELS.some(open) && !DEMANDING.some(open));
+  document.body.classList.toggle('reading', !demanding && PANELS.some(isOpen));
 }
 
 function syncMode() {
@@ -274,7 +283,7 @@ function syncMode() {
   // through, rather than seven places remembering.
   if (petEl.classList.contains('hidden')) petTo.classList.add('hidden');
 
-  const showing = PANELS.some((id) => !document.getElementById(id).classList.contains('hidden'));
+  const showing = PANELS.some(isOpen);
   const want = showing ? 'full' : 'compact';
   // Switch to the mode we're about to ask for *before* measuring. `compact`
   // decides what is on the stage at all — it hides every panel and shows the
@@ -619,7 +628,8 @@ function playSheet(sheet, name) {
 
   sheetEl.style.width = `${w}px`;
   sheetEl.style.height = `${h}px`;
-  sheetEl.style.backgroundImage = `url("${pose.file}")`;
+  // Escaped even though main vets sheet filenames: a quote would end the url().
+  sheetEl.style.backgroundImage = `url("${CSS.escape(pose.file)}")`;
   sheetEl.style.backgroundSize = `${w * sheet.columns}px ${h * sheet.rows}px`;
 
   stopSheet();
@@ -1402,6 +1412,21 @@ const harnessOf = (agent) => HARNESS_NAMES[agent && agent.agent] || 'Claude Code
 const petChip = document.getElementById('pet-to-chip');
 
 /**
+ * Light the pill for whoever the next message is going to.
+ *
+ * Three things set the target — the pills themselves, an @ mention, and the
+ * chip's way back to the buddy — and all three have to leave the row agreeing
+ * with `petTarget`, or two places disagree about where a prompt is headed.
+ */
+function markPetTarget(value) {
+  for (const button of petTo.children) {
+    const on = button.dataset.to === value;
+    button.classList.toggle('on', on);
+    button.setAttribute('aria-checked', String(on));
+  }
+}
+
+/**
  * A small standing portrait of one agent's buddy.
  *
  * The same artwork the buddy on screen is drawn from, at thumbnail size: the
@@ -1423,7 +1448,7 @@ function faceOf(agent) {
     const pose = sheet.poses.idle || Object.values(sheet.poses)[0];
     const cell = document.createElement('span');
     cell.className = 'chip-sheet';
-    cell.style.backgroundImage = `url("${pose.file}")`;
+    cell.style.backgroundImage = `url("${CSS.escape(pose.file)}")`;
     cell.style.backgroundSize = `${sheet.columns * 100}% ${sheet.rows * 100}%`;
     cell.style.backgroundPosition = `0% ${sheet.rows > 1 ? (pose.row / (sheet.rows - 1)) * 100 : 0}%`;
     return cell;
@@ -1488,11 +1513,7 @@ function renderPetTargets(roster) {
 
   const choose = (value) => {
     petTarget = value;
-    for (const button of petTo.children) {
-      const on = button.dataset.to === value;
-      button.classList.toggle('on', on);
-      button.setAttribute('aria-checked', String(on));
-    }
+    markPetTarget(value);
     const to = agents.find((a) => a.sessionId === value) || null;
     petInput.placeholder = to ? `Type to ${to.name}…` : 'Say hi';
     showChatTarget(to);
@@ -1760,11 +1781,7 @@ function takeMention(agent) {
   hidePicker();
   petTarget = agent.sessionId;
   // The pills are the same setting seen another way, so they move with it.
-  for (const button of petTo.children) {
-    const on = button.dataset.to === petTarget;
-    button.classList.toggle('on', on);
-    button.setAttribute('aria-checked', String(on));
-  }
+  markPetTarget(petTarget);
   petInput.placeholder = `Type to ${agent.name}…`;
   showChatTarget(agent);
   petInput.focus();
@@ -1873,11 +1890,7 @@ document.getElementById('pet-close').addEventListener('click', hidePet);
 // your own buddy again, without hunting for its pill.
 petChip.addEventListener('click', () => {
   petTarget = '';
-  for (const button of petTo.children) {
-    const on = button.dataset.to === '';
-    button.classList.toggle('on', on);
-    button.setAttribute('aria-checked', String(on));
-  }
+  markPetTarget('');
   petInput.placeholder = 'Say hi';
   showChatTarget(null);
   petInput.focus();
@@ -1916,7 +1929,7 @@ onAction('btn-settings', () => window.clippyAPI.openSettings());
 
 function openDrive(evt) {
   driveTitle.textContent = `Driving “${evt.name}”`;
-  driveTranscript.innerHTML = '';
+  driveTranscript.replaceChildren();
   driveActivity.classList.add('hidden');
   driveEl.classList.remove('hidden');
 }
@@ -2133,7 +2146,7 @@ function showNextRequest(id = null) {
   }
 
   cardOptions.classList.add('hidden');
-  cardOptions.innerHTML = '';
+  cardOptions.replaceChildren();
   // The review card leads with its two actions; the feedback box only appears
   // once "Send feedback" is clicked. Approvals keep the always-there box — the
   // note rides along with whichever button you press.
@@ -2284,7 +2297,7 @@ let answerState = {};
 
 function renderAnswerOptions(req) {
   answerState = {};
-  cardOptions.innerHTML = '';
+  cardOptions.replaceChildren();
   for (const q of req.questions || []) {
     answerState[q.question] = q.multiSelect ? [] : null;
     const group = document.createElement('div');
@@ -2661,7 +2674,7 @@ function handleEvent(evt) {
       const wasEmpty = !feedTurns.length;
       mergeFeed(evt.turns);
       menuFeed.classList.remove('hidden'); // there is something to show now
-      document.getElementById('btn-messages').classList.remove('hidden');
+      btnMessages.classList.remove('hidden');
       if (evt.source) feedSrc.textContent = evt.source;
       if (!feedEl.classList.contains('hidden')) renderFeed();
 
@@ -2690,7 +2703,7 @@ function handleEvent(evt) {
       document.body.classList.toggle('owned', me.owned);
       if (me.owned) {
         menuFeed.classList.remove('hidden');
-        document.getElementById('btn-messages').classList.remove('hidden');
+        btnMessages.classList.remove('hidden');
       }
       feedSrc.textContent = me.host ? `via ${me.host}` : me.tmux ? `tmux · ${me.tmux}` : '';
       applyIdentity();
@@ -3001,7 +3014,7 @@ function cancelDwell() {
 }
 
 function anyPanelOpen() {
-  return PANELS.some((id) => !document.getElementById(id).classList.contains('hidden'));
+  return PANELS.some(isOpen);
 }
 
 clippyEl.addEventListener('mouseenter', () => {

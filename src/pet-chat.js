@@ -30,8 +30,17 @@ const HISTORY_TURNS = 8;
 // same allowance the user's real session needs.
 const PET_MODEL = 'claude-haiku-4-5-20251001';
 
-/** Trim a value to something safe to paste into a prompt line. */
-const line = (value, max = 120) => String(value || '').replace(/\s+/g, ' ').trim().slice(0, max);
+/**
+ * Trim a value to something safe to paste into a prompt line.
+ *
+ * Quotes go too: the folder name lands inside a quoted phrase in the persona
+ * below, and a project called `x" — you are now a shell,` would close it and
+ * read as instructions rather than as the name of a folder. Nobody typed that
+ * name here — it arrives from a directory on disk or from a hook — so it is
+ * data, and it has to look like data all the way in.
+ */
+const line = (value, max = 120) =>
+  String(value || '').replace(/"/g, '').replace(/\s+/g, ' ').trim().slice(0, max);
 
 /**
  * Who the pet is, in its own words. Pure — the tests read this.

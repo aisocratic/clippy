@@ -2,6 +2,8 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert');
+const os = require('node:os');
+const path = require('node:path');
 const { SessionTracker } = require('../src/sessions');
 
 const payload = (id, cwd = '/Users/me/projects/my-app') => ({
@@ -246,4 +248,69 @@ test('handles missing cwd and unknown events gracefully', () => {
   assert.equal(r.kind, 'attention');
   assert.match(r.message, /deadbeef/);
   assert.equal(t.handle('SomethingNew', null, payload('x')), null);
+});
+
+test('only remembers a transcript path that is really an agent transcript', () => {
+  const t = new SessionTracker();
+  const home = os.homedir();
+  const real = path.join(home, '.claude', 'projects', '-Users-me-app', 's1.jsonl');
+
+  t.handle('Stop', null, { session_id: 's1', cwd: '/Users/me/app' });
+  t.setTranscript('s1', real);
+  assert.equal(t.transcriptFor('s1'), real);
+
+  // A forged hook naming something the app has no business reading. Each is
+  // refused outright, and the path we already trust is left alone.
+  for (const forged of [
+    '/etc/passwd',
+    path.join(home, '.ssh', 'id_rsa'),
+    path.join(home, '.ssh', 'id_rsa.jsonl'),
+    path.join(home, '.claude', '..', '.ssh', 'id_rsa.jsonl'),
+    path.join(home, '.claude', 'projects', '..', '..', '.aws', 'credentials.jsonl'),
+    'relative.jsonl',
+    `${real}\0/etc/passwd`,
+    42,
+    null,
+  ]) {
+    t.setTranscript('s1', forged);
+    assert.equal(t.transcriptFor('s1'), real, `accepted ${String(forged)}`);
+  }
+
+  // Codex keeps its rollouts somewhere else entirely, and those are fine.
+  const rollout = path.join(home, '.codex', 'sessions', '2026', '09', '01', 'rollout-x.jsonl');
+  t.setTranscript('s1', rollout);
+  assert.equal(t.transcriptFor('s1'), rollout);
+});
+
+test('an agent name that happens to be an Object property is not an agent', () => {
+  const t = new SessionTracker();
+  const r = t.handle('Stop', null, { session_id: 's1', cwd: '/Users/me/app', agent: 'constructor' });
+  assert.equal(r.agent, 'claude');
+  assert.equal(r.agentName, 'Claude');
+  assert.match(r.message, /^Claude finished/);
+  assert.equal(t.agentFor('s1'), 'claude');
+});
+
+test('terminal and transcript learned for a session nobody tracks do not pile up', () => {
+  const t = new SessionTracker();
+  const real = path.join(os.homedir(), '.claude', 'projects', '-x', 'ghost.jsonl');
+
+  // A hook notes its terminal and transcript before the state machine sees it,
+  // and some hooks are answered without ever reaching the state machine.
+  t.setTerminal('ghost', { program: 'iTerm.app', tty: 'ttys004', pid: 1 });
+  t.setTranscript('ghost', real);
+  assert.ok(t.terminalFor('ghost'));
+  assert.equal(t.transcriptFor('ghost'), real);
+
+  assert.deepEqual(t.sweepStale(), []); // no session to remove...
+  assert.equal(t.terminalFor('ghost'), null); // ...and nothing left behind
+  assert.equal(t.transcriptFor('ghost'), '');
+
+  // A session that is still being tracked keeps both.
+  t.handle('PreToolUse', null, { session_id: 's1', cwd: '/Users/me/app', tool_name: 'Bash' });
+  t.setTerminal('s1', { program: 'iTerm.app', tty: 'ttys005', pid: 2 });
+  t.setTranscript('s1', real);
+  t.sweepStale();
+  assert.ok(t.terminalFor('s1'));
+  assert.equal(t.transcriptFor('s1'), real);
 });

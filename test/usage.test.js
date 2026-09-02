@@ -8,7 +8,8 @@ const os = require('node:os');
 const path = require('node:path');
 const {
   parseTranscript,
-  modelFromTranscript,
+  modelFromTranscriptFile,
+  sessionUsage,
   lastAssistantText,
   contextLimitFor,
   contextOf,
@@ -114,10 +115,8 @@ test('finds a model before any token usage has been written', () => {
     payload: { model: 'gpt-5.6-codex' },
   });
 
-  assert.equal(modelFromTranscript(claude), 'claude-sonnet-5');
   assert.equal(parseTranscript(claude).model, 'claude-sonnet-5');
   assert.equal(parseTranscript(claude).turns, 0);
-  assert.equal(modelFromTranscript(codex), 'gpt-5.6-codex');
   assert.equal(parseTranscript(codex).model, 'gpt-5.6-codex');
 });
 
@@ -473,4 +472,83 @@ test("Claude Code's own cached /usage percentages are read when present", async 
   fsSync.writeFileSync(file, JSON.stringify({ someOtherKey: true }));
   assert.equal(await readOfficialUsage(file), null);
   assert.equal(await readOfficialUsage(path.join(dir, 'missing.json')), null);
+});
+
+test('a session poll reads what was appended, not the transcript again', async (t) => {
+  const first = [
+    assistant('2026-08-02T10:00:01Z', usage(5, 100, 20_000, 1_000)),
+    assistant('2026-08-02T10:05:00Z', usage(2, 300, 90_000, 500)),
+    '',
+  ].join('\n');
+  const file = transcriptFile(t, first);
+
+  const one = await sessionUsage(file);
+  assert.deepEqual(one, parseTranscript(first));
+
+  // A poll that finds nothing new says exactly what the last one did.
+  assert.deepEqual(await sessionUsage(file), one);
+
+  // Claude writes a record in two goes: the half-written line is not counted
+  // until its newline arrives, and then it is counted exactly once.
+  const third = assistant('2026-08-02T10:09:00Z', usage(1, 7, 1_000, 0));
+  fs.appendFileSync(file, third.slice(0, 40));
+  assert.deepEqual(await sessionUsage(file), one);
+  fs.appendFileSync(file, `${third.slice(40)}\n`);
+
+  const whole = `${first}${third}\n`;
+  assert.deepEqual(await sessionUsage(file), parseTranscript(whole));
+  assert.deepEqual(await sessionUsage(file), parseTranscript(whole));
+});
+
+test('a transcript rewritten under us is counted again, not added to', async (t) => {
+  const file = transcriptFile(t, `${assistant('2026-08-02T10:00:01Z', usage(0, 100))}\n`);
+  assert.equal((await sessionUsage(file)).totals.output, 100);
+
+  // /clear rewrites the session: shorter than what we already read.
+  fs.writeFileSync(file, `${assistant('2026-08-02T11:00:00Z', usage(0, 5))}\n`);
+  assert.equal((await sessionUsage(file)).totals.output, 5);
+
+  assert.equal(await sessionUsage(path.join(path.dirname(file), 'gone.jsonl')), null);
+  assert.equal(await sessionUsage(''), null);
+});
+
+test('the model comes off the end of the transcript, not the whole of it', async (t) => {
+  const claude = transcriptFile(
+    t,
+    [
+      assistant('2026-08-02T10:00:01Z', usage(0, 1)),
+      JSON.stringify({ type: 'summary', summary: 'nothing to do with models' }),
+      JSON.stringify({
+        type: 'assistant',
+        timestamp: '2026-08-02T10:01:00Z',
+        message: { model: 'claude-fable-5', usage: usage(0, 1) },
+      }),
+      '',
+    ].join('\n')
+  );
+  assert.equal(await modelFromTranscriptFile(claude), 'claude-fable-5');
+
+  const codex = transcriptFile(
+    t,
+    `${JSON.stringify({ type: 'turn_context', payload: { model: 'gpt-5.6-codex' } })}\n`
+  );
+  assert.equal(await modelFromTranscriptFile(codex), 'gpt-5.6-codex');
+
+  assert.equal(await modelFromTranscriptFile(transcriptFile(t, 'not json\n')), '');
+  assert.equal(await modelFromTranscriptFile(''), '');
+});
+
+test('two buddies polling one transcript at once do not count it twice', async (t) => {
+  const text = [
+    assistant('2026-08-02T10:00:01Z', usage(5, 100, 20_000, 1_000)),
+    assistant('2026-08-02T10:05:00Z', usage(2, 300, 90_000, 500)),
+    '',
+  ].join('\n');
+  const file = transcriptFile(t, text);
+
+  const [a, b, c] = await Promise.all([sessionUsage(file), sessionUsage(file), sessionUsage(file)]);
+  assert.deepEqual(a, parseTranscript(text));
+  assert.deepEqual(b, a);
+  assert.deepEqual(c, a);
+  assert.deepEqual(await sessionUsage(file), a);
 });

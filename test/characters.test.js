@@ -309,3 +309,56 @@ test('sheet sizes are read straight out of the image header', () => {
   fs.writeFileSync(path.join(dir, 'a.gif'), 'GIF89a');
   assert.throws(() => imageSize(path.join(dir, 'a.gif')), /PNG and WebP/);
 });
+
+test('a pack cannot point its sprite sheet outside the themes folder', () => {
+  // theme.json is whatever a downloaded pack shipped, and its `file` is pasted
+  // into a CSS url("assets/themes/<id>/<file>") in the renderer. A traversal
+  // would read a file elsewhere on the disk; a quote would close the url() and
+  // let the rest of the name be CSS. Either way the pose is not a pose.
+  const pose = (file) => ({ frameWidth: 32, frameHeight: 32, idle: { file, frames: 4 } });
+  const dir = tmpThemes({
+    escape: { 'theme.json': JSON.stringify(pose('../../../../etc/passwd')) },
+    encoded: { 'theme.json': JSON.stringify(pose('%2e%2e%2fidle.png')) },
+    quoted: { 'theme.json': JSON.stringify(pose('idle.png");}body{display:none}')) },
+    dots: { 'theme.json': JSON.stringify(pose('..')) },
+    // Spaces and accents are ordinary in a pack, and must still work.
+    fine: { 'theme.json': JSON.stringify(pose('my sheet ✨.webp')) },
+  });
+
+  assert.deepEqual(
+    customThemes(dir).map((t) => t.id),
+    ['fine']
+  );
+  assert.equal(customThemes(dir)[0].sheet.poses.idle.file, 'assets/themes/fine/my sheet ✨.webp');
+});
+
+test('a themes folder is scanned once and again only when it changes', () => {
+  // customThemes is read per buddy and per session on every settings push, and
+  // each scan is a readdir plus a read-and-parse of every theme.json — all of
+  // it synchronous, on the main process.
+  const theme = (label) =>
+    JSON.stringify({ label, frameWidth: 32, frameHeight: 32, idle: { file: 'idle.png', frames: 2 } });
+  const dir = tmpThemes({ one: { 'theme.json': theme('One') } });
+
+  assert.deepEqual(customThemes(dir).map((t) => t.label), ['One']);
+
+  // Rewriting a theme.json in place moves *that* folder's mtime, not this
+  // one's, so the cached scan stands. That is the proof it is cached, and the
+  // one change a pack author has to restart the app to see.
+  fs.writeFileSync(path.join(dir, 'one', 'theme.json'), theme('Renamed'));
+  assert.deepEqual(customThemes(dir).map((t) => t.label), ['One']);
+
+  // Adding or removing a pack is a mkdir or an rmdir here, which moves the
+  // folder's own mtime — the one change that has to be noticed.
+  fs.mkdirSync(path.join(dir, 'two'));
+  fs.writeFileSync(path.join(dir, 'two', 'theme.json'), theme('Two'));
+  assert.deepEqual(
+    customThemes(dir).map((t) => t.id).sort(),
+    ['one', 'two']
+  );
+
+  // And a different folder is never answered from another one's scan.
+  assert.deepEqual(customThemes(tmpThemes({ other: { 'theme.json': theme('Other') } })).map((t) => t.id), [
+    'other',
+  ]);
+});

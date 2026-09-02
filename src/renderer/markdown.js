@@ -22,9 +22,17 @@
     }
   };
 
+  /**
+   * Code spans and links are lifted out into `\u0000TOKEN<n>\u0000` placeholders
+   * while emphasis is substituted around them, and escapeHtml runs in between —
+   * so a NUL that arrived in the text would name a slot it never created. This
+   * is agent-written text; it does not get to speak the substitution language.
+   */
+  const clean = (value) => String(value ?? '').replace(/\u0000/g, '');
+
   function renderInline(value) {
     const tokens = [];
-    let text = String(value ?? '').replace(/`([^`\n]+)`/g, (_match, contents) => {
+    let text = clean(value).replace(/`([^`\n]+)`/g, (_match, contents) => {
       const slot = tokens.push(`<code>${escapeHtml(contents)}</code>`) - 1;
       return `\u0000TOKEN${slot}\u0000`;
     });
@@ -60,8 +68,19 @@
     /^\s*\d+[.)]\s+/.test(line) ||
     /^\s*([-*_])(?:\s*\1){2,}\s*$/.test(line);
 
-  function renderMarkdown(value) {
-    const lines = String(value ?? '').replace(/\r\n?/g, '\n').split('\n');
+  /**
+   * How deep blockquotes may nest before the rest is drawn flat.
+   *
+   * Every `>` on a line is one more recursive renderMarkdown, and nothing caps
+   * what an agent writes: a few thousand of them overflowed the stack, and the
+   * throw came out of whichever card was being drawn — leaving it half-built
+   * and taking the rest of that event's render with it. Past this the body is
+   * escaped and shown as it stands, which is all a reader wanted from it.
+   */
+  const MAX_QUOTE_DEPTH = 16;
+
+  function renderMarkdown(value, depth = 0) {
+    const lines = clean(value).replace(/\r\n?/g, '\n').split('\n');
     const html = [];
     let i = 0;
 
@@ -102,7 +121,12 @@
         while (i < lines.length && /^>\s?/.test(lines[i])) {
           quote.push(lines[i++].replace(/^>\s?/, ''));
         }
-        html.push(`<blockquote>${renderMarkdown(quote.join('\n'))}</blockquote>`);
+        const body = quote.join('\n');
+        const inside =
+          depth < MAX_QUOTE_DEPTH
+            ? renderMarkdown(body, depth + 1)
+            : `<p>${escapeHtml(body)}</p>`;
+        html.push(`<blockquote>${inside}</blockquote>`);
         continue;
       }
 

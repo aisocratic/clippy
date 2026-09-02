@@ -40,7 +40,12 @@ const MAX_DELTA = 2 * 1024 * 1024;
 function sshArgs(host, { controlPath, connectTimeout = 5 } = {}) {
   // BatchMode is ours alone: the pane's ssh has a terminal and may legitimately
   // prompt, while this one has nobody to answer.
-  return ['-o', 'BatchMode=yes', ...sshControlArgs(controlPath, { connectTimeout }), host];
+  //
+  // `--` because a host is not a trusted word: it is typed into the New agent
+  // box and then kept in a settings file. Handing ssh `-oProxyCommand=…` as the
+  // host would otherwise be read as a flag rather than a machine to reach, and
+  // ProxyCommand runs a command. After `--` it can only be a hostname.
+  return ['-o', 'BatchMode=yes', ...sshControlArgs(controlPath, { connectTimeout }), '--', host];
 }
 
 /**

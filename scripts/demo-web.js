@@ -812,6 +812,9 @@ const MIME = {
   '.css': 'text/css; charset=utf-8',
   '.gif': 'image/gif',
   '.png': 'image/png',
+  // Sprite-pack sheets ship as WebP; without this they arrive as a byte stream
+  // and only load because the browser sniffs them.
+  '.webp': 'image/webp',
   '.svg': 'image/svg+xml',
   '.json': 'application/json; charset=utf-8',
 };
@@ -857,32 +860,114 @@ function servePage(res, page, script, stub) {
   });
 }
 
-/** Keep requests inside a directory, whatever ../.. the URL tries. */
-function safeJoin(dir, rel) {
-  const target = path.join(dir, path.normalize(rel).replace(/^(\.\.[/\\])+/, ''));
-  return target.startsWith(dir) ? target : null;
+// Resolved once per directory: /tmp and friends are symlinks on macOS, and the
+// containment check below compares resolved paths against a resolved root.
+const realRoots = new Map();
+function realRoot(dir) {
+  let real = realRoots.get(dir);
+  if (real === undefined) realRoots.set(dir, (real = fs.realpathSync(dir)));
+  return real;
 }
 
+const inside = (root, file) => file === root || file.startsWith(root + path.sep);
+
+/**
+ * Keep requests inside a directory, whatever the URL tries.
+ *
+ * The URL path arrives here already percent-decoded, so `..`, `%2e%2e`, a
+ * leading slash and a NUL all have to be refused outright rather than filed
+ * down into something that still escapes — the old rule stripped a leading
+ * `../` and let everything else through on a `startsWith` that a sibling
+ * directory (`demo-evil/`) would also satisfy. A path that resolves inside the
+ * tree can still be a symlink pointing out of it, so the resolved file is
+ * checked too.
+ */
+function safeJoin(dir, rel) {
+  if (!rel || rel.includes('\0') || path.isAbsolute(rel)) return null;
+  const root = realRoot(dir);
+  const target = path.resolve(root, rel);
+  if (!inside(root, target)) return null;
+  let real;
+  try {
+    real = fs.realpathSync(target);
+  } catch {
+    return target; // nothing there: sendFile answers 404
+  }
+  return inside(root, real) ? real : null;
+}
+
+// The bench binds loopback, which on its own is not enough: any page in any
+// browser can POST to a localhost port, and a hostname the attacker owns can be
+// pointed at 127.0.0.1 (DNS rebinding) so that the Host header looks foreign
+// while the socket is local. Both are refused before a handler sees them.
+const LOOPBACK = new Set(['127.0.0.1', 'localhost', '::1', '[::1]']);
+
+function isLocalRequest(req) {
+  let host;
+  try {
+    host = new URL(`http://${req.headers.host || ''}`).hostname;
+  } catch {
+    return false;
+  }
+  if (!LOOPBACK.has(host)) return false;
+  const origin = req.headers.origin;
+  if (!origin) return true; // a plain navigation carries no Origin
+  try {
+    return LOOPBACK.has(new URL(origin).hostname);
+  } catch {
+    return false; // including the literal "null" a sandboxed frame sends
+  }
+}
+
+const MAX_BODY_BYTES = 1e6;
+
+/**
+ * The JSON body, capped. The excess is read and dropped rather than the socket
+ * being destroyed: destroying it mid-handler leaves the awaiting request with
+ * no response to write to, and the caller is told 413 instead.
+ */
 function readBody(req) {
   return new Promise((resolve) => {
-    let raw = '';
+    const chunks = [];
+    let size = 0;
+    let tooLarge = false;
     req.on('data', (c) => {
-      raw += c;
-      if (raw.length > 1e6) req.destroy();
-    });
-    req.on('end', () => {
-      try {
-        resolve(JSON.parse(raw || '{}'));
-      } catch {
-        resolve({});
+      size += c.length;
+      if (size > MAX_BODY_BYTES) {
+        tooLarge = true;
+        chunks.length = 0;
+        return;
       }
+      chunks.push(c);
     });
+    const done = () => {
+      if (tooLarge) return resolve({ tooLarge: true, body: {} });
+      try {
+        resolve({ tooLarge: false, body: JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}') });
+      } catch {
+        resolve({ tooLarge: false, body: {} });
+      }
+    };
+    req.on('end', done);
+    req.on('aborted', done);
+    req.on('error', done);
   });
 }
 
-const server = http.createServer(async (req, res) => {
+async function handle(req, res) {
+  if (!isLocalRequest(req)) {
+    res.writeHead(403, { 'Content-Type': 'text/plain' });
+    return res.end('forbidden');
+  }
   const url = new URL(req.url, `http://${req.headers.host || '127.0.0.1'}`);
-  const pathname = decodeURIComponent(url.pathname);
+  let pathname;
+  try {
+    pathname = decodeURIComponent(url.pathname);
+  } catch {
+    // A stray `%` is not a path; decoding it throws, and an unhandled throw in
+    // here used to take the whole bench down.
+    return sendJson(res, { error: 'bad path' }, 400);
+  }
 
   if (pathname === '/api/scenarios') {
     return sendJson(res, {
@@ -897,7 +982,9 @@ const server = http.createServer(async (req, res) => {
 
   // What Claude Code would actually have received for the button you clicked.
   if (pathname === '/api/decision' && req.method === 'POST') {
-    const { event, action, message, toolInput } = await readBody(req);
+    const { tooLarge, body } = await readBody(req);
+    if (tooLarge) return sendJson(res, { error: 'body too large' }, 413);
+    const { event, action, message, toolInput } = body;
     return sendJson(res, {
       response: toHookResponse(String(event || ''), String(action || ''), String(message || ''), {
         toolInput,
@@ -990,9 +1077,19 @@ const server = http.createServer(async (req, res) => {
       : pathname.slice(1);
   const file = safeJoin(DEMO_DIR, rel);
   return file ? sendFile(res, file) : sendJson(res, { error: 'bad path' }, 400);
+}
+
+const server = http.createServer((req, res) => {
+  // handle() is async, so anything it throws would otherwise surface as an
+  // unhandled rejection — which, since Node 15, ends the process.
+  handle(req, res).catch((err) => {
+    console.error(`bench: ${err && err.message ? err.message : err}`);
+    if (!res.headersSent) res.writeHead(500, { 'Content-Type': 'text/plain' });
+    res.end('server error');
+  });
 });
 
-server.listen(PORT, '127.0.0.1', () => {
+if (require.main === module) server.listen(PORT, '127.0.0.1', () => {
   console.log(`📎 Clippy web test bench → http://127.0.0.1:${PORT}`);
   console.log(`   States (every state, click one to test it) → http://127.0.0.1:${PORT}/states`);
   console.log('   Serving the real src/renderer with a stubbed clippyAPI.');
@@ -1006,3 +1103,7 @@ server.listen(PORT, '127.0.0.1', () => {
     ]);
   }
 });
+
+// Exported so the path and origin rules can be tested without a browser; the
+// listen above only happens when this file is the program being run.
+module.exports = { server, safeJoin, isLocalRequest, DEMO_DIR, RENDERER_DIR };

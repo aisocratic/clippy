@@ -947,8 +947,7 @@ body.plan #card-detail {
 
 /* The two answers share the top row; handing the card back to the terminal is
    a longer sentence and a lesser action, so it gets a row of its own. */
-#btn-pass,
-#btn-dismiss {
+#btn-pass {
   flex: 1 0 100%;
 }
 
@@ -1302,38 +1301,6 @@ button.opt.chosen::after {
   padding-block: 4px;
 }
 
-/* A switch reads as on/off at a glance; a chip reads as one-of-many. */
-#toggles button {
-  text-align: left;
-  font-size: 11px;
-  padding: 4px 8px;
-  background: #ffffff;
-  color: var(--muted);
-}
-
-#toggles button.on {
-  background: var(--ok-tint);
-  color: var(--ink);
-}
-
-.chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-
-.chip {
-  padding: 4px 8px;
-  font-size: 11px;
-  background: #ffffff;
-  color: var(--muted);
-}
-
-.chip.on {
-  background: var(--ok-tint);
-  color: var(--ink);
-}
-
 /* ---------- Ambient activity line ---------- */
 
 #activity {
@@ -1584,18 +1551,6 @@ body.compact #controls .act-label {
   font-size: 10.5px;
   line-height: 1.4;
   color: #8a8a86;
-}
-
-#usage-actions {
-  display: flex;
-  justify-content: space-between;
-  gap: 6px;
-  margin-top: 7px;
-}
-
-#usage-actions button {
-  font-size: 10px;
-  padding: 2px 8px;
 }
 
 /* ---------- Talking to the pet ---------- */
