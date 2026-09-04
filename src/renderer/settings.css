@@ -420,7 +420,7 @@ select:disabled {
 .cast {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(128px, 1fr));
-  gap: 11px;
+  gap: 20px 11px; /* room under a card for the "wears this" badge */
 }
 
 .cast-row {
@@ -433,9 +433,36 @@ select:disabled {
   box-shadow: 3px 3px 0 var(--ink);
 }
 
+/* The one Clippy wears: the same yellow as Clippy's own row under Sessions,
+   a heavier shadow, and a badge that says so in words — a tinted background
+   alone was too easy to miss in a grid of twenty cards. */
 .cast-row.on {
-  background: var(--surface-2);
-  box-shadow: 3px 3px 0 var(--accent);
+  background: var(--yellow);
+  box-shadow: 5px 5px 0 var(--ink);
+  transform: translate(-1px, -1px);
+}
+
+.cast-row.on .cast-pose-name {
+  color: var(--ink);
+  opacity: 0.6;
+}
+
+.cast-wearing {
+  position: absolute;
+  left: 50%;
+  bottom: -11px;
+  transform: translateX(-50%);
+  padding: 3px 10px;
+  border: 2px solid var(--ink);
+  border-radius: 999px;
+  background: var(--ink);
+  color: var(--yellow);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  pointer-events: none;
 }
 
 .cast-who {
@@ -483,7 +510,8 @@ select:disabled {
   image-rendering: pixelated;
 }
 
-.remove-buddy {
+.remove-buddy,
+.cast-next {
   position: absolute;
   top: 5px;
   right: 5px;
@@ -495,6 +523,29 @@ select:disabled {
   border-radius: 50%;
   color: var(--no);
   line-height: 1;
+}
+
+/* The animation stepper sits in the other corner, and is a look rather than a
+   choice, so it is quieter than the remove button. */
+.cast-next {
+  right: auto;
+  left: 5px;
+  font-size: 9px;
+  color: var(--muted);
+}
+
+/* Clippy's row says what it wears and how big, as a link to where that is set. */
+.session-look {
+  flex: none;
+  font-size: 11px;
+  color: var(--muted);
+  text-decoration: none;
+  border-bottom: 1px dotted var(--muted);
+}
+
+.session-look:hover {
+  color: var(--ink);
+  border-bottom-color: var(--ink);
 }
 
 .drop-hint {
@@ -677,122 +728,6 @@ select:disabled {
   #buddy-canvas { width: min(320px, 100%); height: auto; }
 }
 
-/* ---------- Actions ---------- */
-
-.actions {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.action {
-  padding: 14px 16px;
-  background: var(--surface);
-  border: 2px solid var(--ink);
-  border-radius: var(--radius);
-  box-shadow: 4px 4px 0 var(--ink);
-}
-
-.action-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 8px;
-}
-
-.action-icon {
-  font-size: 15px;
-  width: 22px;
-  text-align: center;
-}
-
-.action-title {
-  font-size: 13px;
-  font-weight: 600;
-  flex: 1;
-}
-
-.tag {
-  flex: none;
-  padding: 2px 8px;
-  border-radius: 7px;
-  font-size: 10px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  background: var(--surface-2);
-  border: 1px solid var(--line);
-  color: var(--muted);
-}
-
-.tag.off {
-  background: var(--yellow);
-  border-color: var(--ink);
-  color: var(--ink);
-}
-
-.action dl {
-  display: grid;
-  grid-template-columns: 66px 1fr;
-  gap: 4px 12px;
-  font-size: 11.5px;
-  margin-bottom: 10px;
-}
-
-.action dt {
-  color: var(--faint);
-  text-transform: uppercase;
-  font-size: 9.5px;
-  letter-spacing: 0.06em;
-  padding-top: 2px;
-}
-
-.action dd {
-  color: var(--muted);
-}
-
-.choices {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.choice {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-  flex-wrap: wrap;
-  padding: 8px 10px;
-  background: var(--surface-2);
-  border: 1px solid var(--line-soft);
-  border-radius: 9px;
-}
-
-.choice-label {
-  flex: none;
-  font-size: 11.5px;
-  font-weight: 600;
-  color: var(--text);
-}
-
-.choice-effect {
-  flex: 1;
-  min-width: 140px;
-  font-size: 11.5px;
-  color: var(--muted);
-}
-
-.choice-json {
-  width: 100%;
-  overflow-x: auto;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 10.5px;
-  color: #2f6b47;
-  white-space: pre;
-}
-
-.choice-json.empty {
-  color: var(--faint);
-}
-
 /* ---------- Window access ---------- */
 
 .access {
@@ -908,6 +843,59 @@ select:disabled {
 .session-art img,
 .session-art .sheet {
   image-rendering: pixelated;
+}
+
+/* The agents connected to Clippy: smaller, pushed right under its row, with a
+   line down the left tying them to it. They carry no pickers — Clippy's look
+   is Clippy's, whoever it is speaking for. */
+.agents {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-left: 34px;
+  padding-left: 14px;
+  border-left: 2px solid var(--line);
+}
+
+.agent-session {
+  gap: 9px;
+  padding: 6px 12px;
+  border-width: 1px;
+  border-color: var(--line);
+  box-shadow: none;
+  background: var(--surface-2);
+}
+
+.agent-session .session-name {
+  font-size: 11.5px;
+  font-weight: 500;
+}
+
+.agent-session .dot {
+  width: 7px;
+  height: 7px;
+}
+
+.agent-session .session-status {
+  font-size: 10.5px;
+}
+
+/* A subagent: one step further in than the agent that started it. */
+.subagent-session {
+  margin-left: 22px;
+  padding: 4px 10px;
+  border-style: dashed;
+}
+
+.subagent-session .session-name {
+  font-size: 11px;
+  cursor: default;
+}
+
+.subagent-session .dot {
+  width: 5px;
+  height: 5px;
+  opacity: 0.6;
 }
 
 /* The size picker beside it holds four short words, so it never needs the

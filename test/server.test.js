@@ -2,7 +2,37 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert');
+const http = require('node:http');
 const { createHookServer } = require('../src/server');
+
+/**
+ * A request with headers `fetch` refuses to set (Host above all), which is
+ * exactly what the loopback guard is about.
+ */
+function raw(base, { path = '/hook/Stop', method = 'POST', headers = {}, body = '' } = {}) {
+  const url = new URL(base);
+  return new Promise((resolve, reject) => {
+    let answered = false;
+    const req = http.request(
+      { host: url.hostname, port: url.port, path, method, headers },
+      (res) => {
+        answered = true;
+        let text = '';
+        res.on('data', (c) => (text += c));
+        const done = () => resolve({ status: res.statusCode, text });
+        res.on('end', done);
+        res.on('close', done);
+      }
+    );
+    // The server may hang up while we are still writing — that is exactly what
+    // refusing an oversized body looks like — and the answer it already sent is
+    // the thing under test. Only a failure with no answer at all is an error.
+    req.on('error', (err) => {
+      if (!answered) reject(err);
+    });
+    req.end(body);
+  });
+}
 
 async function withServer(onEvent, fn, extra = {}) {
   const server = createHookServer({
@@ -16,6 +46,9 @@ async function withServer(onEvent, fn, extra = {}) {
     await fn(`http://127.0.0.1:${addr.port}`);
   } finally {
     server.close();
+    // A keep-alive socket the test left idle would otherwise hold the close
+    // open for the full keepAliveTimeout.
+    server.closeAllConnections();
   }
 }
 
@@ -174,6 +207,97 @@ test('focus reveals the linked session and tells the browser tab so', async () =
     { onFocus: (id) => focused.push(id) }
   );
   assert.deepEqual(focused, ['s 1']);
+});
+
+test('refuses anything a browser page sends, however it reaches the port', async () => {
+  const seen = [];
+  await withServer(
+    (event) => seen.push(event),
+    async (base) => {
+      // A page on any site: cross-origin fetch, no-cors fetch and a plain form
+      // POST all carry Origin, and no hook ever does.
+      const forged = await raw(base, {
+        headers: { 'Content-Type': 'application/json', Origin: 'https://evil.example' },
+        body: '{"session_id":"s1"}',
+      });
+      assert.equal(forged.status, 403);
+
+      // Reading held state back is refused the same way.
+      const peek = await raw(base, {
+        path: '/status',
+        method: 'GET',
+        headers: { Origin: 'https://evil.example' },
+      });
+      assert.equal(peek.status, 403);
+
+      // DNS rebinding: evil.example resolves to 127.0.0.1, so the page's
+      // request is same-origin and carries no Origin at all — but Host still
+      // names the site rather than loopback.
+      const rebound = await raw(base, {
+        headers: { 'Content-Type': 'application/json', Host: `evil.example:${new URL(base).port}` },
+        body: '{"session_id":"s1"}',
+      });
+      assert.equal(rebound.status, 403);
+
+      // A hook on this machine, dialling loopback by either name, still works.
+      for (const name of ['127.0.0.1', 'localhost']) {
+        const ok = await raw(base, {
+          headers: { 'Content-Type': 'application/json', Host: `${name}:${new URL(base).port}` },
+          body: '{"session_id":"s1"}',
+        });
+        assert.equal(ok.status, 200);
+      }
+    }
+  );
+  assert.deepEqual(seen, ['Stop', 'Stop']);
+});
+
+test('caps the body and says so instead of resetting the connection', async () => {
+  const seen = [];
+  await withServer(
+    (event) => seen.push(event),
+    async (base) => {
+      const res = await raw(base, {
+        headers: { 'Content-Type': 'application/json' },
+        body: `{"big":"${'x'.repeat(2 * 1024 * 1024)}"}`,
+      });
+      assert.equal(res.status, 413);
+    }
+  );
+  assert.deepEqual(seen, []); // never reached the app
+});
+
+test('decodes a body whose UTF-8 straddles a chunk boundary', async () => {
+  let payload;
+  await withServer(
+    (_event, _kind, p) => { payload = p; },
+    async (base) => {
+      const url = new URL(base);
+      // The emoji is written one byte at a time, so every naive per-chunk
+      // toString() in the middle of it produces replacement characters.
+      const text = `pre ${'—'.repeat(4)} 🎉 post`;
+      const body = Buffer.from(JSON.stringify({ note: text }), 'utf8');
+      await new Promise((resolve, reject) => {
+        const req = http.request(
+          {
+            host: url.hostname,
+            port: url.port,
+            path: '/hook/Stop',
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Transfer-Encoding': 'chunked' },
+          },
+          (res) => {
+            res.resume();
+            res.on('end', resolve);
+          }
+        );
+        req.on('error', reject);
+        for (const byte of body) req.write(Buffer.from([byte]));
+        req.end();
+      });
+      assert.equal(payload.note, text);
+    }
+  );
 });
 
 test('serves /status and 404s everything else', async () => {

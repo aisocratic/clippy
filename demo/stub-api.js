@@ -18,8 +18,10 @@
   const inbox = { event: [], settings: [], identity: [] };
   let usageData = null;
 
+  // The panel is the page that framed us, and it is served from this same
+  // origin — so say so, rather than broadcasting to whoever is listening.
   const post = (type, payload = {}) =>
-    window.parent.postMessage({ __clippyDemo: true, type, payload }, '*');
+    window.parent.postMessage({ __clippyDemo: true, type, payload }, window.location.origin);
 
   const fire = (list, data) => {
     for (const cb of list) {
@@ -116,13 +118,13 @@
       };
     },
     moveBy: (dx, dy) => post('move-by', { dx, dy }),
-    hide: () => post('hide'),
+    hide: (opts) => post('hide', opts && opts.lookedAway ? { lookedAway: true } : null),
     quit: () => post('quit'),
   };
 
   window.addEventListener('message', (e) => {
     const msg = e.data;
-    if (!msg || msg.__clippyDemo !== true) return;
+    if (e.origin !== window.location.origin || !msg || msg.__clippyDemo !== true) return;
     switch (msg.type) {
       case 'event':
       case 'settings':

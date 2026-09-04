@@ -18,9 +18,12 @@ test('every action is complete enough to render', () => {
     assert.ok(action.id && !ids.has(action.id), `${where}: ids must exist and be unique`);
     ids.add(action.id);
 
-    for (const field of ['icon', 'title', 'when', 'shows']) {
+    for (const field of ['icon', 'title', 'summary', 'when', 'shows']) {
       assert.ok(action[field], `${where}: missing ${field}`);
     }
+    // The settings window shows only the summary: it has to stand on its own
+    // and stay short enough to read at a glance.
+    assert.ok(action.summary.length <= 190, `${where}: summary is ${action.summary.length} chars`);
     if (action.setting) {
       assert.ok(SWITCHES.includes(action.setting), `${where}: unknown switch ${action.setting}`);
     }

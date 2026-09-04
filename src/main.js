@@ -31,14 +31,8 @@ const { PetChat } = require('./pet-chat');
 const { checkDrift, checkCodexDrift, checkOpenclawDrift, installToFiles } = require('../bin/clippy-hooks');
 const { identityFor, petNameFor } = require('./identity');
 const { SIZES, sizeList, allCharacters, characterFor, sizeFor } = require('./characters');
-const { ACTIONS } = require('./actions');
 const { windowActionFor } = require('./visibility');
-const {
-  SOLO_KEY,
-  sharesWindow,
-  windowKeyFor: soloWindowKey,
-  successorFor,
-} = require('./buddy-mode');
+const { SOLO_KEY, sharesWindow, windowKeyFor, successorFor } = require('./buddy-mode');
 const { EDGE_OPTIONS, EDGE_IDS, edgeLineup, edgeHome } = require('./arrange');
 const {
   terminalFromHeaders,
@@ -57,7 +51,7 @@ const tmux = require('./tmux');
 const { SpawnedSessions, buddyKeyFor, rememberProject } = require('./spawned');
 const { chatWorkspace, ensureChatWorkspace } = require('./workspace');
 const { TRUST_PROMPT, paneStartupState, prepareAgentWorkspace } = require('./agent-startup');
-const { resolveSession, createReader, readTail, turnsFrom, lastSaid } = require('./transcript');
+const { resolveSession, createReader, readTail, turnsFrom, lastSaid, lastPrompt } = require('./transcript');
 const { createRemoteReader, controlPathFor, ensureControlDir } = require('./transport');
 const { startAgentWatch } = require('./agent-watch');
 const {
@@ -146,16 +140,10 @@ const settings = {
   // session id, and capped, because sessions are many and short-lived.
   characterBySession: {},
   sizeBySession: {},
-  // 'each': a buddy per session, side by side. 'one': a single buddy that
-  // speaks for whichever agent needs you, wearing that agent's face.
-  buddyMode: 'each',
-  // In 'one' mode, the face the single buddy always wears. '' means "let
-  // Clippy pick" — the same casting a session would have got.
+  // The face the one buddy always wears. '' means "let Clippy pick" — the same
+  // casting a session would have got.
   soloCharacter: '',
-  // The one buddy can be a different size from the session buddies. '' keeps
-  // it on the global default, which is also how existing settings files behave.
-  soloSize: '',
-  size: 'medium', // the size a project gets when it hasn't picked one
+  size: 'medium', // how big Clippy is drawn
   arrangeEdge: '', // screen edge new buddies line up on; '' = the classic corner
   // …and the sessions Clippy starts itself (see spawnAgent).
   defaultAgent: 'claude', // which agent a recent project re-opens with
@@ -169,9 +157,7 @@ const CHOICES = {
   size: () => Object.keys(SIZES),
   arrangeEdge: () => EDGE_IDS,
   appearanceSound: () => ['', 'pop', 'chime', 'chirp'],
-  buddyMode: () => ['each', 'one'],
   soloCharacter: () => ['', ...characterIds()],
-  soloSize: () => ['', ...Object.keys(SIZES)],
   defaultAgent: () => Object.keys(tmux.SPAWNABLE),
   attachTerminal: () => Object.keys(ATTACH_APPS),
 };
@@ -179,8 +165,19 @@ const CHOICES = {
 // Where "attach in terminal" opens a tmux session.
 const ATTACH_APPS = { terminal: 'Terminal', iterm: 'iTerm' };
 
+/**
+ * An agent id we can actually start, or ''.
+ *
+ * `Object.hasOwn`, not a truthiness test: `SPAWNABLE['constructor']` is
+ * perfectly truthy, and the id arrives from a renderer form or from a settings
+ * file anyone can edit before it reaches a tmux launch line.
+ */
+const spawnableAgent = (id) => (Object.hasOwn(tmux.SPAWNABLE, String(id)) ? String(id) : '');
+
 // Settings a renderer must never set directly: each is a collection with its
-// own writer (assignCharacter, rememberRecentProject, saveSpawned).
+// own writer (rememberRecentProject, saveSpawned) or, for the per-project
+// casting maps, a leftover from when a session could be dressed on its own —
+// still read by characterFor, no longer written by anyone.
 const MANAGED = [
   'characterByProject',
   'sizeByProject',
@@ -190,9 +187,22 @@ const MANAGED = [
   'spawnedSessions',
 ];
 
-// The cast is read fresh each time so a sprite theme dropped into
-// `src/renderer/assets/themes/` can be assigned without touching the code.
-const characterIds = () => allCharacters().map((c) => c.id);
+// The cast is read from disk so a sprite theme dropped into
+// `src/renderer/assets/themes/` can be assigned without touching the code — but
+// `allCharacters()` is a readdir plus a JSON parse per pack, and main asks for
+// it several times per hook event (the shared buddy's face on every session
+// switch, once per settings payload, once per chat turn). The folder only
+// changes when a pack is installed, drawn or removed, so it is read once and
+// forgotten exactly there.
+let castCache = null;
+const cast = () => (castCache ||= allCharacters());
+const characterIds = () => cast().map((c) => c.id);
+
+/** Read the folder again, and pick the shared buddy's face again with it. */
+const forgetFaces = () => {
+  castCache = null;
+  soloFace = '';
+};
 
 const settingsFile = () => path.join(app.getPath('userData'), 'clippy-settings.json');
 
@@ -203,112 +213,45 @@ function loadSettings() {
     // carry retired settings — `characterMode` and the single `character` it
     // picked, from when you chose *how* buddies were cast — and copying those
     // back in would keep writing them out forever.
-    for (const key of Object.keys(settings)) if (key in saved) settings[key] = saved[key];
+    for (const key of Object.keys(settings)) {
+      if (Object.hasOwn(saved, key)) settings[key] = saved[key];
+    }
   } catch {
     // first run / unreadable -> defaults
   }
 }
 
-/** Give one project a buddy of its own (or '' to go back to the automatic one). */
-// How many per-session choices to remember. Trimmed oldest-first rather than
-// grown forever; for string keys, insertion order is age order.
-const SESSION_ASSIGN_CAP = 60;
-
-function rememberForSession(map, sessionId, value) {
-  const next = { ...map };
-  delete next[sessionId]; // re-setting means "most recent", not "keeps its spot"
-  if (value) next[sessionId] = value;
-  const keys = Object.keys(next);
-  for (const stale of keys.slice(0, Math.max(0, keys.length - SESSION_ASSIGN_CAP))) {
-    delete next[stale];
-  }
-  return next;
-}
-
 /**
- * Pin every *other* live buddy in this folder to what it is wearing now.
+ * Write the settings file whole, or not at all.
  *
- * A choice is written against the session and against the project: the session
- * half is what makes it this buddy's and not its twin's, the project half is
- * what makes the folder look the same tomorrow, when this session id is long
- * gone. But the project half would drag the neighbours along, since a buddy
- * with no choice of its own follows the project — so they are given their
- * current look explicitly, first. Nobody moves except the one you picked.
+ * Straight into the file meant that a crash, a full disk or a machine losing
+ * power mid-write left half a JSON document behind — and half a document is
+ * unreadable, so the next start silently reverted to defaults and every pet,
+ * size and recent project the user had chosen was gone. Renaming a complete
+ * file over the old one cannot end that way: the name always points at one
+ * whole document or the other.
  */
-function pinSiblings(sessionId, name, { size = false } = {}) {
-  for (const other of buddies.values()) {
-    if (other.sessionId === sessionId || other.name !== name) continue;
-    if (size) {
-      if ((settings.sizeBySession || {})[other.sessionId]) continue;
-      settings.sizeBySession = rememberForSession(
-        settings.sizeBySession,
-        other.sessionId,
-        sizeFor(settings, other.name, other.sessionId)
-      );
-    } else {
-      if ((settings.characterBySession || {})[other.sessionId]) continue;
-      settings.characterBySession = rememberForSession(
-        settings.characterBySession,
-        other.sessionId,
-        other.character
-      );
+function saveSettings() {
+  const file = settingsFile();
+  const scratch = `${file}.${process.pid}.tmp`;
+  try {
+    fs.writeFileSync(scratch, JSON.stringify(settings, null, 2));
+    fs.renameSync(scratch, file);
+  } catch (err) {
+    console.error('clippy: could not save settings', err);
+    try {
+      fs.rmSync(scratch, { force: true });
+    } catch {
+      // A leftover scratch file is untidy, never harmful — it is not the settings.
     }
   }
 }
 
-/** Give one session's buddy a character (or '' to go back to the automatic one). */
-function assignCharacter(sessionId, character) {
-  if (!sessionId) return;
-  const name = buddyOf(sessionId)?.name || tracker.cwdFor(sessionId).split('/').pop() || '';
-  if (!name) return;
-  const wanted = character && characterIds().includes(character) ? character : '';
-
-  pinSiblings(sessionId, name);
-  settings.characterBySession = rememberForSession(settings.characterBySession, sessionId, wanted);
-
-  const byProject = { ...settings.characterByProject };
-  if (wanted) byProject[name] = wanted;
-  else delete byProject[name];
-  settings.characterByProject = byProject;
-
-  saveSettings();
-  recast();
-  pushSettingsState();
-  sendSettings();
-}
-
-/** Give one project a size of its own (or '' to fall back to the default). */
-function assignSize(sessionId, size) {
-  if (!sessionId) return;
-  const name = buddyOf(sessionId)?.name || tracker.cwdFor(sessionId).split('/').pop() || '';
-  if (!name) return;
-  const wanted = size && SIZES[size] ? size : '';
-
-  pinSiblings(sessionId, name, { size: true });
-  settings.sizeBySession = rememberForSession(settings.sizeBySession, sessionId, wanted);
-
-  const byProject = { ...settings.sizeByProject };
-  if (wanted) byProject[name] = wanted;
-  else delete byProject[name];
-  settings.sizeByProject = byProject;
-
-  saveSettings();
-  // The window that buddy lives in just changed shape.
-  replaceAll();
-  pushSettingsState();
-  sendSettings();
-}
-
-function saveSettings() {
-  try {
-    fs.writeFileSync(settingsFile(), JSON.stringify(settings, null, 2));
-  } catch (err) {
-    console.error('clippy: could not save settings', err);
-  }
-}
-
 function setSetting(key, value) {
-  if (!(key in settings)) return;
+  // Object.hasOwn, not `in`: `'__proto__' in settings` is true of every plain
+  // object, and a renderer naming one of those would be writing somewhere that
+  // is not a setting at all.
+  if (!Object.hasOwn(settings, key)) return;
   // Settings that are a collection rather than one value: they have their own
   // writers, and the Boolean() fallback below would flatten them to `true`.
   if (MANAGED.includes(key)) return;
@@ -325,15 +268,10 @@ function setSetting(key, value) {
   // for a new height once it has re-measured, but this keeps the bare buddy
   // from sitting in the wrong box in the meantime.
   if (key === 'size') replaceAll();
-  // The shared buddy has its own optional size. Re-lay only that window so
-  // changing it never makes a desk full of session buddies jump around.
-  if (key === 'soloSize') {
-    const solo = buddies.get(SOLO_KEY);
-    if (solo && !solo.win.isDestroyed()) placeBuddy(solo, solo.mode || 'compact');
-  }
   // A different face for the shared buddy is a look, not a rebuild — but the
   // window is holding the old one until it is told.
   if (key === 'soloCharacter') {
+    soloFace = ''; // picked again from the new choice
     const solo = buddies.get(SOLO_KEY);
     if (solo && !solo.win.isDestroyed()) {
       solo.character = soloCharacter();
@@ -359,13 +297,12 @@ function settingsPayload(buddy) {
       ? {
           character: buddy.character,
           size: sizeForBuddy(buddy),
-          // Is *this* window the one that speaks for everybody? Not the same
-          // question as "is the mode 'one'": buddies that already existed when
-          // the mode changed keep their own windows and are not the manager.
+          // Is *this* window the one that speaks for everybody? A sandbox
+          // buddy has a window of its own and answers no.
           isSolo: buddies.get(SOLO_KEY) === buddy,
         }
       : null),
-    characters: allCharacters(),
+    characters: cast(),
     sizes: sizeList(),
   };
 }
@@ -397,11 +334,8 @@ function compactSize(buddy) {
   return SIZES[sizeForBuddy(buddy)].win;
 }
 
-/** The manager in one-buddy mode has its own optional size; everyone else is per-session. */
+/** The shared buddy has its own optional size; a sandbox buddy is per-session. */
 function sizeForBuddy(buddy) {
-  if (buddy && buddies.get(SOLO_KEY) === buddy && SIZES[settings.soloSize]) {
-    return settings.soloSize;
-  }
   return sizeFor(settings, buddy?.name || '', buddy?.sessionId || '');
 }
 
@@ -411,17 +345,6 @@ function replaceAll() {
     if (!buddy.win.isDestroyed()) placeBuddy(buddy, buddy.mode || 'compact');
   }
 }
-
-/**
- * Switching between one-each and one-for-all changes *where the next message
- * goes*, and nothing else.
- *
- * It used to tear every window down and build them again, which is the obvious
- * reading of "a different set of windows" and the wrong one: buddies you had
- * placed, perched and were reading vanished mid-thought because you flipped a
- * setting. Whoever is on screen stays there. The shared buddy appears when it
- * has something to say, which is the only moment it is needed.
- */
 
 /* ---------------- Settings window ---------------- */
 
@@ -442,7 +365,10 @@ function openSettingsWindow(section) {
     return settingsWin;
   }
 
-  settingsWin = new BrowserWindow({
+  // Kept in a local as well as the module slot: the window can be closed (and
+  // another opened) before it is ready to show, and a listener reaching back
+  // through the slot would then show whichever window is there now.
+  const win = new BrowserWindow({
     width: 940,
     height: 700,
     minWidth: 720,
@@ -458,15 +384,18 @@ function openSettingsWindow(section) {
     },
   });
 
-  settingsWin.loadFile(
+  settingsWin = win;
+  win.loadFile(
     path.join(__dirname, 'renderer', 'settings.html'),
     section ? { hash: section } : undefined
   );
-  settingsWin.once('ready-to-show', () => settingsWin.show());
-  settingsWin.on('closed', () => {
-    settingsWin = null;
+  win.once('ready-to-show', () => {
+    if (!win.isDestroyed()) win.show();
   });
-  return settingsWin;
+  win.on('closed', () => {
+    if (settingsWin === win) settingsWin = null;
+  });
+  return win;
 }
 
 /**
@@ -543,7 +472,6 @@ async function checkForAutomaticUpdate() {
 function settingsState() {
   return {
     ...settingsPayload(),
-    actions: ACTIONS,
     port: PORT,
     // Which copy of Clippy this is — the Updates section's offline half.
     build: localBuild(path.join(__dirname, '..')),
@@ -558,7 +486,6 @@ function settingsState() {
       character: soloCharacter(),
       pet: petNameFor(SOLO_KEY),
       color: identityFor(SOLO_KEY, 'clippy').color,
-      size: settings.soloSize || '',
       // Who it is speaking for at the moment, if anyone.
       showing: buddies.get(SOLO_KEY)?.name || '',
     },
@@ -568,9 +495,13 @@ function settingsState() {
       agent: s.agent,
       color: identityFor(s.sessionId, s.name).color,
       status: s.status,
-      // Who this session's buddy is right now — which is what "Auto" means in
-      // the picker next to it.
       character: buddyOf(s.sessionId)?.character || characterFor(settings, s.name, s.sessionId),
+      // The helpers this session has running, listed under it.
+      subagents: (s.subagents || []).map((sub) => ({
+        id: sub.id,
+        type: sub.type,
+        label: sub.activity?.label || '',
+      })),
     })),
   };
 }
@@ -581,36 +512,25 @@ function pushSettingsState() {
   }
 }
 
-/* ---------------- One Clippy per session ---------------- */
+/* ---------------- One Clippy for every session ---------------- */
 
-// key -> { win, slot, name, sessionId, pinned }. The key is the session id (or
-// `drive:<id>`); every session that reports in gets its own little buddy so
-// several parallel agents never fight over one window.
+// key -> { win, slot, name, sessionId, pinned }. Every session that reports in
+// lands in the one shared window, under SOLO_KEY: it wears the name, colour and
+// character of whichever agent it is speaking for, so "approve", "go to
+// terminal" and the token panel act on the agent you are looking at. Its
+// `sessionId` is therefore not fixed — it is whoever it is showing right now.
+// The sandbox is the exception: those keys get a window each (see sharesWindow).
 const buddies = new Map();
-
-/**
- * One buddy for everything, when you'd rather not have a desk full of them.
- *
- * In 'one' mode every session shares a single window, and that window wears
- * the face of whichever agent it is currently speaking for — its name, its
- * colour, its character. The buddy's `sessionId` is therefore not fixed: it is
- * whoever it is showing right now, which is what makes "approve", "go to
- * terminal" and the token panel act on the agent you are looking at.
- */
-const sharesSoloWindow = (key) => sharesWindow(settings.buddyMode, key);
-
-/** Which window shows this session: its own, or the shared one. */
-const windowKeyFor = (key) => soloWindowKey(settings.buddyMode, key);
 
 /**
  * The buddy showing `key`.
  *
- * Falls back to the shared window so that every existing per-session lookup
- * keeps working in 'one' mode without each of them having to know about it.
+ * Falls back to the shared window so that every per-session lookup keeps
+ * working without each of them having to know there is only one window.
  */
 function buddyOf(key) {
   if (!key) return null;
-  return buddies.get(key) || (sharesSoloWindow(key) ? buddies.get(SOLO_KEY) || null : null);
+  return buddies.get(key) || (sharesWindow(key) ? buddies.get(SOLO_KEY) || null : null);
 }
 
 /**
@@ -773,9 +693,8 @@ function nextFreeSlot() {
  * the same face across that change, and across a restart.
  */
 function buddyFor(key, name = '', agent = '', identityKey = key) {
-  // In 'one' mode every session lands in the same window; `key` still says
-  // which session this is *about*, and wearIdentity below makes the window
-  // look like it.
+  // Every session lands in the same window; `key` still says which session
+  // this is *about*, and wearIdentity below makes the window look like it.
   const windowKey = windowKeyFor(key);
   const existing = buddies.get(windowKey);
   if (existing) {
@@ -796,7 +715,7 @@ function buddyFor(key, name = '', agent = '', identityKey = key) {
   // against, and this window is created at that size.
   const [compactW, compactH] = compactSize({ name, sessionId: key });
   const { x, y } = homeBounds(slot, compactW, compactH);
-  const identity = identityFor(sharesSoloWindow(key) ? SOLO_KEY : identityKey, name);
+  const identity = identityFor(sharesWindow(key) ? SOLO_KEY : identityKey, name);
   const win = new BrowserWindow({
     width: compactW,
     height: compactH,
@@ -827,7 +746,7 @@ function buddyFor(key, name = '', agent = '', identityKey = key) {
       agent: agent || 'claude',
       // The shared window is named after itself, not after whichever session
       // happened to open it — petNameOf says the same thing once it exists.
-      pet: petNameFor(sharesSoloWindow(key) ? SOLO_KEY : identityKey),
+      pet: petNameFor(sharesWindow(key) ? SOLO_KEY : identityKey),
     },
   });
   // CLIPPY_SANDBOXTOOLS=1 npm start opens an inspector per buddy, detached so it
@@ -894,8 +813,8 @@ function buddyFor(key, name = '', agent = '', identityKey = key) {
     // something else has changed its mind checks this before putting a window
     // on screen — see showBuddy.
     visibilityTurn: 0,
-    // In 'one' mode, which session this window is currently wearing. Equal to
-    // sessionId for a window of its own, and moved by wearIdentity otherwise.
+    // Which session this window is currently wearing. Equal to sessionId for a
+    // sandbox buddy's own window, and moved by wearIdentity otherwise.
     showing: key,
     identityKey,
     agent: agent || 'claude',
@@ -907,7 +826,7 @@ function buddyFor(key, name = '', agent = '', identityKey = key) {
     // give the project a buddy by hand.
     // The shared buddy wears one face whoever it speaks for; a per-session
     // buddy is cast against its siblings so two agents in one project differ.
-    character: sharesSoloWindow(key)
+    character: sharesWindow(key)
       ? soloCharacter()
       : characterFor(
           settings,
@@ -980,11 +899,11 @@ function sourceFor(key) {
 /**
  * Make the shared window wear one session's face.
  *
- * Only in 'one' mode, and only when the session actually changes — the two
- * pushes below re-cast the artwork and re-letter the name plate, which is not
- * something to do on every tool event. Identity goes first because the clip
- * sprites are drawn per session colour, so the character has to be applied
- * against the colour it is about to wear.
+ * Only when the session actually changes — the two pushes below re-cast the
+ * artwork and re-letter the name plate, which is not something to do on every
+ * tool event. Identity goes first because the clip sprites are drawn per
+ * session colour, so the character has to be applied against the colour it is
+ * about to wear.
  */
 function wearIdentity(buddy, sessionId, name = '', agent = '') {
   if (buddy.showing === sessionId) return buddy;
@@ -1005,9 +924,9 @@ function wearIdentity(buddy, sessionId, name = '', agent = '') {
   // did-finish-load handler replays this, so skipping here is not skipping.
   if (!buddy.win.isDestroyed() && !buddy.win.webContents.isLoading()) sendIdentity(buddy);
 
-  // A session arriving in 'one' mode makes no new window, so the settings
-  // window would otherwise never hear about it: every other push happens on
-  // the creation path this deliberately skips.
+  // A session arriving makes no new window, so the settings window would
+  // otherwise never hear about it: every other push happens on the creation
+  // path this deliberately skips.
   pushSettingsState();
   return buddy;
 }
@@ -1045,11 +964,29 @@ function petNameOf(buddy) {
   return petNameFor(buddy.identityKey || buddy.sessionId);
 }
 
-/** The face the shared buddy wears: the one you chose, or Clippy's own pick. */
+/**
+ * The face the shared buddy wears: the one you chose, or Clippy's own pick.
+ *
+ * Held rather than worked out each time. It does not depend on which session
+ * the window is speaking for, but `wearIdentity` asked for it on every switch —
+ * and the automatic pick walks the cast, which reads the themes folder off the
+ * disk. It is dropped by `forgetFaces` wherever the answer could change: the
+ * choice itself, the cast, or an assignment.
+ */
+let soloFace = '';
 function soloCharacter() {
+  if (soloFace) return soloFace;
   const chosen = settings.soloCharacter;
-  if (chosen && characterIds().includes(chosen)) return chosen;
-  return characterFor(settings, 'clippy', SOLO_KEY);
+  const ids = characterIds();
+  // Nothing picked: the app is named after the paperclip, so that is who the
+  // one buddy is — not whichever face the cast happens to hash to.
+  soloFace =
+    chosen && ids.includes(chosen)
+      ? chosen
+      : ids.includes('clip')
+        ? 'clip'
+        : characterFor(settings, 'clippy', SOLO_KEY);
+  return soloFace;
 }
 
 /** Which buddy does this renderer belong to? */
@@ -1061,10 +998,10 @@ function buddyForSender(sender) {
 /**
  * Send an event to one session's Clippy, creating its window if needed.
  *
- * Every event carries where it came from. That matters most in 'one' mode,
- * where a single window shows cards from several agents: the card has to say
- * whose it is, and the button on it has to name the app *that* session lives
- * in rather than whichever one the window happened to hear about last.
+ * Every event carries where it came from, because a single window shows cards
+ * from several agents: the card has to say whose it is, and the button on it
+ * has to name the app *that* session lives in rather than whichever one the
+ * window happened to hear about last.
  */
 function sendTo(sessionId, event) {
   if (!sessionId) return null;
@@ -1083,6 +1020,10 @@ function closeBuddy(key) {
   if (!buddy) return;
   forgetAttentionForSession(key);
   unwatchSpawned(key);
+  // The quiet window only expires when something asks about it again, which a
+  // finished session never does — so it is dropped with the session instead of
+  // sitting in the map for the life of the app.
+  justAnswered.delete(key);
 
   // The shared window belongs to every session, so one of them ending is not
   // a reason to take it away — it stays for the others and simply stops
@@ -1145,7 +1086,7 @@ function showBuddy(key, { pin = false, mode = 'full' } = {}) {
 }
 
 /** Slip back out of sight once the moment has passed. */
-function hideBuddy(key, { unpin = false } = {}) {
+function hideBuddy(key, { unpin = false, lookedAway = false } = {}) {
   const buddy = buddyOf(key);
   if (!buddy || buddy.win.isDestroyed()) return;
   // Whatever a perch measurement in flight was going to do, this outranks it.
@@ -1156,8 +1097,11 @@ function hideBuddy(key, { unpin = false } = {}) {
     buddy.win.hide();
     return;
   }
-  // Something is still waiting on an answer from this card — don't yank it away.
-  if (broker.hasPending(key)) return;
+  // Something on this window is still waiting on the user — a held card, a
+  // review, a nudge — and every session shares the window, so it may be
+  // another agent's. Ambient chatter from one agent must not put away what
+  // another is asking; the user looking away after dealing with it may.
+  if (!lookedAway && windowHasBusiness(key)) return;
   if (buddy.dock && !buddy.dock.auto) {
     placeBuddy(buddy, 'compact'); // asked-for perch: stays, just gets smaller
     return;
@@ -1641,7 +1585,11 @@ function watchForAccess(key) {
       clearInterval(axWatch);
       axWatch = null;
       pushSettingsState();
-      if (key && buddies.has(key)) {
+      // buddyOf, not buddies.has: every watched session shares one window, so
+      // the map is keyed by that window and never by a session id. Asking the
+      // map directly meant this branch was dead for real sessions — the switch
+      // was granted and nothing picked up where it left off.
+      if (key && buddyOf(key)) {
         tellBuddy(key, 'Got it — thanks. Taking you to that terminal now.');
         // `auto` so that a retry which fails for some *other* reason reports it
         // quietly instead of asking for permission all over again.
@@ -2136,17 +2084,32 @@ const pokeWatch = (key) => watchers.get(key)?.watch?.poke?.();
  * buddyForSender), so this really is just a map move.
  */
 function rekeyBuddy(from, to) {
-  const buddy = buddies.get(from);
-  if (!buddy || from === to || buddies.has(to)) return false;
-  buddies.delete(from);
-  buddy.sessionId = to;
-  buddies.set(to, buddy);
+  if (!from || !to || from === to) return false;
 
+  // The transcript watcher moves first, and unconditionally. It is keyed by
+  // whatever `buddyKeyFor` says the session is called, and that name changes on
+  // adoption — so a watcher left behind under the old key is one nothing can
+  // poke and nothing will ever stop, polling a finished session for as long as
+  // the app runs.
   const entry = watchers.get(from);
   if (entry) {
     watchers.delete(from);
     watchers.set(to, entry);
   }
+
+  // The window map is keyed by *window*, and every watched session shares one —
+  // so there is usually nothing here to move. A sandbox buddy, which does have
+  // a window of its own, still does.
+  const buddy = buddies.get(from);
+  if (buddy && !buddies.has(to)) {
+    buddies.delete(from);
+    buddy.sessionId = to;
+    buddies.set(to, buddy);
+  }
+  // The shared window is left wearing the old name on purpose: the next event
+  // for this session goes through wearIdentity, which re-dresses it properly —
+  // plate, colour and all — and would skip that work if the name were changed
+  // out from under it here.
   pushSettingsState();
   return true;
 }
@@ -2316,7 +2279,10 @@ const TRUST_CHECK_MS = 6000;
 async function warnIfAwaitingTrust(bin, record, label) {
   await new Promise((r) => setTimeout(r, TRUST_CHECK_MS));
   const key = buddyKeyFor(record);
-  if (!buddies.has(key)) return;
+  // buddyOf, not buddies.has: a spawned session's key is its tmux name, and the
+  // window it lives in is the shared one — so the map never holds that key, and
+  // this warning never reached anybody.
+  if (!buddyOf(key)) return;
   const pane = await tmux.capturePane(bin, record.paneId || `=${record.name}`, { lines: 40 }).catch(() => '');
   if (!TRUST_PROMPT.test(pane)) return;
   tellBuddy(
@@ -2342,7 +2308,7 @@ function openNewAgentWindow() {
     return newAgentWin;
   }
 
-  newAgentWin = new BrowserWindow({
+  const win = new BrowserWindow({
     width: 480,
     height: 460,
     resizable: false,
@@ -2356,12 +2322,15 @@ function openNewAgentWindow() {
       nodeIntegration: false,
     },
   });
-  newAgentWin.loadFile(path.join(__dirname, 'renderer', 'new-agent.html'));
-  newAgentWin.once('ready-to-show', () => newAgentWin.show());
-  newAgentWin.on('closed', () => {
-    newAgentWin = null;
+  newAgentWin = win;
+  win.loadFile(path.join(__dirname, 'renderer', 'new-agent.html'));
+  win.once('ready-to-show', () => {
+    if (!win.isDestroyed()) win.show();
   });
-  return newAgentWin;
+  win.on('closed', () => {
+    if (newAgentWin === win) newAgentWin = null;
+  });
+  return win;
 }
 
 const closeNewAgentWindow = () => {
@@ -2388,7 +2357,10 @@ async function spawnAgent({
   remember = true,
   autoTrust = false,
 } = {}) {
-  const kind = tmux.SPAWNABLE[agent] ? agent : settings.defaultAgent;
+  // Two fallbacks deep: the id comes from a renderer form, and the default it
+  // falls back to comes from a settings file anyone can edit — and every
+  // message below reads `SPAWNABLE[kind].label` without asking.
+  const kind = spawnableAgent(agent) || spawnableAgent(settings.defaultAgent) || 'claude';
   // The agent will record its *resolved* working directory, and Claude Code
   // derives its transcript directory from that — so a path through a symlink
   // (every /var/… on macOS, and plenty of people's ~/work) has to be
@@ -2547,7 +2519,7 @@ function chatFor(buddy) {
       // while you're talking to it.
       context: () => ({
         pet: petNameOf(buddy),
-        character: allCharacters().find((c) => c.id === buddy.character)?.label || 'desk buddy',
+        character: cast().find((c) => c.id === buddy.character)?.label || 'desk buddy',
         project: buddy.name,
         cwd: tracker.cwdFor(buddy.sessionId),
         agent: agentDisplayName(buddy.agent),
@@ -2566,17 +2538,21 @@ function chatFor(buddy) {
 const readerTitles = new Map();
 
 let readerWin = null;
+let readerSessionId = '';
+let readerRequestId = '';
 
 /**
- * A plain window for a long message.
+ * A focused window for a long message or finished-turn review.
  *
  * One at a time, reused: opening a second card's text replaces what is in it
  * rather than littering the desktop with paperclip windows. Deliberately not
- * always-on-top and not tied to the buddy — the point is that it can be left
- * open, dragged to another display, and read while the buddy gets on with
- * whatever else it is doing.
+ * always-on-top — the point is that it can be left open, dragged to another
+ * display, and read comfortably. A review temporarily takes over from the mini
+ * card and carries that buddy and the two review actions.
  */
 function openReader(payload) {
+  readerSessionId = String(payload.sessionId || '');
+  readerRequestId = payload.review ? String(payload.requestId || '') : '';
   if (!readerWin || readerWin.isDestroyed()) {
     readerWin = new BrowserWindow({
       width: 620,
@@ -2594,7 +2570,12 @@ function openReader(payload) {
       },
     });
     readerWin.on('closed', () => {
+      const restore = readerRequestId && pendingReviews.has(readerRequestId);
+      const sessionId = readerSessionId;
       readerWin = null;
+      readerSessionId = '';
+      readerRequestId = '';
+      if (restore && sessionId) showBuddy(sessionId);
     });
     readerWin.loadFile(path.join(__dirname, 'renderer', 'reader.html'));
   }
@@ -2604,6 +2585,11 @@ function openReader(payload) {
   };
   if (win.webContents.isLoading()) win.webContents.once('did-finish-load', send);
   else send();
+  // The review moves into this window. Its mini card remains alive underneath
+  // so minimizing or closing without a decision can restore it unchanged — but
+  // the session may have ended between the click and here, taking its window.
+  const mini = payload.review ? buddyOf(readerSessionId) : null;
+  if (mini && !mini.win.isDestroyed()) mini.win.hide();
   win.show();
   win.focus();
 }
@@ -3082,7 +3068,7 @@ function openSandbox() {
     sandboxWin.show();
     return sandboxWin;
   }
-  sandboxWin = new BrowserWindow({
+  const win = new BrowserWindow({
     width: 300,
     height: 560,
     title: 'Clippy sandbox',
@@ -3095,17 +3081,19 @@ function openSandbox() {
       nodeIntegration: false,
     },
   });
-  sandboxWin.loadFile(path.join(__dirname, 'renderer', 'sandbox.html'));
-  sandboxWin.webContents.on('did-finish-load', () => {
-    sandboxWin.webContents.executeJavaScript(
-      `window.renderStories(${JSON.stringify(storyList())});`
-    );
+  sandboxWin = win;
+  win.loadFile(path.join(__dirname, 'renderer', 'sandbox.html'));
+  win.webContents.on('did-finish-load', () => {
+    if (win.isDestroyed()) return;
+    win.webContents.executeJavaScript(`window.renderStories(${JSON.stringify(storyList())});`);
   });
-  sandboxWin.once('ready-to-show', () => sandboxWin.show());
-  sandboxWin.on('closed', () => {
-    sandboxWin = null;
+  win.once('ready-to-show', () => {
+    if (!win.isDestroyed()) win.show();
   });
-  return sandboxWin;
+  win.on('closed', () => {
+    if (sandboxWin === win) sandboxWin = null;
+  });
+  return win;
 }
 
 /**
@@ -3198,7 +3186,12 @@ function emitPassive(reaction, { osNotification = true } = {}) {
   // Once the agent is moving again, an old terminal hand-off is no longer a
   // recovery path. Removing it here also covers terminal-native approvals,
   // which do not necessarily emit another UserPromptSubmit hook.
-  if (reaction.kind === 'activity' || reaction.kind === 'clear' || reaction.kind === 'remove') {
+  if (
+    reaction.kind === 'activity' ||
+    reaction.kind === 'failure' ||
+    reaction.kind === 'clear' ||
+    reaction.kind === 'remove'
+  ) {
     forgetAttentionForSession(reaction.sessionId);
   }
   updateTray();
@@ -3400,14 +3393,29 @@ const DIRECT_REPLY_REVIEW_GRACE_MS = 15_000;
 /**
  * A review holds no hook open, so `hideBuddy` cannot see it through the
  * DecisionBroker. Before putting a buddy away after a review, look across the
- * window it belongs to: in one-buddy mode that includes cards from every
- * session wearing the shared window.
+ * window it belongs to, which includes the cards of every session wearing the
+ * shared window.
  */
 function buddyStillHasCards(sessionId) {
   const buddy = buddyOf(sessionId);
   if (!buddy) return false;
   if ([...pendingReviews.values()].some((sid) => buddyOf(sid) === buddy)) return true;
   return broker.list().some((entry) => buddyOf(entry.meta.sessionId) === buddy);
+}
+
+/**
+ * Is anything on this window still waiting for the user? Cards, and nudges
+ * that were actually shown here (one handed to the terminal is the terminal's
+ * business now). Asked before an ambient event is allowed to hide the window.
+ */
+function windowHasBusiness(sessionId) {
+  if (buddyStillHasCards(sessionId)) return true;
+  const buddy = buddyOf(sessionId);
+  if (!buddy) return false;
+  for (const item of attentionInbox.values()) {
+    if (item.state === 'clippy' && buddyOf(item.sessionId) === buddy) return true;
+  }
+  return false;
 }
 
 async function handleStop(payload) {
@@ -3457,17 +3465,29 @@ async function handleStop(payload) {
   // below only when there is more of it than the headline already shows.
   const firstLine = (recap.split('\n').find((l) => l.trim()) || '').trim();
   const short = firstLine.length > 90 ? `${firstLine.slice(0, 90).trim()}…` : firstLine;
+  // The headline answers "which request just finished?", while the green row
+  // below previews what the agent answered. Transcript parsing already drops
+  // injected environment and hook messages, so this is the person's prompt.
+  const turns = await readTail(transcriptPathFor(reaction.sessionId), {
+    agent: reaction.agent,
+    limit: 40,
+    maxChars: FULL_DETAIL_MAX,
+  });
+  const prompt = lastPrompt(turns).replace(/\s+/g, ' ').trim();
+  const reviewTitle = `${agentName} Finished`;
 
   const id = `review-${++reviewSeq}`;
   pendingReviews.set(id, reaction.sessionId);
-  rememberWhole(id, reaction.sessionId, whole === recap ? '' : whole, `${agentName} finished`);
+  rememberWhole(id, reaction.sessionId, whole === recap ? '' : whole, reviewTitle);
   sendTo(reaction.sessionId, {
     ...reaction,
     kind: 'review',
     message: short
       ? `${agentName} finished: “${short}”`
       : `${agentName} finished in “${reaction.name}”. Looks good, or should it keep going?`,
-    detail: recap !== firstLine ? recap : '',
+    title: reviewTitle,
+    prompt,
+    detail: recap,
     truncated: whole !== recap,
     counts: tracker.counts(),
     requestId: id,
@@ -3822,7 +3842,9 @@ function handleHookEvent(eventName, kind, payload, ctx) {
   // The hook command tags its source in the local URL. Keep the upstream hook
   // payload untouched on the wire, then carry the source through our session
   // model so one app can label Claude, Codex, and OpenClaw buddies correctly.
-  payload = { ...(payload || {}), agent: AGENTS[ctx?.source] ? ctx.source : 'claude' };
+  // hasOwn, not a truthy lookup: a `?source=constructor` would otherwise pass.
+  const source = ctx?.source;
+  payload = { ...(payload || {}), agent: source && Object.hasOwn(AGENTS, source) ? source : 'claude' };
   noteTerminal(payload, ctx);
 
   if (eventName === 'PermissionRequest') return handlePermissionRequest(payload, ctx);
@@ -4171,6 +4193,40 @@ function defendTheMenuBar() {
   }
 }
 
+/**
+ * A window Clippy opens can never become somewhere else.
+ *
+ * Every one of them is a local file behind a preload that can approve a
+ * permission request, type a prompt into a terminal, or open a link — and a
+ * preload is re-attached on every navigation. So a renderer talked into
+ * leaving its own page (a link in text an agent wrote, a meta refresh in
+ * something a tool returned, a `window.open`) would hand that bridge to
+ * whatever page it landed on. The content policy in each HTML file stops
+ * remote *sub-resources*; it says nothing about the document itself moving.
+ *
+ * There is therefore nowhere to navigate to. A link that should genuinely
+ * open goes to the browser through the same validated https path as
+ * `clippy-open-external`, and the window stays where it is.
+ */
+function lockDownNavigation() {
+  app.on('web-contents-created', (_e, contents) => {
+    const stay = (event, url) => {
+      if (url === contents.getURL()) return; // its own page again is not going anywhere
+      event.preventDefault();
+      console.warn(`clippy: refused to navigate a Clippy window to ${url}`);
+    };
+    contents.on('will-navigate', stay);
+    contents.on('will-frame-navigate', (event) => stay(event, event.url));
+    contents.on('will-attach-webview', (event) => event.preventDefault());
+    contents.setWindowOpenHandler(({ url }) => {
+      if (typeof url === 'string' && url.startsWith('https://')) shell.openExternal(url);
+      return { action: 'deny' };
+    });
+  });
+}
+
+lockDownNavigation();
+
 if (!claimTheMenuBar()) standDown('this copy does not have the menu bar.');
 setInterval(defendTheMenuBar, DEFEND_EVERY_MS).unref?.();
 app.on('second-instance', () => {
@@ -4215,25 +4271,80 @@ app.whenReady().then(async () => {
    * "read all" made the same floating panel taller until it ran out of screen,
    * and it still could not be moved to a second display or left open beside
    * the work it describes. This is an ordinary window: resizable, movable,
-   * closable, not always-on-top, and it carries text and nothing else, so a
-   * window left open somewhere can never answer a hook by accident.
+   * closable and not always-on-top. Finished-turn reviews also carry an
+   * explicit reply composer and sign-off action; ordinary long messages remain
+   * read-only.
    */
   ipcMain.on('clippy-open-reader', (e, requestId, mine) => {
     const buddy = buddyForSender(e.sender);
     if (!buddy) return;
     const id = String(requestId || '');
     const held = wholeMessages.get(id);
-    if (held && held.sessionId !== buddy.sessionId) return;
+    if (held && buddyOf(held.sessionId) !== buddy) return;
+    // A shared buddy may be showing another session's card. Accept that id
+    // only when it belongs to this same buddy window; otherwise use the
+    // renderer's own session as the safe fallback.
+    const requestedSessionId = String(mine?.sessionId || '');
+    const sessionId =
+      (held && held.sessionId) ||
+      (requestedSessionId && buddyOf(requestedSessionId) === buddy ? requestedSessionId : buddy.sessionId);
+    const source = sourceFor(sessionId);
     // Main only keeps a copy of what it had to *cut*. Most messages arrive
     // whole and are never stored, so the card's own copy is the text — and is
     // the only one for anything main never truncated.
     const text = (held && held.text) || String(mine?.text || '');
     if (!text) return;
+    const review = pendingReviews.has(id);
     openReader({
       title: readerTitles.get(id) || String(mine?.title || '') || 'From the agent',
       where: buddy.name,
+      prompt: String(mine?.prompt || ''),
       text,
+      sessionId,
+      canOpenSource: Boolean(tracker.terminalFor(sessionId) || tmuxRecordFor(sessionId)),
+      sourceName: source.name || 'source',
+      requestId: id,
+      review,
+      buddy: mine?.buddy || null,
     });
+  });
+
+  ipcMain.on('clippy-reader-open-source', (e) => {
+    if (!readerWin || readerWin.isDestroyed() || e.sender !== readerWin.webContents) return;
+    if (readerSessionId) openSessionWindow(readerSessionId);
+  });
+
+  ipcMain.on('clippy-reader-minimize', (e) => {
+    if (!readerWin || readerWin.isDestroyed() || e.sender !== readerWin.webContents) return;
+    readerWin.hide();
+    if (readerRequestId && pendingReviews.has(readerRequestId) && readerSessionId) {
+      showBuddy(readerSessionId);
+    }
+  });
+
+  ipcMain.on('clippy-reader-decide', async (e, payload) => {
+    if (!readerWin || readerWin.isDestroyed() || e.sender !== readerWin.webContents) return;
+    const id = readerRequestId;
+    const sessionId = readerSessionId;
+    const action = String(payload?.action || '');
+    const message = typeof payload?.message === 'string' ? payload.message.trim() : '';
+    if (!id || !pendingReviews.has(id) || !['ok', 'feedback'].includes(action)) return;
+    if (action === 'feedback' && !message) return;
+    await resolveReview(id, action, message);
+    // The hidden mini renderer did not originate this decision, so explicitly
+    // remove its copy before the window can ever be shown again.
+    sendTo(sessionId, {
+      kind: 'request-closed',
+      requestId: id,
+      sessionId,
+      outcome: action,
+      counts: tracker.counts(),
+    });
+    readerRequestId = '';
+    readerSessionId = '';
+    // Resolving the review was awaited, and the window can be closed by hand
+    // while that is in flight — by then `readerWin` is already gone.
+    if (readerWin && !readerWin.isDestroyed()) readerWin.close();
   });
 
   // Activity is rendered as a short, ellipsized chip under the buddy. Let a
@@ -4245,7 +4356,16 @@ app.whenReady().then(async () => {
     const title = String(payload?.title || 'Activity log').trim() || 'Activity log';
     const text = String(payload?.text || '');
     if (!text) return;
-    openReader({ title, where: buddy.name, text });
+    const sessionId = buddy.sessionId;
+    const source = sourceFor(sessionId);
+    openReader({
+      title,
+      where: buddy.name,
+      text,
+      sessionId,
+      canOpenSource: Boolean(tracker.terminalFor(sessionId) || tmuxRecordFor(sessionId)),
+      sourceName: source.name || 'source',
+    });
   });
 
   ipcMain.handle('clippy-card-full', (e, requestId) => {
@@ -4367,12 +4487,16 @@ app.whenReady().then(async () => {
   ipcMain.on('clippy-open-settings', () => openSettingsWindow());
   ipcMain.handle('clippy-settings-install-pet', async (_e, url) => {
     // The "add a pet" box takes a pasted link only — local folders stay a CLI
-    // affair, so this window never reads arbitrary paths off the disk.
+    // affair, so this window never reads arbitrary paths off the disk. https
+    // only: a pack downloaded in the clear is sprite files, a theme.json and a
+    // path prefix, all of them written into the app's own assets folder by
+    // whoever happens to be between here and the server.
     const src = String(url || '').trim();
-    if (!/^https?:\/\//i.test(src)) return { ok: false, error: 'paste the pet’s page link (https://…)' };
+    if (!/^https:\/\//i.test(src)) return { ok: false, error: 'paste the pet’s page link (https://…)' };
     try {
       const { installPack } = require('../scripts/add-sprite-pack');
       const { id, theme } = await installPack(src);
+      forgetFaces(); // a new pack is a new member of the cast
       pushSettingsState(); // the cast re-reads the themes folder, so this repaints it
       return { ok: true, id, label: theme.label };
     } catch (err) {
@@ -4383,6 +4507,7 @@ app.whenReady().then(async () => {
     try {
       const { createDrawnBuddy } = require('./custom-buddies');
       const result = createDrawnBuddy(drawing || {});
+      forgetFaces();
       pushSettingsState();
       sendSettings();
       return { ok: true, ...result };
@@ -4394,6 +4519,7 @@ app.whenReady().then(async () => {
     try {
       const { removeCustomBuddy } = require('./custom-buddies');
       const removed = removeCustomBuddy(character);
+      forgetFaces();
       for (const key of ['characterByProject', 'characterBySession']) {
         settings[key] = Object.fromEntries(
           Object.entries(settings[key] || {}).filter(([, value]) => value !== removed)
@@ -4422,14 +4548,6 @@ app.whenReady().then(async () => {
     if (what === 'accessibility') askForWindowAccess(null, { force: true });
     if (what === 'copy-path') clipboard.writeText(appBundlePath());
     pushSettingsState();
-  });
-  ipcMain.on('clippy-settings-assign', (_e, payload) => {
-    const { sessionId, character } = payload || {};
-    assignCharacter(String(sessionId || ''), String(character || ''));
-  });
-  ipcMain.on('clippy-settings-assign-size', (_e, payload) => {
-    const { sessionId, size } = payload || {};
-    assignSize(String(sessionId || ''), String(size || ''));
   });
   /**
    * Feedback from the settings window.
@@ -4484,15 +4602,24 @@ app.whenReady().then(async () => {
     // Carried across the middle of the screen: where he'll settle has changed.
     sendSide(buddy);
   });
-  ipcMain.on('clippy-hide', (e) => {
-    // Hiding by hand also drops the pin, so ambient rules take over again.
+  ipcMain.on('clippy-hide', (e, opts) => {
     const buddy = buddyForSender(e.sender);
-    if (buddy) hideBuddy(buddy.sessionId, { unpin: true });
-    else BrowserWindow.fromWebContents(e.sender)?.hide();
+    if (!buddy) {
+      BrowserWindow.fromWebContents(e.sender)?.hide();
+      return;
+    }
+    // Clicking elsewhere after dealing with Clippy puts it away but keeps a
+    // perch or pin you asked for; the Hide button also drops the pin, so the
+    // ambient rules take over again.
+    if (opts && opts.lookedAway === true) hideBuddy(buddy.sessionId, { lookedAway: true });
+    else hideBuddy(buddy.sessionId, { unpin: true });
   });
   ipcMain.on('clippy-quit', () => app.quit());
   ipcMain.on('clippy-counts', updateTray);
-  ipcMain.on('clippy-decide', (_e, { id, action, message }) => {
+  // Defaults on every destructured payload: an `ipcMain.on` handler that
+  // throws takes the main process with it, and "the renderer sent nothing" is
+  // one bad call away in any window that has this bridge.
+  ipcMain.on('clippy-decide', (_e, { id, action, message } = {}) => {
     const a = String(action || '');
     const m = typeof message === 'string' ? message : '';
     // Ids are globally unique; review cards first (they hold nothing open),
@@ -4509,7 +4636,7 @@ app.whenReady().then(async () => {
       e.sender.send('clippy-event', { kind: 'extended', requestId: id, expiresAt });
     }
   });
-  ipcMain.on('clippy-set-setting', (_e, { key, value }) => setSetting(key, value));
+  ipcMain.on('clippy-set-setting', (_e, { key, value } = {}) => setSetting(key, value));
   ipcMain.on('clippy-drive-prompt', (_e, text) => {
     if (drive && typeof text === 'string' && text.trim()) drive.prompt(text.trim());
   });

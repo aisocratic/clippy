@@ -41,7 +41,11 @@ const WALK_MS = 900;
 const POINT_MS = 5000;
 const POINT_EXTRA_H = 30;
 let walkTimers = [];
-let spriteTimers = []; // the workbench animations, cleared on every re-render
+// The two workbench grids animate independently and re-render independently,
+// so they keep their own intervals: clicking a pose re-renders only the sprite
+// sheet, and a single shared list meant that also froze the feature catalog.
+let spriteTimers = [];
+let actionTimers = [];
 let previewPose = 'idle';
 
 const FRAME_INSET = 12;
@@ -130,17 +134,21 @@ const openRequests = new Map();
 
 /* ---------------- bridge ---------------- */
 
+const { post, isBridgeMessage } = window.ClippyBench;
+
 function send(type, payload) {
-  const msg = { __clippyDemo: true, type, payload };
   if (!ready) {
-    queued.push(msg);
+    queued.push([type, payload]);
     return;
   }
-  frame.contentWindow.postMessage(msg, '*');
+  post(frame.contentWindow, type, payload);
 }
 
 function flushQueue() {
-  while (queued.length) frame.contentWindow.postMessage(queued.shift(), '*');
+  while (queued.length) {
+    const [type, payload] = queued.shift();
+    post(frame.contentWindow, type, payload);
+  }
 }
 
 function log(dir, key, message) {
@@ -234,34 +242,20 @@ function showNote(text) {
   log('note', 'show run', text);
 }
 
-/** Steps that the panel performs rather than the renderer. */
-function runAction(action) {
-  switch (action.do) {
-    case 'usage':
-      // One left click is the whole gesture now: status, spend and the box to
-      // reply in all arrive in the same panel.
-      send('poke', { button: 'left' });
-      break;
-    case 'usage-close':
-      send('poke-menu', { item: 'btn-usage-close' });
-      break;
-    case 'set':
-      settings = { ...settings, [action.key]: action.value };
+/** Steps that the panel performs rather than the renderer (see demo/bridge.js:
+ *  the states page shares the dispatcher and supplies fewer of these). */
+const runAction = (action) =>
+  window.ClippyBench.runAction(action, {
+    send,
+    setSetting: (key, value) => {
+      settings = { ...settings, [key]: value };
       syncSettingInputs();
       send('settings', settings);
-      log('out', 'settings', `${action.key} = ${action.value}`);
-      break;
-    case 'dock':
-      setDocked(Boolean(action.value));
-      break;
-    case 'walk-to-prompt':
-      walkToPrompt();
-      break;
-    case 'poke-menu':
-      send('poke-menu', { item: action.item });
-      break;
-  }
-}
+      log('out', 'settings', `${key} = ${value}`);
+    },
+    dock: setDocked,
+    walkToPrompt,
+  });
 
 /**
  * The bench's stand-in for main's walk (pointAtPrompt in src/main.js): step the
@@ -321,8 +315,8 @@ function describeEvent(e) {
 /* ---------------- messages coming back from the renderer ---------------- */
 
 window.addEventListener('message', async (e) => {
+  if (!isBridgeMessage(e, [frame.contentWindow])) return;
   const msg = e.data;
-  if (!msg || msg.__clippyDemo !== true || e.source !== frame.contentWindow) return;
   const p = msg.payload || {};
 
   switch (msg.type) {
@@ -688,8 +682,9 @@ const POSE_LABEL = {
   wave: 'hello',
 };
 
-/** One animation, playing: live SVG, a generated GIF, or a stepped sheet. */
-function poseArt(character, poseName, height = 44) {
+/** One animation, playing: live SVG, a generated GIF, or a stepped sheet.
+ *  `into` collects the sheet's interval so its grid can stop it again. */
+function poseArt(character, poseName, height = 44, into = spriteTimers) {
   if (character.vector) {
     const colour = document.getElementById('opt-color').value || '#9aa3ad';
     const svg = window.ClippyVectors.create(character.vector, poseName, colour);
@@ -724,7 +719,7 @@ function poseArt(character, poseName, height = 44) {
     frame = (frame + 1) % pose.frames;
   };
   step();
-  if (pose.frames > 1) spriteTimers.push(setInterval(step, Math.round(1000 / (fps || 6))));
+  if (pose.frames > 1) into.push(setInterval(step, Math.round(1000 / (fps || 6))));
   return el;
 }
 
@@ -793,6 +788,8 @@ function showOnStage(character, poseName) {
 
 function renderActions() {
   const host = document.getElementById('action-grid');
+  actionTimers.forEach(clearInterval);
+  actionTimers = [];
   host.replaceChildren();
 
   for (const action of data.actions || []) {
@@ -802,7 +799,7 @@ function renderActions() {
     const pose = document.createElement('div');
     pose.className = 'action-pose';
     const character = data.characters.find((c) => c.id === settings.character) || data.characters[0];
-    if (character) pose.appendChild(poseArt(character, action.pose, 40));
+    if (character) pose.appendChild(poseArt(character, action.pose, 40, actionTimers));
     const poseLabel = document.createElement('div');
     poseLabel.className = 'sprite-label';
     poseLabel.textContent = POSE_LABEL[action.pose] || action.pose;

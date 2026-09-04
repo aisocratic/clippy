@@ -78,6 +78,19 @@ test('sha256File produces the release checksum without shelling out', () => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+test('every external tool is run as an argv array, never through a shell', () => {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'package-app.js'), 'utf8');
+  // The paths handed to codesign, hdiutil, ditto and xcrun contain spaces
+  // ("Clippy for Claude Code.app") and one of them — the signing identity — is
+  // whatever the environment says it is. execFile with an argv array hands each
+  // one to the tool untouched; a shell would re-split them.
+  assert.doesNotMatch(source, /\bexecSync\s*\(/);
+  assert.doesNotMatch(source, /\bshell\s*:\s*true/);
+  for (const [call] of source.matchAll(/execFileSync\([^)]*/g)) {
+    assert.match(call, /execFileSync\(\s*(?:'[^']+'|[A-Za-z_$][\w.$]*)\s*,\s*\[/s, call.slice(0, 80));
+  }
+});
+
 test('an icon can be written without an alpha channel at all', () => {
   const rgba = renderIconPixels(32);
   const rgb = encodePng(32, 32, rgba, { alpha: false });

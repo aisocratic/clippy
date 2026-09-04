@@ -18,12 +18,27 @@
 
 const fs = require('node:fs/promises');
 const path = require('node:path');
-const { readBackward, parseLine, TAIL_BYTES } = require('./jsonl');
+const { readBackward, readForward, parseLine, TAIL_BYTES, EMPTY } = require('./jsonl');
 
 // Reading a week of transcripts must never stall the app; these caps keep a
 // right-click cheap even for someone with hundreds of sessions.
 const MAX_FILES = 400;
 const MAX_BYTES = 80 * 1024 * 1024;
+// How much of a transcript is turned into lines at a time. Reading a file in
+// blocks bounds what one 50MB transcript costs to a block, rather than the
+// whole file as a string plus a second copy of it as an array of lines.
+const FEED_CHUNK_BYTES = 4 * 1024 * 1024;
+// One read. Bigger than the 64KB `readForward` tails a growing file with,
+// because a cold pass over a 50MB transcript is bounded by syscalls, not by
+// how much of it is in memory at once.
+const FEED_BLOCK_BYTES = 1024 * 1024;
+// Live per-transcript tallies kept between polls. Only a handful of sessions
+// are ever on screen; the cap is what stops a long-running app from remembering
+// every transcript it has ever looked at.
+const MAX_LIVE_TALLIES = 32;
+// A line this long is a tool result, not prose, and assembling one just to look
+// for a model id would defeat the point of not reading the whole file.
+const MAX_LINE_BYTES = 1024 * 1024;
 // Stop reviews normally find the final assistant turn in one read. Keeping the
 // block modest also means a very large transcript never has to be materialized
 // just to inspect its last few JSONL records.
@@ -75,116 +90,165 @@ function contextOf(usage = {}) {
 }
 
 /**
- * Walk the assistant lines of a transcript, handing each reported `usage` over
- * with the bits of context that decide where it counts.
- *
- * One place parses a transcript, because one sweep has to feed every window on
- * the panel and reading these files twice would show in the right-click.
+ * What a line means only in the light of the ones before it: Codex's current
+ * model, and the running total it repeats on every event. Carrying this
+ * explicitly is what lets a reader feed a transcript in batches as it grows and
+ * still get the answer a single pass over the whole file would give.
  */
-function eachUsage(text, visit) {
-  let codexModel = '';
-  let codexTotalSignature = '';
-  for (const line of String(text).split('\n')) {
-    if (
-      !line ||
-      (line.indexOf('"usage"') === -1 &&
-        line.indexOf('"turn_context"') === -1 &&
-        line.indexOf('"token_count"') === -1)
-    ) continue; // cheap pre-filter for both transcript formats
-    let entry;
-    try {
-      entry = JSON.parse(line);
-    } catch {
-      continue; // a half-written last line while Claude is mid-turn
-    }
-    const message = entry.type === 'assistant' ? entry.message : null;
-    if (message && message.usage) {
-      visit(message.usage, {
-        at: Date.parse(entry.timestamp || '') || 0,
-        model: message.model || '',
-        sidechain: Boolean(entry.isSidechain),
-      });
-      continue;
-    }
-
-    // Codex rollout JSONL keeps the current model on turn_context and emits a
-    // token_count event after model work. last_token_usage is the increment for
-    // this call; total_token_usage is cumulative and must not be added again.
-    if (entry.type === 'turn_context' && entry.payload?.model) codexModel = entry.payload.model;
-    const info = entry.type === 'event_msg' && entry.payload?.type === 'token_count'
-      ? entry.payload.info
-      : null;
-    const raw = info?.last_token_usage;
-    if (!raw) continue;
-    const cached = raw.cached_input_tokens || 0;
-    const cumulative = info.total_token_usage;
-    const signature = cumulative
-      ? [
-          cumulative.input_tokens,
-          cumulative.cached_input_tokens,
-          cumulative.output_tokens,
-          cumulative.reasoning_output_tokens,
-          cumulative.total_tokens,
-        ].join(':')
-      : '';
-    const count = !signature || signature !== codexTotalSignature;
-    if (signature) codexTotalSignature = signature;
-    visit(
-      {
-        input_tokens: Math.max(0, (raw.input_tokens || 0) - cached),
-        output_tokens: raw.output_tokens || 0,
-        cache_read_input_tokens: cached,
-        cache_creation_input_tokens: 0,
-      },
-      {
-        at: Date.parse(entry.timestamp || '') || 0,
-        model: codexModel,
-        sidechain: false,
-        contextLimit: Number(info.model_context_window) || 0,
-        context: Number(raw.total_tokens) || 0,
-        count,
-      }
-    );
-  }
-}
+const newScan = (wantModel = false) => ({
+  codexModel: '',
+  codexTotalSignature: '',
+  wantModel,
+  lastModel: '',
+});
 
 /**
- * The latest model named by either transcript format, even before the first
- * token-count event arrives. Claude writes it on assistant messages; Codex
- * writes it on turn_context. Keeping this independent from usage is what lets
- * a brand-new or idle session identify itself instead of saying "unknown".
+ * One JSONL line — a string, or the raw bytes of one — handed to `visit` for
+ * every `usage` it reports.
+ *
+ * The substring tests come first and run against the bytes, so the tool traffic
+ * that is most of a transcript is skipped without being decoded at all. The one
+ * parse feeds both things a line can be worth reading, because reading these
+ * files twice would show in the right-click.
  */
-function modelFromTranscript(text) {
-  let model = '';
-  for (const line of String(text).split('\n')) {
-    if (!line || line.indexOf('"model"') === -1) continue;
-    let entry;
-    try {
-      entry = JSON.parse(line);
-    } catch {
-      continue;
-    }
+function scanLine(line, state, visit) {
+  if (!line || !line.length) return;
+  // Cheap pre-filter for both transcript formats.
+  const hasUsage =
+    line.indexOf('"usage"') !== -1 ||
+    line.indexOf('"turn_context"') !== -1 ||
+    line.indexOf('"token_count"') !== -1;
+  // Only a reader that asked for the model fallback pays for the lines that
+  // name a model and report no usage — and it stops paying as soon as a usage
+  // line has named one, which is what turns `wantModel` off.
+  const hasModel = !hasUsage && state.wantModel && line.indexOf('"model"') !== -1;
+  if (!hasUsage && !hasModel) return;
+
+  let entry;
+  try {
+    entry = JSON.parse(line);
+  } catch {
+    return; // a half-written last line while Claude is mid-turn
+  }
+
+  if (state.wantModel) {
     if (entry.type === 'assistant' && typeof entry.message?.model === 'string') {
-      model = entry.message.model;
+      state.lastModel = entry.message.model;
     } else if (entry.type === 'turn_context' && typeof entry.payload?.model === 'string') {
-      model = entry.payload.model;
+      state.lastModel = entry.payload.model;
     }
   }
-  return model;
+  if (!hasUsage) return;
+
+  const message = entry.type === 'assistant' ? entry.message : null;
+  if (message && message.usage) {
+    visit(message.usage, {
+      at: Date.parse(entry.timestamp || '') || 0,
+      model: message.model || '',
+      sidechain: Boolean(entry.isSidechain),
+    });
+    return;
+  }
+
+  // Codex rollout JSONL keeps the current model on turn_context and emits a
+  // token_count event after model work. last_token_usage is the increment for
+  // this call; total_token_usage is cumulative and must not be added again.
+  if (entry.type === 'turn_context' && entry.payload?.model) state.codexModel = entry.payload.model;
+  const info = entry.type === 'event_msg' && entry.payload?.type === 'token_count'
+    ? entry.payload.info
+    : null;
+  const raw = info?.last_token_usage;
+  if (!raw) return;
+  const cached = raw.cached_input_tokens || 0;
+  const cumulative = info.total_token_usage;
+  const signature = cumulative
+    ? [
+        cumulative.input_tokens,
+        cumulative.cached_input_tokens,
+        cumulative.output_tokens,
+        cumulative.reasoning_output_tokens,
+        cumulative.total_tokens,
+      ].join(':')
+    : '';
+  const count = !signature || signature !== state.codexTotalSignature;
+  if (signature) state.codexTotalSignature = signature;
+  visit(
+    {
+      input_tokens: Math.max(0, (raw.input_tokens || 0) - cached),
+      output_tokens: raw.output_tokens || 0,
+      cache_read_input_tokens: cached,
+      cache_creation_input_tokens: 0,
+    },
+    {
+      at: Date.parse(entry.timestamp || '') || 0,
+      model: state.codexModel,
+      sidechain: false,
+      contextLimit: Number(info.model_context_window) || 0,
+      context: Number(raw.total_tokens) || 0,
+      count,
+    }
+  );
+}
+
+/** Every reported `usage` in a whole transcript, oldest first. */
+function eachUsage(text, visit) {
+  const state = newScan();
+  for (const line of String(text).split('\n')) scanLine(line, state, visit);
 }
 
 /**
- * Summarize one transcript.
+ * Read a file's lines in blocks, handing each to `feed`.
  *
- * @param {string} text  JSONL contents
- * @param {number} [sinceMs]  only count lines at/after this time
+ * `start`/`carry` are where to resume and what partial line was left over
+ * there, so a caller that already read the first 40MB of a transcript can add
+ * the last 4KB. Returns the same pair, moved on.
+ *
+ * `flush` says whether the leftover is a record. For a file being read once and
+ * whole it is: JSONL need not end with a newline. For a transcript still being
+ * appended to it is not — it is whatever Claude Code has written of the record
+ * so far, so it is kept until its newline arrives rather than parsed half
+ * formed. (Every transcript either agent writes does end in a newline, so in
+ * practice this only ever holds back a record for the moment it takes to
+ * finish being written.)
  */
-function parseTranscript(text, { sinceMs = 0 } = {}) {
+async function feedLines(file, feed, { start = 0, end = Infinity, carry = EMPTY, flush = false } = {}) {
+  let offset = start;
+  let rest = carry;
+  while (offset < end) {
+    const batch = await readForward(file, {
+      start: offset,
+      end,
+      carry: rest,
+      maxBytes: FEED_CHUNK_BYTES,
+      chunkBytes: FEED_BLOCK_BYTES,
+    });
+    if (!batch.read) break; // the file was truncated under us
+    offset += batch.read;
+    rest = batch.carry;
+    for (const line of batch.lines) feed(line);
+  }
+  if (flush && rest.length) {
+    feed(rest);
+    rest = EMPTY;
+  }
+  return { offset, carry: rest };
+}
+
+/**
+ * The running summary of one transcript, fed a line at a time.
+ *
+ * Split out from `parseTranscript` because a transcript only ever grows: a
+ * reader that has already seen the first 40MB should be able to add the last
+ * 4KB rather than start over (see `sessionUsage`).
+ */
+function createTranscriptTally({ sinceMs = 0 } = {}) {
   const totals = emptyTotals();
   const byModel = new Map(); // model id -> totals, for "where did it all go?"
-  // The usage sweep below names the model as it goes; the dedicated scan is
-  // only needed when no usage line carried one (a brand-new or idle session),
-  // so the common case parses the transcript once, not twice.
+  // The usage sweep names the model as it goes; the scan below picks one off a
+  // line that named a model and reported no usage, which is all a brand-new or
+  // idle session has. Both come out of the same pass, so the transcript is read
+  // once even in that case.
+  const state = newScan(true);
   let model = '';
   let context = 0;
   let biggest = 0;
@@ -192,7 +256,7 @@ function parseTranscript(text, { sinceMs = 0 } = {}) {
   let lastAt = 0;
   let reportedContextLimit = 0;
 
-  eachUsage(text, (usage, line) => {
+  const visit = (usage, line) => {
     if (sinceMs && line.at && line.at < sinceMs) return;
 
     if (line.count !== false) {
@@ -201,6 +265,10 @@ function parseTranscript(text, { sinceMs = 0 } = {}) {
     }
     if (line.model) {
       model = line.model;
+      // A usage line named the model, so the fallback scan has nothing left to
+      // find and every remaining line can skip it. Without this, a transcript
+      // full of megabyte tool results is searched for a model it already has.
+      state.wantModel = false;
       if (line.count !== false) {
         if (!byModel.has(model)) byModel.set(model, emptyTotals());
         addUsage(byModel.get(model), usage);
@@ -215,39 +283,144 @@ function parseTranscript(text, { sinceMs = 0 } = {}) {
       lastAt = line.at;
       context = liveContext;
     }
-  });
+  };
 
-  if (!model) model = modelFromTranscript(text);
-
-  // The transcript records the plain model id even on the 1M-context variant,
-  // so a context that has already run past the standard window is the only
-  // evidence that this session has the bigger one.
-  const contextLimit = Math.max(
-    reportedContextLimit || contextLimitFor(model),
-    biggest > DEFAULT_CONTEXT ? LONG_CONTEXT : 0
-  );
-  return { model, context, contextLimit, totals, turns, lastAt, byModel: Object.fromEntries(byModel) };
+  return {
+    feed(line) {
+      scanLine(line, state, visit);
+    },
+    /** A snapshot, copied — the tally behind it keeps growing. */
+    result() {
+      const named = model || state.lastModel;
+      // The transcript records the plain model id even on the 1M-context
+      // variant, so a context that has already run past the standard window is
+      // the only evidence that this session has the bigger one.
+      const contextLimit = Math.max(
+        reportedContextLimit || contextLimitFor(named),
+        biggest > DEFAULT_CONTEXT ? LONG_CONTEXT : 0
+      );
+      const models = {};
+      for (const [id, spent] of byModel) models[id] = { ...spent };
+      return {
+        model: named,
+        context,
+        contextLimit,
+        totals: { ...totals },
+        turns,
+        lastAt,
+        byModel: models,
+      };
+    },
+  };
 }
 
-/** Just the model named in a transcript — the cheap read for identity polls. */
+/**
+ * Summarize one transcript.
+ *
+ * @param {string} text  JSONL contents
+ * @param {number} [sinceMs]  only count lines at/after this time
+ */
+function parseTranscript(text, { sinceMs = 0 } = {}) {
+  const tally = createTranscriptTally({ sinceMs });
+  for (const line of String(text).split('\n')) tally.feed(line);
+  return tally.result();
+}
+
+/**
+ * Just the model named in a transcript — the cheap read for identity polls.
+ *
+ * The newest line naming one is the answer, so this walks the file backwards
+ * and stops at the first: the buddy asks every two seconds until a model turns
+ * up, and reading tens of megabytes that often to find a string near the end
+ * was the app's most pointless recurring cost.
+ */
 async function modelFromTranscriptFile(transcriptPath) {
   if (!transcriptPath) return '';
-  try {
-    return modelFromTranscript(await fs.readFile(transcriptPath, 'utf8'));
-  } catch {
-    return ''; // no transcript yet, or it moved
-  }
+  const found = await readBackward(
+    transcriptPath,
+    (line) => {
+      if (line.indexOf('"model"') === -1) return undefined;
+      const entry = parseLine(line);
+      if (!entry) return undefined;
+      if (entry.type === 'assistant' && typeof entry.message?.model === 'string') {
+        return entry.message.model;
+      }
+      if (entry.type === 'turn_context' && typeof entry.payload?.model === 'string') {
+        return entry.payload.model;
+      }
+      return undefined;
+    },
+    { chunkBytes: TRANSCRIPT_TAIL_BYTES, maxLineBytes: MAX_LINE_BYTES }
+  );
+  return found || ''; // no transcript yet, or it moved
 }
 
+/**
+ * The live tally for each transcript being watched, kept between calls.
+ *
+ * Every buddy asks how full its context is once a minute, and a busy transcript
+ * runs to tens of megabytes — re-reading and re-parsing all of it to answer that
+ * was the most expensive thing this module did, on a timer, in the main
+ * process. A transcript only ever grows, so a poll that finds nothing appended
+ * now costs one `stat` and nothing else.
+ */
+const liveTallies = new Map(); // path -> { offset, carry, ino, tally }
+const inFlight = new Map(); // path -> the read currently running
+
 /** Read and summarize a single session's transcript. */
-async function sessionUsage(transcriptPath) {
-  if (!transcriptPath) return null;
+function sessionUsage(transcriptPath) {
+  if (!transcriptPath) return Promise.resolve(null);
+  // Two buddies can poll the same transcript at once, and the usage panel can
+  // land on top of a context poll. They share the read that is already running:
+  // two of them starting from the same offset would feed the tally the same
+  // lines twice, and the tally is the thing that never starts over.
+  let running = inFlight.get(transcriptPath);
+  if (!running) {
+    running = readSessionUsage(transcriptPath).finally(() => inFlight.delete(transcriptPath));
+    inFlight.set(transcriptPath, running);
+  }
+  return running;
+}
+
+async function readSessionUsage(transcriptPath) {
+  let stat;
   try {
-    const text = await fs.readFile(transcriptPath, 'utf8');
-    return parseTranscript(text);
+    stat = await fs.stat(transcriptPath);
   } catch {
     return null; // no transcript yet, or it moved
   }
+
+  let entry = liveTallies.get(transcriptPath);
+  // Truncated (a /clear rewrote the session) or replaced (same path, new file):
+  // either way what we counted belongs to a transcript that no longer exists.
+  if (!entry || stat.size < entry.offset || (entry.ino && stat.ino !== entry.ino)) {
+    entry = { offset: 0, carry: EMPTY, ino: 0, tally: createTranscriptTally() };
+  } else {
+    liveTallies.delete(transcriptPath); // reinserted below, so a Map orders by use
+  }
+  entry.ino = stat.ino;
+  liveTallies.set(transcriptPath, entry);
+
+  // Whatever is left over is a record Claude Code is still writing; it is kept
+  // and fed once its newline arrives, rather than parsed half-formed.
+  Object.assign(
+    entry,
+    await feedLines(transcriptPath, entry.tally.feed, {
+      start: entry.offset,
+      end: stat.size,
+      carry: entry.carry,
+    })
+  );
+
+  // Map iteration is insertion order, so this drops the transcript nobody has
+  // asked about in longest.
+  while (liveTallies.size > MAX_LIVE_TALLIES) {
+    liveTallies.delete(liveTallies.keys().next().value);
+  }
+  // A file we can stat but never read a byte of is not an empty session — say
+  // "no transcript" rather than "no tokens", the same as before.
+  if (stat.size > 0 && entry.offset === 0) return null;
+  return entry.tally.result();
 }
 
 /**
@@ -381,12 +554,13 @@ const agesOutAt = (win) => (win && win.firstAt ? win.firstAt + win.spanMs : 0);
  * the five-hour block. A line with no neighbour to borrow from counts only in
  * the widest window on offer, because "some time this week" is all we know.
  */
-function tallyInto(text, windows) {
+function createWindowTally(windows) {
   const seen = new Map(); // window -> the models this transcript put in it
   const widest = windows.reduce((wide, win) => (!wide || win.spanMs > wide.spanMs ? win : wide), null);
+  const state = newScan();
   let carried = 0; // the last timestamp we could read, in file order
 
-  eachUsage(text, (usage, line) => {
+  const visit = (usage, line) => {
     if (line.count === false) return;
     const at = line.at || carried;
     if (line.at) carried = line.at;
@@ -403,13 +577,27 @@ function tallyInto(text, windows) {
         if (at > win.lastAt) win.lastAt = at;
       }
     }
-  });
+  };
 
-  for (const [win, models] of seen) {
-    win.sessions++;
-    (win.sessionModels ||= []).push([...models]);
-  }
-  return [...seen.keys()];
+  return {
+    feed(line) {
+      scanLine(line, state, visit);
+    },
+    /** The transcript is finished: count it as a session where it landed. */
+    done() {
+      for (const [win, models] of seen) {
+        win.sessions++;
+        (win.sessionModels ||= []).push([...models]);
+      }
+      return [...seen.keys()];
+    },
+  };
+}
+
+function tallyInto(text, windows) {
+  const tally = createWindowTally(windows);
+  for (const line of String(text).split('\n')) tally.feed(line);
+  return tally.done();
 }
 
 /**
@@ -430,13 +618,13 @@ async function sweepInto(projectsDir, windows) {
     if (bytes + entry.size > MAX_BYTES) break;
     bytes += entry.size;
     read++;
-    let text = '';
-    try {
-      text = await fs.readFile(entry.file, 'utf8');
-    } catch {
-      continue;
-    }
-    tallyInto(text, windows); // which counts the transcript as a session too
+    // Block by block rather than a whole file at a time: the cap above allows
+    // 80MB of transcripts, and holding one of them as a string *and* as an
+    // array of its lines is the kind of allocation a menu-bar app is noticed
+    // for. The tally sees exactly the same lines either way.
+    const tally = createWindowTally(windows);
+    await feedLines(entry.file, tally.feed, { end: entry.size, flush: true });
+    tally.done(); // which counts the transcript as a session too
   }
 
   // Newest first, so the caps only ever bite at the old end: a window is
@@ -546,7 +734,6 @@ async function readOfficialUsage(file = path.join(require('node:os').homedir(), 
 
 module.exports = {
   parseTranscript,
-  modelFromTranscript,
   modelFromTranscriptFile,
   contextLimitFor,
   contextOf,

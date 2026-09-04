@@ -161,15 +161,18 @@ test('a compact buddy can grow past its fallback size instead of clipping its ow
   assert.match(body, /workArea\.height - WIN_GAP \* 2/);
 });
 
-test('the main buddy has an independent size picker and a name-only plate', () => {
+test('the main buddy is sized and cast in one place, and wears a name-only plate', () => {
   const main = read('src', 'main.js');
   const settings = read('src', 'renderer', 'settings.js');
   const renderer = read('src', 'renderer', 'clippy.js');
   const styles = read('src', 'renderer', 'clippy.css');
 
-  assert.match(main, /soloSize: ''/);
-  assert.match(main, /soloSize: \(\) => \['', \.\.\.Object\.keys\(SIZES\)\]/);
-  assert.match(settings, /set\('soloSize', sizePick\.value\)/);
+  // One size and one face for the one buddy: the Buddies panel sets both, and
+  // there is no second, per-window size to disagree with it.
+  assert.doesNotMatch(main, /soloSize/);
+  assert.doesNotMatch(settings, /soloSize/);
+  assert.match(settings, /set\('soloCharacter', character\.id\)/);
+  assert.match(settings, /set\('size', size\.id\)/);
   assert.match(renderer, /whoSub\.textContent = solo \? ''/);
   assert.match(styles, /body\.solo #who-sub\s*\{\s*display: none/s);
 });
@@ -226,7 +229,7 @@ test('signing off one review leaves the next queued card on screen', () => {
 test('the large card keeps its project and title clear of its close button', () => {
   const styles = read('src', 'renderer', 'clippy.css');
   const where = styles.slice(styles.indexOf('#card-where {'));
-  assert.match(where.slice(0, 500), /margin: 8px 0/);
+  assert.match(where.slice(0, 500), /margin: 5px 0/);
 
   // A long project name or headline must not run under the top-right (x).
   const cornerClearance = styles.slice(styles.indexOf('#pet-head,'), styles.indexOf('/* The corner stack'));
@@ -242,8 +245,36 @@ test('the reader heading is centred clear of the macOS window controls', () => {
   // equal side clearance means a long reader title still has a real centre.
   assert.match(header, /display:\s*grid/);
   assert.match(header, /justify-items:\s*center/);
-  assert.match(header, /padding:\s*14px 90px 12px/);
+  assert.match(header, /padding:\s*10px 88px 9px/);
   assert.match(header, /text-align:\s*center/);
+});
+
+test('a review moves into the reader and can safely return or resolve there', () => {
+  const main = read('src', 'main.js');
+  const preload = read('src', 'preload-reader.js');
+  const reader = read('src', 'renderer', 'reader.js');
+  const html = read('src', 'renderer', 'reader.html');
+  const styles = read('src', 'renderer', 'reader.css');
+
+  assert.match(main, /const mini = payload\.review \? buddyOf\(readerSessionId\) : null;/);
+  assert.match(main, /if \(mini && !mini\.win\.isDestroyed\(\)\) mini\.win\.hide\(\)/);
+  assert.match(main, /ipcMain\.on\('clippy-reader-minimize'/);
+  assert.match(main, /showBuddy\(readerSessionId\)/);
+  assert.match(main, /ipcMain\.on\('clippy-reader-decide'/);
+  assert.match(main, /await resolveReview\(id, action, message\)/);
+  assert.match(main, /kind: 'request-closed'/);
+  assert.match(preload, /minimize: \(\) => ipcRenderer\.send\('clippy-reader-minimize'\)/);
+  assert.match(preload, /decide: \(action, message = ''\)/);
+  assert.match(html, /id="reply-input"/);
+  assert.match(html, /id="reader-good">Looks good/);
+  assert.match(reader, /window\.readerAPI\.decide\('feedback'/);
+  assert.match(reader, /window\.readerAPI\.decide\('ok'\)/);
+
+  // The text scrolls, not the window: a flex item that cannot shrink below its
+  // own content pushes the reply box off the bottom of a long response.
+  const content = styles.slice(styles.indexOf('#content {'), styles.indexOf('#content section'));
+  assert.match(content, /min-height: 0/);
+  assert.match(content, /overflow-y: auto/);
 });
 
 test('the under-Clippy activity preview opens complete entries in a reader window', () => {
@@ -260,7 +291,7 @@ test('the under-Clippy activity preview opens complete entries in a reader windo
   assert.match(renderer, /window\.clippyAPI\.openActivityReader\(/);
   assert.match(preload, /openActivityReader: \(title, text\)/);
   assert.match(main, /ipcMain\.on\('clippy-open-activity-reader'/);
-  assert.match(main, /openReader\(\{ title, where: buddy\.name, text \}\)/);
+  assert.match(main, /openReader\(\{[\s\S]*?title,[\s\S]*?where: buddy\.name,[\s\S]*?text,[\s\S]*?sessionId,/);
   assert.match(styles, /\.deed-what\s*\{[\s\S]*font-size: 9px/);
   assert.match(styles, /\.deed-meta\s*\{[\s\S]*font-size: 8px/);
   assert.match(styles, /\.deed:focus-visible/);

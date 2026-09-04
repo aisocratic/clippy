@@ -85,6 +85,34 @@ const sizeList = () => Object.entries(SIZES).map(([id, s]) => ({ id, buddy: s.bu
 const THEMES_DIR = path.join(__dirname, 'renderer', 'assets', 'themes');
 
 /**
+ * A theme id and a sheet filename both end up inside a CSS
+ * `url("assets/themes/<id>/<file>")` in the renderer, built from a theme.json
+ * that came out of whatever pack was dropped in or downloaded from
+ * openpets.dev. Two things must be impossible there: leaving the themes
+ * directory, and leaving the string.
+ *
+ * A separator or a `%` escape would do the first (the browser decodes `%2e%2e`
+ * back into `..` before it resolves the path); a quote or a backslash would do
+ * the second and turn the rest of the name into CSS. Spaces and accents are
+ * fine and packs do ship them, so this stays a denial list.
+ */
+const isSafeName = (name) =>
+  typeof name === 'string' &&
+  name !== '' &&
+  !/^\.+$/.test(name) &&
+  !/[/\\%"']/.test(name) &&
+  !/[\x00-\x1f\x7f]/.test(name);
+
+// One scan, reused until the folder changes. `customThemes` is read per buddy
+// and per session on every settings push — a readdir plus a read-and-parse of
+// every theme.json each time, synchronously, on the main process. Adding or
+// removing a pack (by hand, by the drawing tool, or by add-sprite-pack) is a
+// mkdir or an rmdir in this directory, so its own mtime is the signal. Editing
+// a theme.json *in place* is the one change it cannot see; restarting picks it
+// up, which is what the docs already ask of a pack author.
+let scanned = { dir: '', mtimeMs: -1, themes: [] };
+
+/**
  * Bring your own buddy: any folder under `src/renderer/assets/themes/` that
  * holds a `theme.json` becomes a character in the menus, drawn from PNG sprite
  * sheets instead of the generated GIFs.
@@ -123,7 +151,10 @@ const THEMES_DIR = path.join(__dirname, 'renderer', 'assets', 'themes');
  */
 function customThemes(dir = THEMES_DIR) {
   let entries = [];
+  let mtimeMs = -1;
   try {
+    mtimeMs = fs.statSync(dir).mtimeMs;
+    if (dir === scanned.dir && mtimeMs === scanned.mtimeMs) return scanned.themes.slice();
     entries = fs.readdirSync(dir, { withFileTypes: true });
   } catch {
     return []; // no assets built yet
@@ -132,6 +163,10 @@ function customThemes(dir = THEMES_DIR) {
   const themes = [];
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
+    if (!isSafeName(entry.name)) {
+      console.warn(`clippy: ignoring themes/${entry.name} — that is not a usable character id`);
+      continue;
+    }
     const file = path.join(dir, entry.name, 'theme.json');
     let raw;
     try {
@@ -157,7 +192,8 @@ function customThemes(dir = THEMES_DIR) {
       console.warn(`clippy: ignoring themes/${entry.name} — theme.json is incomplete`);
     }
   }
-  return themes;
+  scanned = { dir, mtimeMs, themes };
+  return themes.slice();
 }
 
 /**
@@ -169,8 +205,13 @@ const facing = (value) => (['left', 'right', 'center'].includes(value) ? value :
 
 /** Validate the bits the renderer has to have, or return null. */
 function readSheet(raw, id) {
+  // `file` is written into a CSS `url("assets/themes/<id>/<file>")` by the
+  // renderer, and theme.json comes out of whatever pack was dropped in or
+  // downloaded. A plain filename is the only thing a sheet can honestly be: a
+  // `../../..` would read a file outside the app, and a quote would close the
+  // url() and let the rest of the string become CSS.
   const read = (p) =>
-    p && typeof p.file === 'string' && Number(p.frames) > 0
+    p && typeof p.file === 'string' && isSafeName(p.file) && Number(p.frames) > 0
       ? {
           file: `assets/themes/${id}/${p.file}`,
           frames: Math.floor(Number(p.frames)),

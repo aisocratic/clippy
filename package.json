@@ -25,7 +25,7 @@
     "start": "node scripts/make-buddies.js --if-missing && electron .",
     "dev": "node scripts/make-buddies.js --if-missing && node scripts/dev.js",
     "dev:once": "node scripts/make-buddies.js --if-missing && CLIPPY_DEV=1 electron .",
-    "sandbox": "node scripts/demo-web.js --open /gallery",
+    "sandbox": "node scripts/demo-web.js --open /states",
     "sandbox:app": "node scripts/make-buddies.js --if-missing && CLIPPY_SANDBOX=1 electron .",
     "test": "node --test test/*.test.js",
     "test:all": "npm test && npm --prefix website test",

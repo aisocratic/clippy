@@ -2,6 +2,7 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert');
+const { execFileSync } = require('node:child_process');
 const {
   terminalFromHeaders,
   parseProcessTable,
@@ -151,6 +152,42 @@ test('windowScript targets the tty for Terminal and iTerm, the app otherwise', (
   // Nothing to go on.
   assert.equal(windowScript({ program: 'ghostty', tty: '', app: null }, { reveal: true }), null);
   assert.equal(windowScript(null, {}), null);
+});
+
+test('a project name is data in the script, never syntax', () => {
+  // macOS allows almost anything in a folder name, and the folder name is what
+  // the window hint is. A quote would close the literal; a newline is worse,
+  // because AppleScript has no multi-line string, so the *whole script* stops
+  // compiling — which used to mean every window lookup failing silently for as
+  // long as that project was open.
+  const nasty = [
+    ['my "quoted" app', 'my "quoted" app'],
+    ['back\\slash', 'back\\slash'],
+    ['two\nlines', 'two\nlines'],
+    ['carriage\rreturn', 'carriage\rreturn'],
+    // Nothing a terminal can use, and nothing a script literal can hold.
+    ['a\x07bell', 'abell'],
+    ['проект ✨', 'проект ✨'],
+  ];
+
+  for (const [hint, expected] of nasty) {
+    const script = windowScript({ app: { pid: 42 }, hint }, { reveal: false });
+    const literal = script.match(/contains ("(?:[^"\\]|\\.)*")/);
+    assert.ok(literal, `no readable literal for ${JSON.stringify(hint)}`);
+    assert.doesNotMatch(literal[1], /[\n\r]/, 'a raw line break would not compile');
+
+    // The proof, rather than the pattern: ask AppleScript itself what it read.
+    const said = execFileSync('/usr/bin/osascript', ['-e', `return ${literal[1]}`], {
+      encoding: 'utf8',
+    });
+    assert.equal(said.replace(/\n$/, ''), expected, JSON.stringify(hint));
+  }
+});
+
+test('typed text is one line, and carries no control characters into the script', () => {
+  const script = typeScript('first line\nsecond "line"\x07');
+  assert.match(script, /keystroke "first line second \\"line\\""/);
+  assert.doesNotMatch(script, /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/);
 });
 
 test('parseBounds accepts the scripts output and nothing else', () => {

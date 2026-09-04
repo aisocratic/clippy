@@ -324,3 +324,41 @@ test('a Codex question with no id cannot be answered, and says so by declining',
     {}
   );
 });
+
+test('tool input that names a prototype slot is data, not a key', () => {
+  // Every one of these strings answers a plain-object lookup with something
+  // inherited from Object.prototype. None of them may become an answer, a
+  // decision, or a crash.
+  const questions = [
+    { id: '__proto__', question: 'constructor' },
+    { id: 'real', question: 'Which store?', options: [{ label: 'Redis' }] },
+  ];
+
+  const claude = toHookResponse('PreToolUse', 'answer', '{"constructor":"Redis"}', {
+    toolInput: { questions },
+  });
+  assert.equal(claude.hookSpecificOutput.updatedInput.answers.constructor, 'Redis');
+
+  const codex = toHookResponse('PreToolUse', 'answer', '{"constructor":"Redis"}', {
+    toolInput: { questions },
+    source: 'codex',
+  });
+  // The answer belongs to the question with that text, under its own id — and
+  // the reason we hand Codex is still parseable JSON.
+  const reason = codex.hookSpecificOutput.permissionDecisionReason;
+  const sent = JSON.parse(reason.slice(reason.indexOf('{')));
+  assert.deepEqual(Object.keys(sent.answers), ['__proto__']);
+  assert.deepEqual(Object.getOwnPropertyDescriptor(sent.answers, '__proto__').value, {
+    answers: ['Redis'],
+  });
+  assert.equal(Object.getPrototypeOf({}), Object.prototype); // nothing polluted
+});
+
+test('an unknown tool with unstringifiable input still describes itself', () => {
+  const circular = { name: 'x' };
+  circular.self = circular;
+  const d = describeToolCall('WeirdTool', circular);
+  assert.equal(d.title, 'Use tool: WeirdTool');
+  assert.equal(d.detail, '');
+  assert.equal(d.fullDetail, '');
+});

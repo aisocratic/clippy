@@ -26,11 +26,33 @@ function colourBytes(value) {
   return [(n >> 16) & 255, (n >> 8) & 255, n & 255, 255];
 }
 
+/**
+ * The folder one buddy id names, or an error.
+ *
+ * Both callers write to (or delete) a directory chosen by an id, and only one
+ * of those ids is ours: `removeCustomBuddy` is handed whatever the settings
+ * window's Remove button was pointing at. So the id is checked for the shapes
+ * that would leave the themes directory *and* the resolved path is checked for
+ * being a direct child of it — the second is what actually holds if the first
+ * ever misses something.
+ *
+ * The allowed shape matches what installs packs (scripts/add-sprite-pack.js
+ * sanitizes an id to `[\w.-]`), so a pack called "Raichu" or "pet_2" can be
+ * removed again — the old lowercase-only test could not remove either.
+ */
+function themeDir(themesDir, id) {
+  const safe = String(id || '');
+  if (!/^[\w.-]+$/.test(safe) || /^\.+$/.test(safe)) throw new Error('invalid buddy id');
+  const dir = path.resolve(themesDir, safe);
+  if (path.dirname(dir) !== path.resolve(themesDir)) throw new Error('invalid buddy id');
+  return dir;
+}
+
 function availableId(label, themesDir) {
   const base = slugFor(label);
   let id = base;
   let suffix = 2;
-  while (fs.existsSync(path.join(themesDir, id))) id = `${base}-${suffix++}`;
+  while (fs.existsSync(themeDir(themesDir, id))) id = `${base}-${suffix++}`;
   return id;
 }
 
@@ -43,7 +65,7 @@ function createDrawnBuddy({ label, pixels, width = DRAW_SIZE, height = DRAW_SIZE
   if (!pixels.some(Boolean)) throw new Error('draw at least one pixel first');
 
   const id = availableId(name, themesDir);
-  const dir = path.join(themesDir, id);
+  const dir = themeDir(themesDir, id);
   const rgba = Buffer.alloc(FRAME_W * FRAME_H * 4);
   const top = FRAME_H - height * 2;
   for (let y = 0; y < height; y++) {
@@ -74,12 +96,10 @@ function createDrawnBuddy({ label, pixels, width = DRAW_SIZE, height = DRAW_SIZE
 }
 
 function removeCustomBuddy(id, themesDir = THEMES_DIR) {
-  const safe = String(id || '');
-  if (!/^[a-z0-9][a-z0-9-]*$/.test(safe)) throw new Error('invalid buddy id');
-  const dir = path.join(themesDir, safe);
+  const dir = themeDir(themesDir, id);
   if (!fs.existsSync(path.join(dir, 'theme.json'))) throw new Error('built-in buddies cannot be removed');
   fs.rmSync(dir, { recursive: true });
-  return safe;
+  return path.basename(dir);
 }
 
 module.exports = { DRAW_SIZE, createDrawnBuddy, removeCustomBuddy, slugFor };

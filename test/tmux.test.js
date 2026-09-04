@@ -140,12 +140,13 @@ test('an ssh launch survives a project path with a quote in it, at every layer',
   const remotePath = "/srv/it's app";
   const [, script] = argvOf(launchCommand({ agent: 'codex', host: 'me@box', remotePath, shell: '/bin/sh' }));
 
-  // Layer 2: ssh gets -t, the host, and exactly one remote command.
-  const [dashT, host, remote, ...rest] = runArgv(
+  // Layer 2: ssh gets -t, the host after `--`, and exactly one remote command.
+  const [dashT, endOfFlags, host, remote, ...rest] = runArgv(
     withoutPersistentShell(script),
     `${STUB}:${process.env.PATH}`
   );
   assert.equal(dashT, '-t');
+  assert.equal(endOfFlags, '--');
   assert.equal(host, 'me@box');
   assert.ok(rest.length <= 1, 'ssh takes one remote command'); // the trailing `exec sh -il`
 
@@ -156,6 +157,21 @@ test('an ssh launch survives a project path with a quote in it, at every layer',
   assert.equal(remoteFlags, '-ilc');
   assert.ok(remoteScript.includes(`cd ${shQuote(remotePath)}`), remoteScript);
   assert.ok(remoteScript.endsWith('exec codex'), remoteScript);
+});
+
+test('a host that looks like an ssh flag stays a host', () => {
+  // Quoting keeps the *shell* from reading a host as syntax, but ssh has its
+  // own option parser: `-oProxyCommand=…` typed into the New agent box would
+  // otherwise be a flag, and ProxyCommand runs a command. `--` ends the flags.
+  const nasty = '-oProxyCommand=touch /tmp/clippy-SSH-PWNED';
+  const [, script] = argvOf(launchCommand({ agent: 'claude', host: nasty, shell: '/bin/sh' }));
+  const argv = runArgv(withoutPersistentShell(script), `${STUB}:${process.env.PATH}`);
+
+  const end = argv.indexOf('--');
+  assert.ok(end >= 0, `no -- in ${argv.join(' ')}`);
+  assert.equal(argv[end + 1], nasty, 'the host comes after the end of the flags');
+  assert.ok(!argv.slice(0, end).includes(nasty), 'and never before it');
+  assert.ok(!fs.existsSync('/tmp/clippy-SSH-PWNED'));
 });
 
 test('the pane\'s ssh opens the connection the transcript probe will reuse', () => {

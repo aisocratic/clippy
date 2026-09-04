@@ -52,6 +52,21 @@ body {
   color: var(--text);
 }
 
+/* The state graph runs the transparent Electron surface inside a browser
+   iframe. Chromium composites a transparent iframe onto white, so the demo
+   supplies the same dark screen behind it and the buddy still reads as
+   floating directly over the page. This class is never present in the app. */
+html.states-graph,
+body.states-graph {
+  background: #101218;
+}
+
+body.states-graph.compact #activity:not(.hidden) {
+  display: block;
+  margin-top: 3px;
+  font-size: 9px;
+}
+
 #stage {
   position: relative;
   width: 100vw;
@@ -595,7 +610,7 @@ body.flipped #buddy-vector {
 /* ---------- Interactive card (approvals, plans, reviews, questions) ---------- */
 
 #card {
-  padding: 13px 15px 14px;
+  padding: 11px 13px 12px;
 }
 
 /* The site's card-meta row: tiny mono caps, session in grey, state in a pill. */
@@ -610,6 +625,81 @@ body.flipped #buddy-vector {
   text-transform: uppercase;
   color: var(--muted);
   margin-bottom: 9px;
+  min-height: 22px;
+  padding-right: 26px;
+}
+
+/* The destination and close controls are one top-bar group. Keeping both in
+   normal flex layout gives them the same baseline and spacing; the close
+   button no longer floats independently over the card. */
+#card-head-tools {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+#card-head-tools .panel-x {
+  position: static;
+}
+
+#card.failure #card-detail {
+  margin: 0;
+  max-height: 58px;
+  overflow: hidden;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+#card.failure #card-actions,
+#card.failure #card-countdown {
+  display: none;
+}
+
+/* Header explanations stay out of the way until the pointer has rested for
+   two seconds. Unlike native title bubbles, the delay is consistent. */
+.delayed-tip {
+  position: relative;
+}
+
+.delayed-tip::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  top: calc(100% + 7px);
+  right: 0;
+  z-index: 20;
+  width: max-content;
+  max-width: 220px;
+  padding: 5px 7px;
+  border: 1px solid var(--ink);
+  border-radius: 5px;
+  background: var(--ink);
+  color: var(--surface);
+  box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.18);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.25;
+  letter-spacing: 0;
+  text-transform: none;
+  white-space: normal;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.12s ease, visibility 0s linear 0.12s;
+}
+
+.delayed-tip:hover::after,
+.delayed-tip:focus-visible::after {
+  opacity: 1;
+  visibility: visible;
+  transition-delay: 2s;
 }
 
 #card-queue {
@@ -632,7 +722,7 @@ body.flipped #buddy-vector {
      it even when the otherwise-empty header has no visible pager or terminal
      button — this is the large content popup most likely to show a project
      title on its own. */
-  margin: 8px 0;
+  margin: 5px 0;
   font-size: 10.5px;
   font-weight: 600;
   color: var(--muted);
@@ -641,19 +731,45 @@ body.flipped #buddy-vector {
   text-overflow: ellipsis;
 }
 
+#card-where::before {
+  content: '';
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 5px;
+  border-radius: 50%;
+  background: var(--card-agent, var(--clip));
+  box-shadow: 0 0 0 1px rgba(21, 38, 42, 0.18);
+  vertical-align: 1px;
+}
+
 /* Jump straight to the terminal this card came from. */
 /* A way out of the card rather than an answer to it, so it keeps the shape of a
    button but not the weight of one: the light rule instead of the ink one. */
 #btn-goto {
-  margin-left: auto;
   flex: none;
-  font-size: 10px;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
   font-weight: 600;
-  padding: 2px 7px;
+  padding: 0;
+  border-radius: 50%;
   white-space: nowrap;
   color: var(--muted);
   background: transparent;
   border-color: var(--line);
+}
+
+.source-arrow {
+  width: 13px;
+  height: 13px;
+  display: block;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 #btn-goto:hover:not(:disabled) {
@@ -662,7 +778,7 @@ body.flipped #buddy-vector {
 }
 
 #card-title {
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 600;
   letter-spacing: -0.02em;
   line-height: 1.35;
@@ -682,6 +798,87 @@ body.flipped #buddy-vector {
   max-height: 190px;
   overflow: auto;
   user-select: text;
+}
+
+#card-summary-row,
+#card-preview {
+  min-width: 0;
+}
+
+/* A finished response is a scan line, not a second document inside the card,
+   and a failure preview is the same shape. The reader button sits at the right
+   of the boxed preview and opens the whole thing. */
+#card.review #card-summary-row,
+#card.failure #card-summary-row {
+  display: flex;
+  align-items: stretch;
+  gap: 7px;
+  margin-top: 7px;
+}
+
+#card.review #card-preview,
+#card.failure #card-preview {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-s);
+  background: var(--surface-2);
+}
+
+/* A review's rows carry their own padding; a failure is one block of output. */
+#card.review #card-preview { padding: 5px 9px; }
+#card.failure #card-preview { padding: 8px 9px; }
+
+#card.review .review-preview-line {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  padding: 3px 0;
+}
+
+#card.review .review-preview-line + .review-preview-line {
+  border-top: 1px solid var(--line-soft);
+}
+
+.review-preview-label {
+  width: 47px;
+  flex: none;
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.review-preview-text,
+#card.review #card-detail {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 1.35;
+  color: #575757;
+}
+
+#card.review #card-detail {
+  margin: 0;
+  max-height: none;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+#card.review #btn-card-more {
+  flex: none;
+  margin-top: 0;
+  min-width: 48px;
+  padding: 5px 9px;
 }
 
 /* "read all": the message was longer than the card, either because main cut it
@@ -737,7 +934,7 @@ body.plan #card-detail {
 }
 
 #card-actions {
-  margin-top: 9px;
+  margin-top: 7px;
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
@@ -750,8 +947,7 @@ body.plan #card-detail {
 
 /* The two answers share the top row; handing the card back to the terminal is
    a longer sentence and a lesser action, so it gets a row of its own. */
-#btn-pass,
-#btn-dismiss {
+#btn-pass {
   flex: 1 0 100%;
 }
 
@@ -1101,36 +1297,8 @@ button.opt.chosen::after {
   color: #8a8a86;
 }
 
-/* A switch reads as on/off at a glance; a chip reads as one-of-many. */
-#toggles button {
-  text-align: left;
-  font-size: 11px;
-  padding: 4px 8px;
-  background: #ffffff;
-  color: var(--muted);
-}
-
-#toggles button.on {
-  background: var(--ok-tint);
-  color: var(--ink);
-}
-
-.chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-
-.chip {
-  padding: 4px 8px;
-  font-size: 11px;
-  background: #ffffff;
-  color: var(--muted);
-}
-
-.chip.on {
-  background: var(--ok-tint);
-  color: var(--ink);
+#menu-sleep-options .menu-item {
+  padding-block: 4px;
 }
 
 /* ---------- Ambient activity line ---------- */
@@ -1383,18 +1551,6 @@ body.compact #controls .act-label {
   font-size: 10.5px;
   line-height: 1.4;
   color: #8a8a86;
-}
-
-#usage-actions {
-  display: flex;
-  justify-content: space-between;
-  gap: 6px;
-  margin-top: 7px;
-}
-
-#usage-actions button {
-  font-size: 10px;
-  padding: 2px 8px;
 }
 
 /* ---------- Talking to the pet ---------- */

@@ -97,6 +97,28 @@ async function fetchLatestRelease(fetchImpl = fetch) {
 }
 
 /**
+ * Is `candidate` a newer release than `current`? Plain dotted numbers, the
+ * way package.json and the tags are written; anything unparseable is not newer.
+ *
+ * Newer, not merely different: a build ahead of the newest release — a local
+ * package of main, or a tag whose release is still a draft — used to be told
+ * it was out of date and offered the older DMG, which installed a downgrade.
+ */
+function isNewerVersion(candidate, current) {
+  const parse = (v) => {
+    const m = /^(\d+)\.(\d+)\.(\d+)/.exec(String(v || '').trim());
+    return m ? m.slice(1, 4).map(Number) : null;
+  };
+  const a = parse(candidate);
+  const b = parse(current);
+  if (!a || !b) return false;
+  for (let i = 0; i < 3; i++) {
+    if (a[i] !== b[i]) return a[i] > b[i];
+  }
+  return false;
+}
+
+/**
  * Put the two together into what the settings page shows. `upToDate` is only
  * ever true or false when we can actually compare, and each source is compared
  * against the thing it actually updates from: a checkout against the tip of
@@ -112,7 +134,8 @@ async function checkForUpdates(rootDir, fetchImpl = fetch) {
       return {
         ...build,
         release,
-        upToDate: build.version && release.version ? build.version === release.version : null,
+        upToDate:
+          build.version && release.version ? !isNewerVersion(release.version, build.version) : null,
       };
     } catch (err) {
       return { ...build, release: null, upToDate: null, error: err.message };
@@ -130,4 +153,13 @@ async function checkForUpdates(rootDir, fetchImpl = fetch) {
   }
 }
 
-module.exports = { localBuild, fetchLatest, fetchLatestRelease, checkForUpdates, REPO, LATEST_URL, RELEASE_URL };
+module.exports = {
+  localBuild,
+  fetchLatest,
+  fetchLatestRelease,
+  checkForUpdates,
+  isNewerVersion,
+  REPO,
+  LATEST_URL,
+  RELEASE_URL,
+};

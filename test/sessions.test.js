@@ -2,6 +2,8 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert');
+const os = require('node:os');
+const path = require('node:path');
 const { SessionTracker } = require('../src/sessions');
 
 const payload = (id, cwd = '/Users/me/projects/my-app') => ({
@@ -246,4 +248,125 @@ test('handles missing cwd and unknown events gracefully', () => {
   assert.equal(r.kind, 'attention');
   assert.match(r.message, /deadbeef/);
   assert.equal(t.handle('SomethingNew', null, payload('x')), null);
+});
+
+test('only remembers a transcript path that is really an agent transcript', () => {
+  const t = new SessionTracker();
+  const home = os.homedir();
+  const real = path.join(home, '.claude', 'projects', '-Users-me-app', 's1.jsonl');
+
+  t.handle('Stop', null, { session_id: 's1', cwd: '/Users/me/app' });
+  t.setTranscript('s1', real);
+  assert.equal(t.transcriptFor('s1'), real);
+
+  // A forged hook naming something the app has no business reading. Each is
+  // refused outright, and the path we already trust is left alone.
+  for (const forged of [
+    '/etc/passwd',
+    path.join(home, '.ssh', 'id_rsa'),
+    path.join(home, '.ssh', 'id_rsa.jsonl'),
+    path.join(home, '.claude', '..', '.ssh', 'id_rsa.jsonl'),
+    path.join(home, '.claude', 'projects', '..', '..', '.aws', 'credentials.jsonl'),
+    'relative.jsonl',
+    `${real}\0/etc/passwd`,
+    42,
+    null,
+  ]) {
+    t.setTranscript('s1', forged);
+    assert.equal(t.transcriptFor('s1'), real, `accepted ${String(forged)}`);
+  }
+
+  // Codex keeps its rollouts somewhere else entirely, and those are fine.
+  const rollout = path.join(home, '.codex', 'sessions', '2026', '09', '01', 'rollout-x.jsonl');
+  t.setTranscript('s1', rollout);
+  assert.equal(t.transcriptFor('s1'), rollout);
+});
+
+test('an agent name that happens to be an Object property is not an agent', () => {
+  const t = new SessionTracker();
+  const r = t.handle('Stop', null, { session_id: 's1', cwd: '/Users/me/app', agent: 'constructor' });
+  assert.equal(r.agent, 'claude');
+  assert.equal(r.agentName, 'Claude');
+  assert.match(r.message, /^Claude finished/);
+  assert.equal(t.agentFor('s1'), 'claude');
+});
+
+test('terminal and transcript learned for a session nobody tracks do not pile up', () => {
+  const t = new SessionTracker();
+  const real = path.join(os.homedir(), '.claude', 'projects', '-x', 'ghost.jsonl');
+
+  // A hook notes its terminal and transcript before the state machine sees it,
+  // and some hooks are answered without ever reaching the state machine.
+  t.setTerminal('ghost', { program: 'iTerm.app', tty: 'ttys004', pid: 1 });
+  t.setTranscript('ghost', real);
+  assert.ok(t.terminalFor('ghost'));
+  assert.equal(t.transcriptFor('ghost'), real);
+
+  assert.deepEqual(t.sweepStale(), []); // no session to remove...
+  assert.equal(t.terminalFor('ghost'), null); // ...and nothing left behind
+  assert.equal(t.transcriptFor('ghost'), '');
+
+  // A session that is still being tracked keeps both.
+  t.handle('PreToolUse', null, { session_id: 's1', cwd: '/Users/me/app', tool_name: 'Bash' });
+  t.setTerminal('s1', { program: 'iTerm.app', tty: 'ttys005', pid: 2 });
+  t.setTranscript('s1', real);
+  t.sweepStale();
+  assert.ok(t.terminalFor('s1'));
+  assert.equal(t.transcriptFor('s1'), real);
+});
+
+test('a subagent is listed under its session and its work shows on the activity line', () => {
+  const t = new SessionTracker();
+  t.handle('SessionStart', null, payload('s1'));
+
+  // SubagentStart arrives on the parent's session id, with the helper's own
+  // id and type. It is not a session: the count does not move.
+  const started = t.handle('SubagentStart', null, {
+    ...payload('s1'),
+    agent_id: 'a-1',
+    agent_type: 'Explore',
+  });
+  assert.equal(started.kind, 'activity');
+  assert.equal(started.activity.label, 'Delegating to Explore');
+  assert.deepEqual(t.counts(), { total: 1, waiting: 0 });
+  assert.deepEqual(
+    t.list()[0].subagents.map((sub) => [sub.id, sub.type]),
+    [['a-1', 'Explore']]
+  );
+
+  // Its tool calls fire the same hooks, stamped with the subagent — so the
+  // line says who is doing what, and the helper's row says the same.
+  const tool = t.handle('PreToolUse', null, {
+    ...payload('s1'),
+    agent_id: 'a-1',
+    agent_type: 'Explore',
+    tool_name: 'Bash',
+    tool_input: { command: 'npm test', description: 'run the tests' },
+  });
+  assert.match(tool.activity.label, /^Explore: /);
+  assert.equal(tool.activity.agentType, 'Explore');
+  assert.match(t.list()[0].subagents[0].activity.label, /npm test|run the tests/);
+
+  // Gone when it stops; the session carries on.
+  const stopped = t.handle('SubagentStop', null, { ...payload('s1'), agent_id: 'a-1', agent_type: 'Explore' });
+  assert.equal(stopped.kind, 'activity');
+  assert.equal(stopped.activity.label, 'Explore finished');
+  assert.deepEqual(t.list()[0].subagents, []);
+  assert.equal(t.list()[0].status, 'working');
+});
+
+test('a subagent never announced is learned from its first tool call, and one without an id is ignored', () => {
+  const t = new SessionTracker();
+  t.handle('PreToolUse', null, {
+    ...payload('s1'),
+    agent_id: 'a-9',
+    tool_name: 'Edit',
+    tool_input: { file_path: '/repo/a.js' },
+  });
+  assert.deepEqual(
+    t.list()[0].subagents.map((sub) => [sub.id, sub.type]),
+    [['a-9', 'subagent']]
+  );
+  assert.equal(t.handle('SubagentStart', null, payload('s1')), null);
+  assert.equal(t.handle('SubagentStop', null, { ...payload('s1'), agent_id: 42 }), null);
 });

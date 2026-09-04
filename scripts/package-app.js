@@ -260,9 +260,20 @@ function signableTargets(appBundle) {
   return targets;
 }
 
+/** A megabyte at a time: the disk image this hashes is hundreds of megabytes,
+ *  and readFileSync would hold all of them at once to hash them once. */
 function sha256File(file) {
   const hash = crypto.createHash('sha256');
-  hash.update(fs.readFileSync(file));
+  const fd = fs.openSync(file, 'r');
+  try {
+    const buf = Buffer.allocUnsafe(1024 * 1024);
+    let read;
+    while ((read = fs.readSync(fd, buf, 0, buf.length, null)) > 0) {
+      hash.update(buf.subarray(0, read));
+    }
+  } finally {
+    fs.closeSync(fd);
+  }
   return hash.digest('hex');
 }
 
@@ -407,21 +418,26 @@ function packageApp({
 </plist>
 `
     );
-    for (const target of signableTargets(appBundle)) {
-      // Entitlements go on things that become processes (the helper apps and
-      // the main bundle); dylibs and frameworks just need the team's seal.
-      const wantsEntitlements = target === appBundle || target.endsWith('.app');
-      execFileSync(
-        'codesign',
-        [
-          '--force', '--options', 'runtime', '--timestamp',
-          ...(wantsEntitlements ? ['--entitlements', entitlementsFile] : []),
-          '--sign', signIdentity, target,
-        ],
-        { stdio: 'ignore' }
-      );
+    try {
+      for (const target of signableTargets(appBundle)) {
+        // Entitlements go on things that become processes (the helper apps and
+        // the main bundle); dylibs and frameworks just need the team's seal.
+        const wantsEntitlements = target === appBundle || target.endsWith('.app');
+        execFileSync(
+          'codesign',
+          [
+            '--force', '--options', 'runtime', '--timestamp',
+            ...(wantsEntitlements ? ['--entitlements', entitlementsFile] : []),
+            '--sign', signIdentity, target,
+          ],
+          { stdio: 'ignore' }
+        );
+      }
+    } finally {
+      // One failed nested signature used to leave the entitlements behind in
+      // dist/ for whatever ran next to pick up.
+      fs.rmSync(entitlementsFile, { force: true });
     }
-    fs.rmSync(entitlementsFile, { force: true });
   } else {
     execFileSync('codesign', ['--force', '--deep', '--sign', '-', appBundle], { stdio: 'ignore' });
   }
@@ -441,12 +457,15 @@ function packageApp({
     // ditto, not zip: the bundle's symlinks and resource forks have to survive
     // the round trip or the notary service sees a different app than we signed.
     execFileSync('ditto', ['-c', '-k', '--keepParent', appBundle, appZip]);
-    execFileSync(
-      'xcrun',
-      ['notarytool', 'submit', appZip, '--keychain-profile', notaryProfile, '--wait'],
-      { stdio: 'inherit' }
-    );
-    fs.rmSync(appZip, { force: true });
+    try {
+      execFileSync(
+        'xcrun',
+        ['notarytool', 'submit', appZip, '--keychain-profile', notaryProfile, '--wait'],
+        { stdio: 'inherit' }
+      );
+    } finally {
+      fs.rmSync(appZip, { force: true }); // a rejected submission left it behind
+    }
     execFileSync('xcrun', ['stapler', 'staple', appBundle], { stdio: 'inherit' });
     execFileSync('xcrun', ['stapler', 'validate', appBundle], { stdio: 'inherit' });
   }
@@ -458,14 +477,19 @@ function packageApp({
     dmgFile = path.join(dist, `${PRODUCT.replace(/ /g, '-')}.dmg`);
     const stage = path.join(dist, '.dmg-stage');
     fs.mkdirSync(stage);
-    execFileSync('cp', ['-R', appBundle, path.join(stage, `${PRODUCT}.app`)]);
-    fs.symlinkSync('/Applications', path.join(stage, 'Applications'));
-    execFileSync(
-      'hdiutil',
-      ['create', '-volname', PRODUCT, '-srcfolder', stage, '-ov', '-format', 'UDZO', dmgFile],
-      { stdio: 'ignore' }
-    );
-    fs.rmSync(stage, { recursive: true, force: true });
+    try {
+      execFileSync('cp', ['-R', appBundle, path.join(stage, `${PRODUCT}.app`)]);
+      fs.symlinkSync('/Applications', path.join(stage, 'Applications'));
+      execFileSync(
+        'hdiutil',
+        ['create', '-volname', PRODUCT, '-srcfolder', stage, '-ov', '-format', 'UDZO', dmgFile],
+        { stdio: 'ignore' }
+      );
+    } finally {
+      // hdiutil failing here used to leave a second full copy of the bundle in
+      // dist/ — invisible, and the size of the app.
+      fs.rmSync(stage, { recursive: true, force: true });
+    }
 
     if (signIdentity) {
       execFileSync(
