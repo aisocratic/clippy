@@ -101,9 +101,13 @@ async function held(event, payload, note, auto) {
 async function cdp(expression) {
   const targets = await (await fetch(`http://127.0.0.1:${CDP_PORT}/json`)).json();
   const pages = targets.filter((t) => t.type === 'page' && /index\.html/.test(t.url));
-  // One window per session: only ever drive *our* mock session's Clippy, never
-  // a real session that happens to be running alongside it.
-  const page = pages.find((t) => new URL(t.url).searchParams.get('session') === SESSION);
+  // Every session shares one buddy window, and its URL keeps the id of
+  // whichever session opened it. Ours if we were first; otherwise the one
+  // window that is not a sandbox buddy — which is the shared one.
+  const sessionOf = (t) => new URL(t.url).searchParams.get('session') || '';
+  const page =
+    pages.find((t) => sessionOf(t) === SESSION) ||
+    pages.find((t) => !sessionOf(t).startsWith('sandbox:'));
   if (!page) {
     throw new Error(
       `no Clippy window for session ${SESSION} on CDP port ${CDP_PORT} ` +

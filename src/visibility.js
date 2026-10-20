@@ -23,6 +23,7 @@ function windowActionFor(kind) {
 
     case 'clear': // user typed a new prompt — they're back in the terminal
     case 'activity': // ambient tool use while Claude works
+    case 'failure': // a failed tool is ambient too; the activity line shows it
     case 'info': // session start and other chatter
       return 'hide';
 

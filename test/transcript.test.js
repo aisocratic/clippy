@@ -11,10 +11,25 @@ const {
   findCodexRollout,
   resolveSession,
   dayDirsBetween,
+  isTranscriptPath,
+  transcriptRoots,
   createReader,
   readTail,
+  lastPrompt,
   localIo,
 } = require('../src/transcript');
+
+test('the latest real user prompt can title a finished response', () => {
+  assert.equal(
+    lastPrompt([
+      { role: 'user', kind: 'prompt', text: 'fix the header' },
+      { role: 'assistant', kind: 'say', text: 'working' },
+      { role: 'user', kind: 'notice', text: '<system-reminder>hidden</system-reminder>' },
+      { role: 'user', kind: 'prompt', text: 'make the response one line' },
+    ]),
+    'make the response one line'
+  );
+});
 
 const tmp = (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clippy-resolve-'));
@@ -270,4 +285,27 @@ test('localIo answers honestly about things that are not there', async () => {
   assert.equal(await localIo.stat('/nope/missing'), null);
   assert.deepEqual(await localIo.list('/nope/missing'), []);
   assert.equal((await localIo.readHead('/nope/missing', 10)).length, 0);
+});
+
+test('a transcript path is only a transcript inside an agent directory', () => {
+  const roots = ['/home/me/.claude', '/home/me/.codex'];
+  const ok = (p) => isTranscriptPath(p, roots);
+
+  assert.equal(ok('/home/me/.claude/projects/-home-me-app/s1.jsonl'), true);
+  assert.equal(ok('/home/me/.codex/sessions/2026/09/01/rollout-x.jsonl'), true);
+
+  // Outside, or climbing out, or not a transcript at all.
+  assert.equal(ok('/home/me/.ssh/id_rsa.jsonl'), false);
+  assert.equal(ok('/home/me/.claude/../.ssh/id_rsa.jsonl'), false);
+  assert.equal(ok('/home/me/.claude-evil/x.jsonl'), false); // prefix, not a parent
+  assert.equal(ok('/home/me/.claude/settings.json'), false);
+  assert.equal(ok('/home/me/.claude'), false);
+  assert.equal(ok('relative/s1.jsonl'), false);
+  assert.equal(ok(''), false);
+  assert.equal(ok(undefined), false);
+  assert.equal(ok(['/home/me/.claude/x.jsonl']), false);
+
+  // The real roots are the agents' own directories under $HOME.
+  assert.ok(transcriptRoots().includes(path.join(os.homedir(), '.claude')));
+  assert.ok(transcriptRoots().includes(path.join(os.homedir(), '.codex')));
 });

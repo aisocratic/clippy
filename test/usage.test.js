@@ -8,7 +8,8 @@ const os = require('node:os');
 const path = require('node:path');
 const {
   parseTranscript,
-  modelFromTranscript,
+  modelFromTranscriptFile,
+  sessionUsage,
   lastAssistantText,
   contextLimitFor,
   contextOf,
@@ -114,10 +115,8 @@ test('finds a model before any token usage has been written', () => {
     payload: { model: 'gpt-5.6-codex' },
   });
 
-  assert.equal(modelFromTranscript(claude), 'claude-sonnet-5');
   assert.equal(parseTranscript(claude).model, 'claude-sonnet-5');
   assert.equal(parseTranscript(claude).turns, 0);
-  assert.equal(modelFromTranscript(codex), 'gpt-5.6-codex');
   assert.equal(parseTranscript(codex).model, 'gpt-5.6-codex');
 });
 
@@ -473,4 +472,139 @@ test("Claude Code's own cached /usage percentages are read when present", async 
   fsSync.writeFileSync(file, JSON.stringify({ someOtherKey: true }));
   assert.equal(await readOfficialUsage(file), null);
   assert.equal(await readOfficialUsage(path.join(dir, 'missing.json')), null);
+});
+
+test("Codex's own rate limits are read from the newest rollout's last turn", async () => {
+  const { readCodexUsage } = require('../src/usage');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clippy-codex-'));
+  const day = path.join(dir, '2026', '09', '03');
+  fs.mkdirSync(day, { recursive: true });
+
+  const tokenCount = (ts, rate_limits) =>
+    JSON.stringify({
+      timestamp: ts,
+      type: 'event_msg',
+      payload: { type: 'token_count', info: { total_token_usage: { input_tokens: 10 } }, rate_limits },
+    });
+  const limits = (primaryPercent, secondary = null) => ({
+    limit_id: 'codex',
+    primary: { used_percent: primaryPercent, window_minutes: 10080, resets_at: 1_788_747_985 },
+    secondary,
+    plan_type: 'prolite',
+  });
+
+  // An older rollout with the stale number, and a newer one whose last line
+  // — not its first — carries the fresh one. Both windows on the newer plan.
+  const older = path.join(day, 'rollout-2026-09-03T08-00-00-aaaa.jsonl');
+  const newer = path.join(day, 'rollout-2026-09-03T09-56-45-bbbb.jsonl');
+  fs.writeFileSync(older, `${tokenCount('2026-09-03T08:01:00.000Z', limits(9))}\n`);
+  fs.writeFileSync(
+    newer,
+    [
+      tokenCount('2026-09-03T13:57:19.425Z', limits(22)),
+      JSON.stringify({ timestamp: '2026-09-03T13:58:00.000Z', type: 'event_msg', payload: { type: 'agent_message', message: 'ok' } }),
+      tokenCount('2026-09-03T14:02:11.000Z', limits(23, { used_percent: 41, window_minutes: 300, resets_at: 1_788_540_000 })),
+      '',
+    ].join('\n')
+  );
+  fs.utimesSync(older, new Date('2026-09-03T08:01:00Z'), new Date('2026-09-03T08:01:00Z'));
+  fs.utimesSync(newer, new Date('2026-09-03T14:02:11Z'), new Date('2026-09-03T14:02:11Z'));
+
+  const official = await readCodexUsage(dir);
+  assert.equal(official.fetchedAtMs, Date.parse('2026-09-03T14:02:11.000Z'));
+  assert.equal(official.plan, 'prolite');
+  assert.deepEqual(
+    official.limits.map((l) => [l.label, l.percent]),
+    [
+      ['session · 5 hours', 41],
+      ['week · all models', 23],
+    ],
+    'shortest window first, named the way the Claude rows are'
+  );
+  assert.equal(official.limits[1].resetsAt, 1_788_747_985_000, 'Codex writes seconds; the panel wants ms');
+
+  // Nothing written yet, or no rollouts at all: null, and measured spend it is.
+  fs.writeFileSync(newer, `${JSON.stringify({ timestamp: '2026-09-03T15:00:00Z', type: 'session_meta', payload: {} })}\n`);
+  fs.writeFileSync(older, '');
+  assert.equal(await readCodexUsage(dir), null);
+  assert.equal(await readCodexUsage(path.join(dir, 'missing')), null);
+});
+
+test('a session poll reads what was appended, not the transcript again', async (t) => {
+  const first = [
+    assistant('2026-08-02T10:00:01Z', usage(5, 100, 20_000, 1_000)),
+    assistant('2026-08-02T10:05:00Z', usage(2, 300, 90_000, 500)),
+    '',
+  ].join('\n');
+  const file = transcriptFile(t, first);
+
+  const one = await sessionUsage(file);
+  assert.deepEqual(one, parseTranscript(first));
+
+  // A poll that finds nothing new says exactly what the last one did.
+  assert.deepEqual(await sessionUsage(file), one);
+
+  // Claude writes a record in two goes: the half-written line is not counted
+  // until its newline arrives, and then it is counted exactly once.
+  const third = assistant('2026-08-02T10:09:00Z', usage(1, 7, 1_000, 0));
+  fs.appendFileSync(file, third.slice(0, 40));
+  assert.deepEqual(await sessionUsage(file), one);
+  fs.appendFileSync(file, `${third.slice(40)}\n`);
+
+  const whole = `${first}${third}\n`;
+  assert.deepEqual(await sessionUsage(file), parseTranscript(whole));
+  assert.deepEqual(await sessionUsage(file), parseTranscript(whole));
+});
+
+test('a transcript rewritten under us is counted again, not added to', async (t) => {
+  const file = transcriptFile(t, `${assistant('2026-08-02T10:00:01Z', usage(0, 100))}\n`);
+  assert.equal((await sessionUsage(file)).totals.output, 100);
+
+  // /clear rewrites the session: shorter than what we already read.
+  fs.writeFileSync(file, `${assistant('2026-08-02T11:00:00Z', usage(0, 5))}\n`);
+  assert.equal((await sessionUsage(file)).totals.output, 5);
+
+  assert.equal(await sessionUsage(path.join(path.dirname(file), 'gone.jsonl')), null);
+  assert.equal(await sessionUsage(''), null);
+});
+
+test('the model comes off the end of the transcript, not the whole of it', async (t) => {
+  const claude = transcriptFile(
+    t,
+    [
+      assistant('2026-08-02T10:00:01Z', usage(0, 1)),
+      JSON.stringify({ type: 'summary', summary: 'nothing to do with models' }),
+      JSON.stringify({
+        type: 'assistant',
+        timestamp: '2026-08-02T10:01:00Z',
+        message: { model: 'claude-fable-5', usage: usage(0, 1) },
+      }),
+      '',
+    ].join('\n')
+  );
+  assert.equal(await modelFromTranscriptFile(claude), 'claude-fable-5');
+
+  const codex = transcriptFile(
+    t,
+    `${JSON.stringify({ type: 'turn_context', payload: { model: 'gpt-5.6-codex' } })}\n`
+  );
+  assert.equal(await modelFromTranscriptFile(codex), 'gpt-5.6-codex');
+
+  assert.equal(await modelFromTranscriptFile(transcriptFile(t, 'not json\n')), '');
+  assert.equal(await modelFromTranscriptFile(''), '');
+});
+
+test('two buddies polling one transcript at once do not count it twice', async (t) => {
+  const text = [
+    assistant('2026-08-02T10:00:01Z', usage(5, 100, 20_000, 1_000)),
+    assistant('2026-08-02T10:05:00Z', usage(2, 300, 90_000, 500)),
+    '',
+  ].join('\n');
+  const file = transcriptFile(t, text);
+
+  const [a, b, c] = await Promise.all([sessionUsage(file), sessionUsage(file), sessionUsage(file)]);
+  assert.deepEqual(a, parseTranscript(text));
+  assert.deepEqual(b, a);
+  assert.deepEqual(c, a);
+  assert.deepEqual(await sessionUsage(file), a);
 });

@@ -66,12 +66,14 @@ Clippy is a **small buddy** by default and only grows a window when there's
 something to read — as tall as that thing needs, no more. **Click him** and he
 goes straight to the useful thing: a message you haven't seen yet, or — when
 there's nothing waiting — one panel that answers "how is this session doing?":
-what the agent is doing right now, and how much context and allowance it has
-spent (`660k left of 1.0M · 340k used (34%)` over a progress bar, with **▾** for
-real allowance bars covering the rolling 5-hour block, the week, and Opus's own
-week once you tell Clippy your plan). It is a panel of numbers and nothing else
-— **💬** is where you type, whether that's to the buddy or, picking its name
-from the row above, into that session's own terminal.
+what the agent is doing right now, how much context it has spent (`660k left of
+1.0M · 340k used (34%)` over a progress bar) and, under that, the real allowance
+bars covering the rolling 5-hour block, the week, and Opus's own week once you
+tell Clippy your plan. **📊** in the bar under the buddy opens the same panel,
+whole — there is no fold to open first. It is a panel of numbers and nothing
+else; the bar has just 📊 and hide. Typing to the buddy (or, picking its name
+from the row above the box, into that session's own terminal) has no button of
+its own: a chat you parked mid-sentence comes back with a click on the buddy.
 **Right-click** for everything else — the same stats, Settings, and hide.
 **Double-click** just says hi back, for about a second. The built-in buddies are
 all drawn in code: Clippy, the cat, and Clod are generated pixel art; Orbit and
@@ -106,9 +108,10 @@ interactive — their HTTP response is the hook's decision:
 | `PreToolUse` *(AskUserQuestion)* | ❓ **Question card** — Claude's options as buttons. What you pick is fed straight back, so the terminal picker never appears |
 | `PreToolUse` *(Bash, Edit, Write, Web*, Task, …)* | ⚙ **Activity line** — what Claude is doing now |
 | `PostToolUse` *(same tools)* | ✓ marks the action done |
-| `PostToolUseFailure` *(same tools)* | ⚠ surfaces the failure and its first error line |
+| `PostToolUseFailure` *(same tools)* | ⚠ turns the activity line red with the tool name — no popup. A failed command is routine inside a session; the agent sees the error and carries on |
 | `Notification` (`permission_prompt`) | 🔴 Urgent bounce — a prompt is waiting in the terminal |
 | `Notification` (`idle_prompt`) | 🟡 Reminder — Claude has been waiting for your reply |
+| `SubagentStart` / `SubagentStop` | a helper the session spun up: listed under it in Settings → Sessions, and the activity line says "Delegating to Explore" and then "Explore: Running: npm test" while it works |
 | `UserPromptSubmit` | clears alerts & pending cards for that session (you're on it) |
 | `SessionEnd` | the session's buddy leaves the screen. (There's deliberately no `SessionStart` hook: a session announces itself with its first real activity) |
 | `statusLine` *(Claude Code only)* | a small 📎 tucked against the right edge of the line under the input box — cmd+click it (iTerm2, Ghostty, kitty, WezTerm) to open this session's buddy. Installed only if you don't already have a statusline of your own |
@@ -198,7 +201,7 @@ waiting for an existing terminal to report through hooks. Install tmux first:
 brew install tmux
 ```
 
-Right-click the **📎 menu bar icon → New agent**. Pick Claude Code or Codex and
+Click the **📎 menu bar icon → New agent**. Pick Claude Code or Codex and
 a local folder, or choose **Over SSH…** and enter an SSH host plus the project
 path on that machine. An SSH config alias works anywhere `user@host` would.
 The agent CLI must already be installed and authenticated on the machine where
@@ -371,10 +374,10 @@ port first wins.
   Turning around is a mirror, so each pack says which way its art is drawn (and
   each animation may disagree with its pack: sheets often run left but sit
   facing the viewer, and art drawn facing the viewer is never mirrored at all).
-- **The menu bar**: click 📎 for the settings window (above); right-click for the
-  quick menu — per-session actions (show, perch, open window), Drive mode, every
-  on/off switch under *Quick settings* (permission requests, questions, review on
-  finish, perch), and quit.
+- **The menu bar**: click 📎 (either button) for the quick menu — per-session
+  actions (show, perch, open window), Drive mode, every on/off switch under
+  *Quick settings* (permission requests, questions, review on finish, perch),
+  the settings window (above), and quit.
 - **go to …↗** (on every card, named after that session's own app) and
   **open session ↗** (hover below
   Clippy) both raise that session's window and keep Clippy perched on it as a
@@ -420,7 +423,7 @@ port first wins.
 - **Drag Clippy** anywhere; he floats above full-screen apps on all Spaces, and
   he stays put where you dropped him — cards and the right-click menu grow
   around him instead of nudging him sideways.
-- **Got it** acknowledges everything; **Snooze 5m** pauses the nagging.
+- **Got it** acknowledges everything; the buddy's right-click menu can sleep notifications for 5 minutes, 15 minutes, or 1 hour.
 - The red badge and the menu bar `📎 N` show how many sessions need you.
 - **hide** (hover below Clippy) hides that buddy early; **Show “name”** in the
   menu bar brings it back and keeps it on screen until you hide it again.
@@ -528,36 +531,25 @@ would at least make the row say "Clippy" instead of "Electron".
 
 ## The settings window
 
-Click **📎 in the menu bar** and Clippy's settings window opens (right-click for
-the quick menu — sessions, Drive mode, quit). It's the one part of Clippy you sit
-and read. The rail splits it in two — **Settings**, which is Sessions, Sounds,
-Buddies and Updates, and **Docs**, which is the feature catalogue. One page at a
-time; nothing under Docs changes anything.
+Click **📎 in the menu bar → Settings…** and Clippy's settings window opens. It's
+the one part of Clippy you sit and read: Sessions, Sounds, Buddies, Updates and
+Feedback, one page at a time.
 
-- **Sessions** — everything reporting in right now, each with the buddy it's
-  wearing and pickers to **give that session a buddy and a size of its own**.
-  A pick lands on that one row: two agents in the same folder are two buddies,
-  and dressing one never dresses the other. It is also remembered against the
-  folder, so the repo still looks the same tomorrow when that session id is
-  gone — the folder's other agents are pinned to what they were wearing at that
-  moment so they don't come along for the ride. A session with no size of its
-  own follows the default under **Buddies**.
+- **Sessions** — Clippy's own row at the top, saying which agent it is speaking
+  for and what it wears, and under it every agent connected to it: project
+  name, which agent, what it is doing. Clippy never changes with the session, so
+  the agent rows have nothing to pick; click one and Clippy comes to the front
+  for it.
 - **Sounds** — the only noise Clippy makes: a short cue when a hidden buddy
   appears, off until you pick one. Nothing plays for a buddy already on screen.
-- **Buddies** — **On screen**: *one each*, a buddy per session side by side, or
-  *one for all*, a single buddy that stands in for every agent — for when three
-  agents means three paperclips and you'd rather it didn't. The one buddy keeps
-  **the face you pick** whoever it is speaking for, so there is one look to
-  learn; the name under its feet and the card say which agent it is talking
-  about. Its 💬 chat then has a row of everyone running: talk to the buddy, or
-  pick an agent and type straight into its session. Then every
-  character with all nine of its animations playing side by side (the same
-  layout as the test bench's workbench), and the default size picker
-  (per-project sizes live beside each session above).
-  **Every live session gets its own available buddy**, chosen from the cast by
-  session id, so parallel agents in the same repo do not match. Nothing to
-  configure — click a character here to make it the first choice for projects
-  currently on screen, or set that preference per project under **Sessions**.
+- **Buddies** — **one buddy stands in for every agent**, so three agents running
+  is still one paperclip on your desk rather than three. It keeps **the face you
+  pick** whoever it is speaking for, so there is one look to learn; the name
+  under its feet and the card say which agent it is talking about. Its chat
+  has a row of everyone running: talk to the buddy, or pick an agent and type
+  straight into its session. This is the one place Clippy's look is set: the
+  size picker, and the cast — click a character and Clippy wears it (the
+  paperclip until you do); ▶ on a card plays its next animation.
   There's a link to [openpets.dev/gallery](https://openpets.dev/gallery) for
   more — paste a pet's page link into the **Add a pet** box right there (or into
   `npm run add-sprite-pack -- <pet url>` in a terminal) and it downloads,
@@ -568,25 +560,22 @@ time; nothing under Docs changes anything.
   Along with **Feedback** below, these are the only times Clippy talks to
   anything but localhost — and never on its own.
 - **Feedback** — a thumb and a box, going privately to the people who make
-  Clippy. Not a review and not a testimonial: it lands in AI Socratic's own
-  database and nothing written there is shown on the website or anywhere
-  public. It's the only thing Clippy ever sends that came from you, it goes
-  only when you press send, and it carries nothing but the
-  thumb, your words, and the build number — no project names, no paths, no
-  code, and nothing that says who you are (`src/feedback.js` is the whole
-  payload, and a test holds it to that).
-- **Clippy's features** — the one page under **Docs**, and the full catalogue:
-  what triggers each behaviour, which hook it rides on, what you see, and — for
-  anything that answers on your behalf — **the exact JSON Claude Code receives**
-  for each button. Those strings come from the same `toHookResponse` the app
-  answers with (`src/actions.js`), so the page can't drift from the behaviour,
-  and a test asserts it.
-(Clicking a session's name brings its buddy to the front.)
+  Clippy. It's the only thing Clippy ever sends that came from you, it goes
+  only when you press send, and it carries nothing but the thumb, your words,
+  and the build number — no project names, no paths, no code, and nothing that
+  says who you are (`src/feedback.js` is the whole payload, and a test holds it
+  to that).
+
+The full catalogue of what Clippy does — what triggers each behaviour, which
+hook it rides on, and the exact JSON Claude Code receives for each button —
+lives in `src/actions.js`, rendered on the web bench's feature catalog. The
+strings come from the same `toHookResponse` the app answers with, and a test
+asserts it.
 
 The on/off switches for what Clippy answers aren't in this window at all: they
-live in **📎 menu bar → Quick settings**, one right-click from anywhere. Turn one
+live in **📎 menu bar → Quick settings**, one click from anywhere. Turn one
 off and that moment goes back to the terminal exactly as if Clippy weren't
-running — *Clippy's features* marks the affected entries **off**.
+running.
 
 ## Bring your own buddy (sprite-sheet themes)
 
@@ -594,7 +583,7 @@ The built-in characters are drawn in code. If you'd rather use a sprite pack
 you downloaded, drop it in and Clippy wears it — no code change:
 
 ```
-src/renderer/assets/themes/my-cat/
+~/Library/Application Support/Clippy for Claude Code/themes/my-cat/
 ├── theme.json
 ├── idle.png        # a horizontal strip: frame, frame, frame…
 └── excited.png
@@ -611,8 +600,11 @@ src/renderer/assets/themes/my-cat/
 }
 ```
 
-The folder name is the character id, `label` is what the menus show, and each
-strip is stepped frame by frame at `fps`. Frames must sit in one horizontal row,
+(That is the packaged app's folder; a checkout run with `npm start` keeps its
+own under `~/Library/Application Support/clippy-for-claude/themes/`, and
+`CLIPPY_THEMES_DIR` points either somewhere else.) The folder name is the
+character id, `label` is what the menus show, and each strip is stepped frame
+by frame at `fps`. Frames must sit in one horizontal row,
 all the same size. Only `idle` is required — anything missing falls back to
 `excited`, then `idle`. Restart the app (or reload the bench) and the theme
 appears in the settings window and in the buddy's own **🎨 Buddy & size** menu.
@@ -643,8 +635,11 @@ Pixel art is scaled by whole numbers only, so a 32px-wide frame lands exactly on
 the Small/Medium/Large steps (2×/3×/4×). Sheets of other sizes still work, they
 just scale to the nearest whole multiple that fits.
 
-`src/renderer/assets/` is gitignored, so dropped-in packs stay on your machine
-and are never redistributed by this repo. That's deliberate: Clippy ships only
+Packs live in Application Support, not in the repo and not in the app bundle:
+they stay on your machine, are never redistributed by this repo, and survive
+every update (the updater replaces the whole `.app`, which is exactly why
+nothing of yours is kept inside it — a pack an older build wrote there is
+moved out the first time this one starts). That's deliberate: Clippy ships only
 art it draws itself, so the MIT licence here covers everything in the tree. To
 *publish* a theme, publish it as its own repo with its licence attached.
 
@@ -747,20 +742,23 @@ Electron, so end-to-end still means `npm start` plus a real Claude Code session
 - `demo/stub-api.js` — browser stand-in for `src/preload.js`
 - `demo/index.html`, `demo/demo.js`, `demo/demo.css` — the control panel
 
-### The sandbox — every state on one scrolling page
+### The sandbox — see every state, click any state
 
 ```bash
-npm run sandbox         # opens http://127.0.0.1:43119/gallery — no Electron, no app
+npm run sandbox         # opens http://127.0.0.1:43119/states — no Electron, no app
 ```
 
-The fastest design loop: a web page with **every state side by side**, each in
-its own iframe of the **real renderer** — scroll, compare, edit
-`src/renderer/`, reload. No Electron running, no Claude Code attached, nothing
-to click through one state at a time. Held cards are stamped with an hour so
-nothing expires mid-look, each cell sizes itself the way main sizes the real
-window, and the buttons in a cell work (their decisions land nowhere, exactly
-like the bench). States whose whole point is the window physically moving
-(perching, walking to the prompt) are labelled instead of faked.
+The fastest design loop: one page with a **live tester** on top — a big buddy
+in an iframe of the **real renderer**, a character and size picker, and every
+state as a button — over the **lifecycle graph** of a prompt (resting →
+running → each flow's response and outcome), where every node is its own live
+buddy and clicking one plays that state in the tester. Edit `src/renderer/`,
+reload, click. No Electron running, no Claude Code attached. Held cards are
+stamped with an hour so nothing expires mid-look, the frame sizes itself the
+way main sizes the real window, and the buttons in a card work (their decisions
+land nowhere, exactly like the bench). States whose whole point is the window
+physically moving (perching, walking to the prompt) are labelled instead of
+faked.
 
 ### The app sandbox (Electron)
 
@@ -774,7 +772,7 @@ One pinned buddy with no Claude Code behind it, and a small window listing
 every state; clicking one sends the same `clippy-event` payloads the real hook
 handlers send, through the real preload bridge, with real placement and
 sizing. **▦ Show all at once** tiles one buddy per state across your desktop
-(drag them to rearrange); **✕ Clear** puts the gallery away. The token panel
+(drag them to rearrange); **✕ Clear** puts them away. The token panel
 runs on canned numbers, card decisions carry made-up request ids the broker
 declines, and the hook server still runs, so a real session can report in
 alongside.
@@ -785,7 +783,8 @@ perching, tray), `npm start` + `npm run mock-session` for end-to-end.
 
 - `src/sandbox-scenarios.js` — the states, as pure data (with a test that
   keeps every one of them firing something)
-- `demo/gallery.html`, `gallery.js`, `gallery.css` — the scrolling wall
+- `demo/states.html`, `states.js`, `states.css` — the states page: the live
+  tester and the lifecycle graph
 - `src/renderer/sandbox.html`, `sandbox.js`, `sandbox.css` — the app control
   window; `src/preload-sandbox.js` is its bridge: one method,
   `sandboxAPI.fire(id)`
@@ -803,7 +802,7 @@ npm run test:watch  # rerun the focused tests as files change
 npm run check   # syntax-check every JS file, then run the full suite
 npm start       # builds any missing buddies, then launches the app
 npm run dev     # the app under a file watcher — restarts when source changes
-npm run sandbox     # every state on one scrolling web page — no Electron
+npm run sandbox     # every state on one page, click one to test it — no Electron
 npm run sandbox:app  # the app + a sandbox control window, no Claude Code
 npm run demo:web    # the single-state bench in a browser, with the show run
 npm run mock-session  # drive a running app through a realistic session
@@ -829,17 +828,17 @@ Two things worth knowing before changing the UI:
   rendering (`describeToolCall`) and the terse `activityLabel`
 - `src/sessions.js` — session state machine + live `activity`; turns hook
   events into reactions
-- `src/main.js` — Electron main: one window per session, tray, notifications,
-  settings, and the hook handlers (approvals, plans, reviews, questions,
-  activity)
+- `src/main.js` — Electron main: the one buddy window every session shares,
+  tray, notifications, settings, and the hook handlers (approvals, plans,
+  reviews, questions, activity)
 - `src/identity.js` — per-session name and colour, hashed from the project name
 - `src/characters.js` — the cast, the four buddy sizes, and which way each is
   drawn; shared by the main process, the renderer's menu and the web test bench
 - `src/actions.js` — what Clippy does with a session, as data, with the real
   hook JSON for every button; the settings window is rendered from it
-- `src/sandbox-scenarios.js` — the sandbox's states, as data, in the event
-  shapes the real handlers send; the gallery page and `npm run sandbox:app`
-  both play them
+- `src/sandbox-scenarios.js` — the app sandbox's states, as data, in the event
+  shapes the real handlers send; `npm run sandbox:app` plays them (the web
+  states page has a list of its own, in `scripts/demo-web.js`)
 - `src/visibility.js` — when a buddy is allowed on screen (done/asking) and
   when it hides again
 - `src/terminal.js` — finds a session's terminal window (hook-reported tty for

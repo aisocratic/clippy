@@ -47,11 +47,21 @@ function startDevWatcher({
   const launch = () => {
     if (shuttingDown) return;
     logger.log('dev: starting Electron');
-    child = spawnElectron(electronPath || require('electron'), ['.'], {
-      cwd: root,
-      stdio: 'inherit',
-      env: { ...process.env, CLIPPY_DEV: '1' },
-    });
+    try {
+      child = spawnElectron(electronPath || require('electron'), ['.'], {
+        cwd: root,
+        stdio: 'inherit',
+        env: { ...process.env, CLIPPY_DEV: '1' },
+      });
+    } catch (err) {
+      // `require('electron')` throws outright when the dependency isn't
+      // installed. Escaping here would leave the watchers open and the signal
+      // handlers attached, so the process would hang instead of reporting it.
+      logger.error(`dev: could not start Electron: ${err.message}`);
+      child = null;
+      finish(1);
+      return;
+    }
     child.once('error', (err) => {
       logger.error(`dev: could not start Electron: ${err.message}`);
     });

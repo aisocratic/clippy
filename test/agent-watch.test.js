@@ -244,3 +244,21 @@ test('an empty poll is not reported as something the agent said', async () => {
   assert.equal(called, 0);
   watch.stop();
 });
+
+test('a poke after a bad connection does not wait out the old backoff', async () => {
+  // A hook arriving is the strongest possible "this session is busy again", and
+  // the watcher was already in its active tier — so nothing rescheduled, and
+  // the next look still happened eight intervals away.
+  const h = harness();
+  const reader = fakeReader(Array.from({ length: 4 }, () => new Error('ssh: connect failed')));
+  const watch = startAgentWatch({ reader, timers: h.timers, now: h.now });
+
+  await h.step(4);
+  assert.equal(watch.tier, 'active');
+  assert.deepEqual(h.scheduled, [LOCAL_TIERS.active * 8]);
+
+  watch.poke();
+  assert.equal(watch.interval, LOCAL_TIERS.active);
+  assert.deepEqual(h.scheduled, [LOCAL_TIERS.active], 'the sleep is re-armed, not just the number');
+  watch.stop();
+});

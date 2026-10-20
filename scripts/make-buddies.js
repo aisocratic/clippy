@@ -1335,9 +1335,13 @@ function main() {
   }
   // Clear out what *this script* generated, so a renamed character doesn't
   // leave its old GIFs behind forever — but never touch a sprite-sheet theme
-  // someone dropped in next to them.
+  // someone dropped in next to them. (User packs live in userData now, see
+  // characters.userThemesDir; a folder with a `theme.json` here is one an
+  // older build wrote, still waiting for the app to move it, so it stays.)
   for (const theme of THEMES.map((t) => t.id)) {
-    fs.rmSync(path.join(dir, 'themes', theme), { recursive: true, force: true });
+    const folder = path.join(dir, 'themes', theme);
+    if (fs.existsSync(path.join(folder, 'theme.json'))) continue;
+    fs.rmSync(folder, { recursive: true, force: true });
   }
   // Characters this script used to draw and no longer does. Their folders would
   // otherwise sit there forever, and keep turning up in the menus. One with a

@@ -176,8 +176,16 @@ function launchCommand({
 
   // "$SHELL" is left unexpanded on purpose — it is the *remote* user's shell,
   // resolved on the far side for the same PATH reason as the local one.
+  //
+  // `--` before the host is load-bearing. Quoting stops the *shell* reading a
+  // host as syntax, but it does nothing about ssh's own option parser: a host
+  // of `-oProxyCommand=…` typed into the New agent box (or left behind in a
+  // settings file) would still be read as a flag, and ProxyCommand runs a
+  // command. After `--` ssh can only read it as a hostname.
   const start = host
-    ? `ssh -t ${sshControlArgs(controlPath).map(shQuote).join(' ')}${controlPath ? ' ' : ''}${shQuote(host)} ${shQuote(
+    ? `ssh -t ${sshControlArgs(controlPath).map(shQuote).join(' ')}${controlPath ? ' ' : ''}-- ${shQuote(
+        host
+      )} ${shQuote(
         `exec "$SHELL" -ilc ${shQuote(`cd ${remoteDir(remotePath)} && exec ${bin}${flags}${args}`)}`
       )}`
     : `${bin}${flags}${args}`;

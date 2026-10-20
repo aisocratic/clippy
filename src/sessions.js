@@ -2,11 +2,16 @@
 
 const path = require('node:path');
 const { activityLabel } = require('./decisions');
+const { isTranscriptPath } = require('./transcript');
 
 // Agents that can report in, and how their buddies are labeled. Unknown ids
 // fall back to Claude, matching the hook server's ?source= whitelist.
 const AGENTS = { claude: 'Claude', codex: 'Codex', openclaw: 'OpenClaw' };
-const agentDisplayName = (agent) => AGENTS[agent] || AGENTS.claude;
+// `agent` comes out of a hook payload, so it can be any string at all —
+// including 'constructor' or 'toString', which a plain lookup answers with
+// something inherited from Object.prototype rather than with "not an agent".
+const knownAgent = (agent) => (typeof agent === 'string' && Object.hasOwn(AGENTS, agent) ? agent : '');
+const agentDisplayName = (agent) => AGENTS[knownAgent(agent)] || AGENTS.claude;
 
 // Session statuses
 const WORKING = 'working';
@@ -52,20 +57,65 @@ class SessionTracker {
     if (!s) {
       s = {
         sessionId: id,
-        agent: AGENTS[payload.agent] ? payload.agent : 'claude',
+        agent: knownAgent(payload.agent) || 'claude',
         cwd: payload.cwd || '',
         status: IDLE,
         activity: null,
+        // The subagents this session has running: agent_id -> { id, type,
+        // activity, startedAt }. They share the session (and the buddy); what
+        // they do is shown as this session's activity, labelled with the type.
+        subagents: new Map(),
         updatedAt: 0,
       };
       this.sessions.set(id, s);
     }
-    if (AGENTS[payload.agent]) s.agent = payload.agent;
+    if (knownAgent(payload.agent)) s.agent = payload.agent;
     if (payload.cwd) s.cwd = payload.cwd;
-    if (modelId(payload.model)) s.model = modelId(payload.model);
+    const model = modelId(payload.model);
+    if (model) s.model = model;
     s.name = s.cwd ? path.basename(s.cwd) : id.slice(0, 8);
     s.updatedAt = Date.now();
     return s;
+  }
+
+  /**
+   * The part every tool hook says the same way: this session is working, on
+   * this tool, doing this. Only what became of the tool call differs.
+   */
+  _tooling(s, payload, state, ok) {
+    const tool = payload.tool_name || 'tool';
+    s.status = WORKING;
+    s.activity = { tool, label: activityLabel(tool, payload.tool_input), state, ok };
+    // A tool run by a subagent is still this session's work, said with the
+    // subagent's name in front so the line reads "Explore: Running: npm test".
+    const sub = this._subagent(s, payload);
+    if (sub) {
+      sub.activity = { ...s.activity };
+      s.activity = { ...s.activity, label: `${sub.type}: ${s.activity.label}`, agentType: sub.type };
+    }
+    return tool;
+  }
+
+  /**
+   * The subagent a hook came from, if any. Claude Code stamps `agent_id` and
+   * `agent_type` on every hook fired inside a subagent, on the parent's
+   * session id. One that was never announced (its SubagentStart predates this
+   * install, say) is learned from its first tool call.
+   */
+  _subagent(s, payload) {
+    const id = typeof payload.agent_id === 'string' ? payload.agent_id : '';
+    if (!id) return null;
+    let sub = s.subagents.get(id);
+    if (!sub) {
+      sub = {
+        id,
+        type: typeof payload.agent_type === 'string' && payload.agent_type ? payload.agent_type : 'subagent',
+        activity: null,
+        startedAt: Date.now(),
+      };
+      s.subagents.set(id, sub);
+    }
+    return sub;
   }
 
   _reaction(kind, urgency, s, message) {
@@ -110,19 +160,20 @@ class SessionTracker {
         s.activity = { tool: null, label: 'Working…', state: 'start', ok: true };
         return this._reaction('clear', 'low', s, '');
 
-      case 'PreToolUse': {
+      case 'PreToolUse':
         // Ambient: what Claude is about to do. The matcher already filters to
         // meaningful tools, so every PreToolUse here is worth showing.
-        const tool = payload.tool_name || 'tool';
-        s.status = WORKING;
-        s.activity = { tool, label: activityLabel(tool, payload.tool_input), state: 'start', ok: true };
+        this._tooling(s, payload, 'start', true);
         return this._reaction('activity', 'low', s, '');
-      }
 
       case 'PostToolUse': {
         // Claude has a separate failure event; Codex sends PostToolUse even for
         // a non-zero shell exit. Accept both shapes without inventing success.
-        const tool = payload.tool_name || 'tool';
+        //
+        // A tool that failed is still ambient: the agent has the error text in
+        // front of it and normally retries or adapts, so a non-zero exit is
+        // part of a working session, not a message for the user. It shows as
+        // a red ⚠ on the activity line and never as a card or a popup.
         const response = payload.tool_response;
         const exitCode = response && typeof response === 'object'
           ? response.exit_code ?? response.metadata?.exit_code ?? response.structuredContent?.exit_code
@@ -132,36 +183,51 @@ class SessionTracker {
           !response?.is_error &&
           !response?.isError &&
           (exitCode === undefined || exitCode === 0);
-        s.status = WORKING;
-        s.activity = {
-          tool,
-          label: activityLabel(tool, payload.tool_input),
-          state: 'done',
-          ok,
-        };
-        return this._reaction('activity', 'low', s, ok ? '' : `${tool} failed in “${s.name}”.`);
+        this._tooling(s, payload, 'done', ok);
+        if (!ok) {
+          s.activity.error = firstLine(
+            typeof response === 'string' ? response : response?.error || response?.stderr || ''
+          );
+        }
+        return this._reaction('activity', 'low', s, '');
       }
 
       case 'PostToolUseFailure': {
         // The tool actually failed (non-zero exit, error thrown, …) — payload
         // carries `error`. An interrupt is the user hitting esc, not a failure,
-        // so it gets a plain "done" rather than a ⚠.
-        const tool = payload.tool_name || 'tool';
+        // so it gets a plain "done" rather than a ⚠. Either way it is ambient
+        // (see PostToolUse): the activity line turns red, nothing pops up.
         const interrupted = payload.is_interrupt === true;
+        this._tooling(s, payload, 'done', interrupted);
+        s.activity.error = interrupted ? '' : firstLine(payload.error);
+        return this._reaction('activity', 'low', s, '');
+      }
+
+      case 'SubagentStart': {
+        // A subagent is a helper the session spun up, not a session of its
+        // own: it reports on the parent's id and the buddy speaks for both.
+        // It is listed under the session and its work shows on the activity
+        // line, so delegating never looks like the agent going quiet.
+        const sub = this._subagent(s, payload);
+        if (!sub) return null;
         s.status = WORKING;
         s.activity = {
-          tool,
-          label: activityLabel(tool, payload.tool_input),
-          state: 'done',
-          ok: interrupted,
-          error: interrupted ? '' : firstLine(payload.error),
+          tool: 'Agent',
+          label: `Delegating to ${sub.type}`,
+          state: 'start',
+          ok: true,
+          agentType: sub.type,
         };
-        return this._reaction(
-          'activity',
-          'low',
-          s,
-          interrupted ? '' : `${tool} failed in “${s.name}”.`
-        );
+        return this._reaction('activity', 'low', s, '');
+      }
+
+      case 'SubagentStop': {
+        const sub = this._subagent(s, payload);
+        if (!sub) return null;
+        s.subagents.delete(sub.id);
+        s.status = WORKING;
+        s.activity = { tool: 'Agent', label: `${sub.type} finished`, state: 'done', ok: true };
+        return this._reaction('activity', 'low', s, '');
       }
 
       case 'PermissionRequest':
@@ -267,9 +333,14 @@ class SessionTracker {
     return this.sessions.get(sessionId)?.status || 'idle';
   }
 
-  /** Where Claude Code is writing this session's transcript (for token usage). */
+  /**
+   * Where Claude Code is writing this session's transcript (for token usage).
+   *
+   * The path is hook-supplied, so it is vetted here rather than at each of the
+   * places that later open it — this map is what they all trust.
+   */
   setTranscript(sessionId, transcriptPath) {
-    if (sessionId && transcriptPath) this.transcripts.set(sessionId, transcriptPath);
+    if (sessionId && isTranscriptPath(transcriptPath)) this.transcripts.set(sessionId, transcriptPath);
   }
 
   transcriptFor(sessionId) {
@@ -301,12 +372,20 @@ class SessionTracker {
         removed.push({ ...s });
       }
     }
+    // The terminal and the transcript are learned from the hook *before* it
+    // reaches the state machine, and some hooks are answered without ever
+    // getting there (an approval arriving with approvals switched off). Sweep
+    // whatever is left for a session we are not tracking, or these two grow for
+    // the life of the app.
+    for (const id of this.terminals.keys()) if (!this.sessions.has(id)) this.terminals.delete(id);
+    for (const id of this.transcripts.keys()) if (!this.sessions.has(id)) this.transcripts.delete(id);
     return removed;
   }
 
   list() {
     return [...this.sessions.values()].map((s) => ({
       ...s,
+      subagents: [...s.subagents.values()],
       terminal: this.terminals.get(s.sessionId) || null,
     }));
   }
