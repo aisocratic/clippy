@@ -37,7 +37,15 @@ const path = require('node:path');
 
 const { describeToolCall, activityLabel, toHookResponse } = require('../src/decisions');
 const { PALETTE } = require('../src/identity');
-const { allCharacters, sizeList } = require('../src/characters');
+const { allCharacters: characters, sizeList, userThemesDir } = require('../src/characters');
+
+// Custom buddies live in userData and are normally addressed by file:// URL,
+// which a page served over http may not load. The bench serves that folder
+// itself under /user-themes/ and hands the pages URLs that point there.
+const allCharacters = () =>
+  characters({
+    urlFor: (_dir, id, file) => `/user-themes/${encodeURIComponent(id)}/${encodeURIComponent(file)}`,
+  });
 const { ACTIONS } = require('../src/actions');
 const { SESSION_WINDOW_MS, WEEK_WINDOW_MS } = require('../src/usage');
 
@@ -78,11 +86,9 @@ function approval(toolName, toolInput, extra = {}) {
 function activity(toolName, toolInput, { state = 'start', ok = true } = {}) {
   const label = activityLabel(toolName, toolInput);
   return evt({
-    kind: ok ? 'activity' : 'failure',
+    kind: 'activity',
     status: 'working',
-    title: ok ? '' : `${toolName} failed`,
-    detail: ok ? '' : `The ${label.toLowerCase()} command failed. Read the complete output for details.`,
-    activity: { tool: toolName, label, state, ok },
+    activity: { tool: toolName, label, state, ok, error: ok ? '' : 'Exit code 1' },
   });
 }
 
@@ -155,7 +161,7 @@ function SHOW_RUN() {
   at(1300, { event: activity('Edit', { file_path: '/repo/src/webhook.js' }) });
   at(1300, { event: activity('Bash', { description: 'run the test suite', command: 'npm test' }) });
   at(1600, {
-    note: 'A failed tool opens a compact problem preview with Read for the complete output',
+    note: 'A failed tool turns the activity line red with a ⚠ — nothing pops up',
     event: activity('Bash', { description: 'run the test suite', command: 'npm test' }, { state: 'done', ok: false }),
   });
 
@@ -324,7 +330,7 @@ const SCENARIOS = [
     id: 'activity-failed',
     group: 'Ambient',
     label: 'Tool failed',
-    hint: 'A failed tool opens a compact problem preview with a Read button.',
+    hint: 'A failed tool turns the activity line red with a ⚠ — nothing pops up.',
     steps: [
       {
         event: activity(
@@ -701,12 +707,37 @@ function usagePayloads() {
 
   /** A payload is a session and the three windows — allowances only ever come
       from Claude Code's own /usage cache (the `official` block), never settings. */
-  const payload = (session, block, week) => ({
-    name: NAME,
-    now,
-    session,
-    windows: { session: block, week, weekOpus: opusOnly(week) },
-  });
+  const payload = (session, block, week) => {
+    const windows = { session: block, week, weekOpus: opusOnly(week) };
+    return {
+      name: NAME,
+      now,
+      agent: 'claude',
+      session,
+      windows,
+      // The panel is machine-wide: every agent's account, this buddy's first.
+      // Codex writes its own rate limits down, so its rows are the real thing.
+      accounts: [
+        { agent: 'claude', title: 'Claude Code', official: null, windows },
+        {
+          agent: 'codex',
+          title: 'Codex',
+          official: {
+            fetchedAtMs: now - 4 * 60 * 1000,
+            plan: 'pro',
+            limits: [
+              { kind: 'secondary', group: 'session', percent: 12, severity: 'normal', resetsAt: now + 3.1 * HOUR, label: 'session · 5 hours' },
+              { kind: 'primary', group: 'weekly', percent: 37, severity: 'normal', resetsAt: now + 4.4 * 24 * HOUR, label: 'week · all models' },
+            ],
+          },
+          windows: {
+            session: win(SESSION_WINDOW_MS, 1.1 * HOUR, { 'gpt-5-codex': totals(30_000, 9_000, 600_000, 40_000) }),
+            week: win(WEEK_WINDOW_MS, 5 * 24 * HOUR, { 'gpt-5-codex': totals(210_000, 70_000, 5_100_000, 300_000) }, { sessions: 6 }),
+          },
+        },
+      ],
+    };
+  };
 
   const busyWeek = win(
     WEEK_WINDOW_MS,
@@ -812,8 +843,8 @@ const MIME = {
   '.css': 'text/css; charset=utf-8',
   '.gif': 'image/gif',
   '.png': 'image/png',
-  // Sprite-pack sheets ship as WebP; without this they arrive as a byte stream
-  // and only load because the browser sniffs them.
+  // Sprite-pack sheets ship as WebP (what openpets packs use); without this
+  // they arrive as a byte stream and only load because the browser sniffs them.
   '.webp': 'image/webp',
   '.svg': 'image/svg+xml',
   '.json': 'application/json; charset=utf-8',
@@ -1072,6 +1103,11 @@ async function handle(req, res) {
   }
   if (pathname.startsWith('/renderer/')) {
     const file = safeJoin(RENDERER_DIR, pathname.slice('/renderer/'.length));
+    return file ? sendFile(res, file) : sendJson(res, { error: 'bad path' }, 400);
+  }
+  // Sprite packs and drawn buddies, out of the persistent user folder.
+  if (pathname.startsWith('/user-themes/')) {
+    const file = safeJoin(userThemesDir(), pathname.slice('/user-themes/'.length));
     return file ? sendFile(res, file) : sendJson(res, { error: 'bad path' }, 400);
   }
 

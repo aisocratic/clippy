@@ -14,11 +14,13 @@
  * A pack is a folder holding a sprite sheet and, optionally, a `pet.json`
  * (`{ id, displayName, spritesheetPath }`) — the shape desktop-pet packs tend
  * to ship. The sheet is a grid: one row per animation, one column per frame.
- * This copies the sheet into `src/renderer/assets/themes/<id>/` and writes the
- * `theme.json` the app reads (see src/characters.js).
+ * This copies the sheet into the app's persistent themes folder —
+ * `~/Library/Application Support/<app>/themes/<id>/`, see `userThemesDir` in
+ * src/characters.js — and writes the `theme.json` the app reads there.
  *
- * Nothing here is committed: that assets folder is gitignored, so packs keep
- * their own licence and this repo keeps shipping only art it drew itself.
+ * Nothing here touches the repo or the app bundle: packs keep their own
+ * licence, this repo keeps shipping only art it drew itself, and an update
+ * (which replaces the whole bundle) never sees them.
  *
  * Flags:
  *   --id NAME        character id (default: pet.json's id, else the folder name)
@@ -50,7 +52,7 @@ const path = require('node:path');
 const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 const execFileAsync = promisify(execFile);
-const { THEMES_DIR, POSES } = require('../src/characters');
+const { userThemesDir, POSES } = require('../src/characters');
 
 // v3, and paged: the catalog outgrew one file (300 pets in the frozen v2
 // snapshot, 1200+ now), so the URL below is a manifest listing page files and
@@ -305,7 +307,7 @@ function installFromFolder(from, opts) {
     throw new Error(`no sprite sheet in ${dir}`);
   }
 
-  // The id becomes a folder name under THEMES_DIR, so it must be a plain name:
+  // The id becomes a folder name under the themes folder, so it must be plain:
   // no separators (sanitized away) and never just dots.
   const id = String(opts.id || meta.id || path.basename(dir)).replace(/[^\w.-]/g, '-');
   if (!id || /^\.+$/.test(id)) throw new Error(`"${id}" is not a usable character id`);
@@ -339,7 +341,9 @@ function installFromFolder(from, opts) {
     poses,
   };
 
-  const out = path.join(THEMES_DIR, id);
+  // Worked out now, not at load: tests and the bench point CLIPPY_THEMES_DIR
+  // elsewhere, and userData is only known once the app is up.
+  const out = path.join(userThemesDir(), id);
   fs.mkdirSync(out, { recursive: true });
   fs.copyFileSync(sheetFile, path.join(out, sheetName));
   fs.writeFileSync(path.join(out, 'theme.json'), `${JSON.stringify(theme, null, 2)}\n`);
@@ -367,7 +371,7 @@ async function main() {
   for (const [name, p] of Object.entries(theme.poses)) {
     console.log(`  ${name.padEnd(8)} row ${p.row} (${p.frames} frames)`);
   }
-  console.log(`  ${path.relative(process.cwd(), out)}`);
+  console.log(`  ${out}`);
   console.log('Restart the app (or reload the test bench) to pick it up.');
 }
 

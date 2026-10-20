@@ -19,11 +19,11 @@ function windowActionFor(kind) {
     case 'answer': // answerable AskUserQuestion
     case 'question': // read-only AskUserQuestion (answer in the terminal)
     case 'review': // "Claude finished — looks good?"
-    case 'failure': // a failed tool with a compact problem preview
       return 'show';
 
     case 'clear': // user typed a new prompt — they're back in the terminal
     case 'activity': // ambient tool use while Claude works
+    case 'failure': // a failed tool is ambient too; the activity line shows it
     case 'info': // session start and other chatter
       return 'hide';
 

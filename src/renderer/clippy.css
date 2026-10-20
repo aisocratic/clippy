@@ -645,23 +645,6 @@ body.flipped #buddy-vector {
   position: static;
 }
 
-#card.failure #card-detail {
-  margin: 0;
-  max-height: 58px;
-  overflow: hidden;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  font-family: inherit;
-  font-size: 11px;
-  line-height: 1.35;
-}
-
-#card.failure #card-actions,
-#card.failure #card-countdown {
-  display: none;
-}
-
 /* Header explanations stay out of the way until the pointer has rested for
    two seconds. Unlike native title bubbles, the delay is consistent. */
 .delayed-tip {
@@ -805,29 +788,24 @@ body.flipped #buddy-vector {
   min-width: 0;
 }
 
-/* A finished response is a scan line, not a second document inside the card,
-   and a failure preview is the same shape. The reader button sits at the right
-   of the boxed preview and opens the whole thing. */
-#card.review #card-summary-row,
-#card.failure #card-summary-row {
+/* A finished response is a scan line, not a second document inside the card.
+   The reader button sits at the right of the boxed preview and opens the
+   whole thing. */
+#card.review #card-summary-row {
   display: flex;
   align-items: stretch;
   gap: 7px;
   margin-top: 7px;
 }
 
-#card.review #card-preview,
-#card.failure #card-preview {
+#card.review #card-preview {
   flex: 1;
   min-width: 0;
   border: 1px solid var(--line);
   border-radius: var(--radius-s);
   background: var(--surface-2);
+  padding: 5px 9px;
 }
-
-/* A review's rows carry their own padding; a failure is one block of output. */
-#card.review #card-preview { padding: 5px 9px; }
-#card.failure #card-preview { padding: 8px 9px; }
 
 #card.review .review-preview-line {
   min-width: 0;
@@ -1342,11 +1320,12 @@ body:not(.compact) #statusline {
 /* ---------- The action bar ----------
    One row under the buddy holding everything he can do, in one place that does
    not move. It fades in when you point at him and stays while a panel you
-   opened is up, so the way to the next thing is always in the same spot. */
+   opened is up, so the way to the next thing is always in the same spot.
+   Icons only, one size: there is no second, worded state any more. */
 #controls {
   margin-top: 5px;
   display: flex;
-  gap: 4px;
+  gap: 3px;
   opacity: 0;
   transition: opacity 0.15s;
 }
@@ -1362,9 +1341,8 @@ body.reading #controls {
 #controls .act {
   display: flex;
   align-items: center;
-  gap: 4px;
   font-size: 10px;
-  padding: 3px 7px;
+  padding: 2px 5px;
   background: var(--surface);
   box-shadow: 2px 2px 0 var(--ink), 0 4px 10px rgba(0, 0, 0, 0.25);
 }
@@ -1374,14 +1352,7 @@ body.reading #controls {
   line-height: 1;
 }
 
-/* Labels are the first thing to go when the row runs out of room: an icon with
-   a tooltip is a guess, but a guess you can hover, and five words at 10px is
-   worse than five pictures. The buddy's own size decides. */
-body.compact #controls .act-label {
-  display: none;
-}
-
-/* ---------- The combined panel: status, token usage, and the composer ---------- */
+/* ---------- The usage panel: status, context, and the allowance bars ---------- */
 
 #usage {
   padding: 13px 15px 14px;
@@ -1389,12 +1360,10 @@ body.compact #controls .act-label {
   font-size: 11px;
 }
 
-/* The panel opens collapsed: a status summary — state, recap, model, context.
-   Everything heavier (the allowance bars, the plan note, the composer) waits
-   behind the size button, which grows this same panel rather than opening
-   another one. */
-#usage.collapsed #usage-detail {
-  display: none;
+/* One state. The panel used to open as a summary with the bars folded away
+   behind a chevron; now everything below is drawn every time it opens. */
+#usage-detail {
+  margin-top: 10px;
 }
 
 /* The session's state, in plain words — the first thing you came to find out,
@@ -1670,18 +1639,13 @@ body.docked #menu {
   margin-bottom: 0;
 }
 
-/* The hide/chat row goes under him too while he's perched. It has to: it moves
-   *into* whichever panel opens, and anything above his head that comes and goes
-   takes his feet with it — the same 20px jump the panels were causing, just
-   smaller. Everything hangs below a perched buddy, because down is the only
-   way this window can grow. */
+/* The action bar goes under him too while he's perched: anything above his
+   head that comes and goes takes his feet with it — the same 20px jump the
+   panels were causing, just smaller. Everything hangs below a perched buddy,
+   because down is the only way this window can grow. */
 body.docked #controls {
-  margin-top: 5px;
-  margin-bottom: 0;
-}
-
-body.docked.compact #controls {
   margin-top: 3px;
+  margin-bottom: 0;
 }
 
 body.docked #card,
@@ -1720,14 +1684,6 @@ body.compact #pet,
 body.compact #menu,
 body.compact #card {
   display: none;
-}
-
-body.compact #controls {
-  gap: 3px;
-}
-
-body.compact #controls .act {
-  padding: 2px 5px;
 }
 
 .hidden {
@@ -1935,19 +1891,7 @@ body.owned:not(.solo) #clippy::after {
   position: relative;
 }
 
-.panel-tools {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  z-index: 2;
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  align-items: center;
-}
-
-.panel-x,
-.panel-tools button {
+.panel-x {
   width: 22px;
   height: 22px;
   padding: 0;
@@ -1970,13 +1914,7 @@ body.owned:not(.solo) #clippy::after {
   z-index: 2;
 }
 
-/* Inside the tools stack it is laid out by the column, not by the corner. */
-.panel-tools .panel-x {
-  position: static;
-}
-
-.panel-x:hover:not(:disabled),
-.panel-tools button:hover:not(:disabled) {
+.panel-x:hover:not(:disabled) {
   border-color: var(--ink);
   color: var(--ink);
   background: var(--surface-2);
@@ -1994,16 +1932,10 @@ body.owned:not(.solo) #clippy::after {
 #bubble-text,
 #qcard-title,
 #card-title,
-#feed-note {
-  padding-right: 26px;
-}
-
-/* The corner stack is one button wide and two tall, so the two lines beside it
-   have to keep clear of it — the recap is a sentence and will happily run
-   underneath. */
+#feed-note,
 #usage-status,
 #usage-recap {
-  padding-right: 30px;
+  padding-right: 26px;
 }
 
 /* ---------- Who you are addressing, beside the box ----------

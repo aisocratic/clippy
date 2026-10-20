@@ -1,14 +1,15 @@
 'use strict';
 
 /**
- * Clippy stays until you have dealt with it.
+ * Clippy stays until you put it away.
  *
  * Two halves, neither of which a unit can hold alone. In main, an ambient
  * event from one agent must not put away what another agent is asking on the
- * shared window. In the renderer, a click somewhere else on the screen only
- * hides Clippy once the user has clicked Clippy — before that, it is them
- * doing something else, not a dismissal. Source assertions, in the style of
- * main-hardening.test.js: they fail on the line that undoes the behaviour.
+ * shared window. In the renderer, a click somewhere else on the screen never
+ * hides Clippy: losing focus only folds an open panel. Only the card's ✕, the
+ * menu's Hide, the tray, or an answered card puts him away. Source assertions,
+ * in the style of main-hardening.test.js: they fail on the line that undoes
+ * the behaviour.
  */
 
 const { test } = require('node:test');
@@ -20,6 +21,7 @@ const read = (...parts) => fs.readFileSync(path.join(__dirname, '..', ...parts),
 const main = read('src', 'main.js');
 const renderer = read('src', 'renderer', 'clippy.js');
 const preload = read('src', 'preload.js');
+const demo = read('demo', 'stub-api.js');
 
 test('ambient chatter cannot hide a window that still has business on it', () => {
   const hide = main.slice(main.indexOf('function hideBuddy('));
@@ -27,7 +29,9 @@ test('ambient chatter cannot hide a window that still has business on it', () =>
   // The old check asked only about this session's held hooks; every session
   // shares the window, so the question is about the window.
   assert.doesNotMatch(body, /broker\.hasPending\(key\)/);
-  assert.match(body, /if \(!lookedAway && windowHasBusiness\(key\)\) return;/);
+  assert.match(body, /if \(windowHasBusiness\(key\)\) return;/);
+  // No back door around that guard for a click elsewhere.
+  assert.doesNotMatch(body, /lookedAway/);
 
   const business = main.slice(main.indexOf('function windowHasBusiness('));
   const businessBody = business.slice(0, business.indexOf('\n}\n'));
@@ -35,32 +39,37 @@ test('ambient chatter cannot hide a window that still has business on it', () =>
   assert.match(businessBody, /item\.state === 'clippy'/, 'nudges shown here, not ones handed to the terminal');
 });
 
-test('looking away hides only after a click on Clippy, and never a held decision', () => {
-  // The blur handler is the one place a click elsewhere reaches the renderer.
+test('a click somewhere else never hides Clippy', () => {
+  // The blur handler is the one place a click elsewhere reaches the renderer,
+  // and all it may do is park an open panel.
   const blur = renderer.slice(renderer.indexOf("window.addEventListener('blur'"));
-  const handler = blur.slice(0, blur.indexOf('});') + 3);
-  assert.match(handler, /parkPanels\(\)/, 'panels still step aside');
-  assert.match(handler, /if \(!engaged \|\| document\.hidden \|\| holdingDecision\(\)\) return;/);
-  assert.match(handler, /window\.clippyAPI\.hide\(\{ lookedAway: true \}\)/);
+  const handler = blur.slice(0, blur.indexOf(';') + 1);
+  assert.strictEqual(handler, "window.addEventListener('blur', parkPanels);");
+  assert.doesNotMatch(renderer, /clippyAPI\.hide\(\{ lookedAway/);
+  assert.doesNotMatch(renderer, /\bengaged\b/);
+  assert.doesNotMatch(renderer, /holdingDecision/);
 
-  // Engagement is any press on the window, and is forgotten each time Clippy
-  // has something new to show or is shown again.
-  assert.match(renderer, /engaged = true;/);
-  assert.match(renderer, /if \(APPEARS_FOR\.has\(evt\.kind\)\) engaged = false;/);
-  assert.match(renderer, /if \(!document\.hidden\) engaged = false;/);
-
-  const holding = renderer.slice(renderer.indexOf('const holdingDecision = '));
-  assert.match(holding.slice(0, 200), /req\.type === 'approval' \|\| req\.type === 'answer'/);
+  // The explicit closers are what remain: the menu's Hide and the card's ✕.
+  // The ✕ answers every card through a decision — main resolves it and puts
+  // the buddy away — rather than hiding the window from the renderer itself.
+  assert.match(renderer, /onAction\('btn-hide', \(\) => window\.clippyAPI\.hide\(\)\)/);
+  const cardX = renderer.slice(renderer.indexOf("btnCardX.addEventListener('click'"));
+  const cardXBody = cardX.slice(0, cardX.indexOf('\n});') + 4);
+  assert.match(cardXBody, /if \(req\.type === 'review'\) return decide\('ok'\);/);
+  assert.match(cardXBody, /decide\(req\.type === 'answer' \? 'dismiss' : 'pass'\);/);
+  assert.doesNotMatch(cardXBody, /clippyAPI\.hide\(/);
 });
 
-test('a look-away hide keeps a perch or pin; the Hide button drops them', () => {
-  assert.match(preload, /hide: \(opts\) => ipcRenderer\.send\('clippy-hide', opts && opts\.lookedAway \? \{ lookedAway: true \} : null\)/);
+test('the Hide button drops a perch or pin', () => {
+  assert.match(preload, /hide: \(\) => ipcRenderer\.send\('clippy-hide'\)/);
+  assert.doesNotMatch(preload, /lookedAway/);
+  assert.doesNotMatch(demo, /lookedAway/);
   const ipc = main.slice(main.indexOf("ipcMain.on('clippy-hide'"));
   const handler = ipc.slice(0, ipc.indexOf('\n  });') + 6);
-  assert.match(handler, /opts\.lookedAway === true\) hideBuddy\(buddy\.sessionId, \{ lookedAway: true \}\)/);
-  assert.match(handler, /else hideBuddy\(buddy\.sessionId, \{ unpin: true \}\)/);
-  // With lookedAway the normal path runs: pinned or hand-perched shrinks to
-  // compact rather than vanishing, exactly as before.
+  assert.match(handler, /hideBuddy\(buddy\.sessionId, \{ unpin: true \}\)/);
+  assert.doesNotMatch(handler, /lookedAway/);
+  // The ambient path still shrinks a pinned or hand-perched buddy to compact
+  // rather than making him vanish.
   const hide = main.slice(main.indexOf('function hideBuddy('));
   assert.match(hide.slice(0, 1200), /if \(buddy\.pinned\) \{\s*placeBuddy\(buddy, 'compact'\)/);
 });

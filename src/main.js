@@ -59,6 +59,7 @@ const {
   lastAssistantText,
   usageWindows,
   readOfficialUsage,
+  readCodexUsage,
   modelFromTranscriptFile,
 } = require('./usage');
 const { checkForUpdates, localBuild } = require('./updates');
@@ -187,13 +188,13 @@ const MANAGED = [
   'spawnedSessions',
 ];
 
-// The cast is read from disk so a sprite theme dropped into
-// `src/renderer/assets/themes/` can be assigned without touching the code — but
-// `allCharacters()` is a readdir plus a JSON parse per pack, and main asks for
-// it several times per hook event (the shared buddy's face on every session
-// switch, once per settings payload, once per chat turn). The folder only
-// changes when a pack is installed, drawn or removed, so it is read once and
-// forgotten exactly there.
+// The cast is read from disk so a sprite theme dropped into the user themes
+// folder (`<userData>/themes/`, see characters.userThemesDir) can be assigned
+// without touching the code — but `allCharacters()` is a readdir plus a JSON
+// parse per pack, and main asks for it several times per hook event (the
+// shared buddy's face on every session switch, once per settings payload, once
+// per chat turn). The folder only changes when a pack is installed, drawn or
+// removed, so it is read once and forgotten exactly there.
 let castCache = null;
 const cast = () => (castCache ||= allCharacters());
 const characterIds = () => cast().map((c) => c.id);
@@ -396,19 +397,6 @@ function openSettingsWindow(section) {
     if (settingsWin === win) settingsWin = null;
   });
   return win;
-}
-
-/**
- * Tray-click behaviour only: the 📎 works like a switch — one click opens
- * settings, the next closes them. Every other entry point (right-click menu,
- * deep links into a section) still plainly opens.
- */
-function toggleSettingsWindow() {
-  if (settingsWin && !settingsWin.isDestroyed() && settingsWin.isVisible()) {
-    settingsWin.close();
-    return;
-  }
-  openSettingsWindow();
 }
 
 /**
@@ -1086,7 +1074,7 @@ function showBuddy(key, { pin = false, mode = 'full' } = {}) {
 }
 
 /** Slip back out of sight once the moment has passed. */
-function hideBuddy(key, { unpin = false, lookedAway = false } = {}) {
+function hideBuddy(key, { unpin = false } = {}) {
   const buddy = buddyOf(key);
   if (!buddy || buddy.win.isDestroyed()) return;
   // Whatever a perch measurement in flight was going to do, this outranks it.
@@ -1100,8 +1088,8 @@ function hideBuddy(key, { unpin = false, lookedAway = false } = {}) {
   // Something on this window is still waiting on the user — a held card, a
   // review, a nudge — and every session shares the window, so it may be
   // another agent's. Ambient chatter from one agent must not put away what
-  // another is asking; the user looking away after dealing with it may.
-  if (!lookedAway && windowHasBusiness(key)) return;
+  // another is asking.
+  if (windowHasBusiness(key)) return;
   if (buddy.dock && !buddy.dock.auto) {
     placeBuddy(buddy, 'compact'); // asked-for perch: stays, just gets smaller
     return;
@@ -2613,16 +2601,49 @@ function refreshUsageWindowsFor(agent) {
   return refresh;
 }
 
+// Every agent whose spend the panel adds up, in the order the rows read. An
+// agent that has never run on this machine has no transcript folder, and is
+// left out rather than shown as an empty account.
+const USAGE_AGENTS = [
+  { agent: 'claude', title: 'Claude Code', dir: CLAUDE_PROJECTS_DIR, official: () => readOfficialUsage() },
+  { agent: 'codex', title: 'Codex', dir: CODEX_SESSIONS_DIR, official: () => readCodexUsage() },
+];
+
+/** The spend windows for one agent, swept at most once a minute. */
+async function usageWindowsFor(agent, now) {
+  let cached = usageCache.get(agent);
+  if (!cached || now - cached.at > USAGE_CACHE_MS) {
+    cached = { at: now, windows: await refreshUsageWindowsFor(agent)(now) };
+    usageCache.set(agent, cached);
+  }
+  return cached.windows;
+}
+
+/**
+ * What every agent on this machine has spent: one account per agent that has
+ * a transcript folder, each with the real allowance where the agent writes it
+ * down (Claude Code's cached /usage, the rate limits Codex stamps on its
+ * rollouts) and the measured windows swept from its transcripts otherwise.
+ */
+async function collectAccounts(now) {
+  const accounts = await Promise.all(
+    USAGE_AGENTS.map(async ({ agent, title, dir, official }) => {
+      if (!fs.existsSync(dir)) return null;
+      const [limits, windows] = await Promise.all([official(), usageWindowsFor(agent, now)]);
+      return { agent, title, official: limits, windows };
+    })
+  );
+  return accounts.filter(Boolean);
+}
+
 /**
  * What this session (and the machine) has spent. Session context comes straight
  * from this session's transcript; the windows `/usage` reports on need a sweep
  * of every recent transcript, so they are cached for a minute — right-clicking
  * repeatedly shouldn't cost anything.
  *
- * The allowance those windows are measured against can only come from the
- * settings window, because Claude Code never writes it down: `/usage` asks the
- * API. When nobody has told us, `limits` is null and the panel says so instead
- * of inventing a percentage.
+ * The panel is one for the whole machine: whichever buddy opened it, every
+ * agent's account is in it, this buddy's own agent first.
  */
 async function collectUsage(key) {
   const agent = tracker.agentFor(key);
@@ -2634,22 +2655,21 @@ async function collectUsage(key) {
     ? { model: trackedModel, context: 0, contextLimit: 0, totals: {}, turns: 0 }
     : null;
   const now = Date.now();
-  let cached = usageCache.get(agent);
-  if (!cached || now - cached.at > USAGE_CACHE_MS) {
-    cached = { at: now, windows: await refreshUsageWindowsFor(agent)(now) };
-    usageCache.set(agent, cached);
-  }
+  const accounts = await collectAccounts(now);
+  accounts.sort((a, b) => (a.agent === agent ? -1 : b.agent === agent ? 1 : 0));
+  const own = accounts.find((a) => a.agent === agent) || { official: null, windows: await usageWindowsFor(agent, now) };
   return {
     name: buddyOf(key)?.name || '',
     agent,
-    // The percentages Claude Code itself cached from /usage — the real
-    // allowance, shown first whenever it exists.
-    official: agent === 'claude' ? await readOfficialUsage() : null,
+    // This buddy's own agent, as before — the panel's session line reads from
+    // these; the account rows read from `accounts`.
+    official: own.official,
     session,
     // What Claude said as its last turn ended — the status summary's "doing
     // right now" line falls back to it when no tool activity is fresher.
     recap: await recapFor(key),
-    windows: cached.windows,
+    windows: own.windows,
+    accounts,
     now,
   };
 }
@@ -2964,12 +2984,13 @@ function createTray() {
   trayTextFallback = icon.isEmpty();
   tray = new Tray(icon);
   updateTray(); // paints the count (and the fallback clip if needed)
-  tray.setToolTip('Clippy for Claude Code + Codex — click for settings');
-  // Click toggles the settings window; right-click (or ctrl-click) drops the
-  // menu. The menu is *not* attached with setContextMenu, because on macOS that
-  // makes the icon swallow left-clicks and we'd never see one.
-  tray.on('click', () => toggleSettingsWindow());
-  tray.on('right-click', () => tray.popUpContextMenu(trayMenu()));
+  tray.setToolTip('Clippy for Claude Code + Codex — click for the menu');
+  // Either button drops the menu. It is popped up by hand rather than attached
+  // with setContextMenu, because on macOS that makes the icon swallow
+  // left-clicks and we'd never see one.
+  const showMenu = () => tray.popUpContextMenu(trayMenu());
+  tray.on('click', showMenu);
+  tray.on('right-click', showMenu);
 }
 
 function updateTray() {
@@ -2990,7 +3011,7 @@ function updateTray() {
         terminalAnswers ? ` (${terminalAnswers} in terminal)` : ''
       }`
     : '';
-  tray.setToolTip(`Clippy is on — ${sessions}${waitingText}${attentionText}. Right-click for sessions.`);
+  tray.setToolTip(`Clippy is on — ${sessions}${waitingText}${attentionText}. Click for sessions.`);
 }
 
 function notify(title, body, { silent = true, sessionId, open = 'buddy' } = {}) {
@@ -3188,7 +3209,6 @@ function emitPassive(reaction, { osNotification = true } = {}) {
   // which do not necessarily emit another UserPromptSubmit hook.
   if (
     reaction.kind === 'activity' ||
-    reaction.kind === 'failure' ||
     reaction.kind === 'clear' ||
     reaction.kind === 'remove'
   ) {
@@ -3476,6 +3496,11 @@ async function handleStop(payload) {
   const prompt = lastPrompt(turns).replace(/\s+/g, ' ').trim();
   const reviewTitle = `${agentName} Finished`;
 
+  // A newer finished turn makes the older card moot: the session has moved on
+  // past whatever that one was asking about. Left in place, two turns in a row
+  // queued two identical "finished" cards for one session, and signing both
+  // off wrote the same deed twice.
+  closeReviewsFor(reaction.sessionId);
   const id = `review-${++reviewSeq}`;
   pendingReviews.set(id, reaction.sessionId);
   rememberWhole(id, reaction.sessionId, whole === recap ? '' : whole, reviewTitle);
@@ -4236,6 +4261,18 @@ app.on('second-instance', () => {
 app.whenReady().then(async () => {
   if (process.platform === 'darwin') app.dock.hide();
 
+  // Custom buddies used to be written inside the app bundle, where every
+  // update deleted them. Carry whatever is still there into userData before
+  // the cast is first read, so the menus see them in their new home.
+  try {
+    const moved = require('./custom-buddies').migrateLegacyThemes();
+    if (moved.length) {
+      console.log('clippy: moved custom buddies to', require('./characters').userThemesDir(), moved);
+    }
+  } catch (err) {
+    console.warn('clippy: could not migrate custom buddies:', err.message);
+  }
+
   loadSettings();
   spawned.load(settings.spawnedSessions);
   warnOnHookDrift();
@@ -4602,17 +4639,15 @@ app.whenReady().then(async () => {
     // Carried across the middle of the screen: where he'll settle has changed.
     sendSide(buddy);
   });
-  ipcMain.on('clippy-hide', (e, opts) => {
+  ipcMain.on('clippy-hide', (e) => {
     const buddy = buddyForSender(e.sender);
     if (!buddy) {
       BrowserWindow.fromWebContents(e.sender)?.hide();
       return;
     }
-    // Clicking elsewhere after dealing with Clippy puts it away but keeps a
-    // perch or pin you asked for; the Hide button also drops the pin, so the
-    // ambient rules take over again.
-    if (opts && opts.lookedAway === true) hideBuddy(buddy.sessionId, { lookedAway: true });
-    else hideBuddy(buddy.sessionId, { unpin: true });
+    // The Hide button drops a perch or pin as well, so the ambient rules take
+    // over again.
+    hideBuddy(buddy.sessionId, { unpin: true });
   });
   ipcMain.on('clippy-quit', () => app.quit());
   ipcMain.on('clippy-counts', updateTray);

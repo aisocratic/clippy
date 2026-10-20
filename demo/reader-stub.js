@@ -33,19 +33,6 @@ const payloads = {
     review: true,
     buddy: foxBuddy,
   },
-  failure: {
-    title: 'Bash failed · npm test',
-    where: 'billing-api · Claude · VS Code',
-    prompt: '',
-    text:
-      '$ npm test\n\nFAIL test/webhook.test.js\n' +
-      'Expected retry count: 3\nReceived retry count: 1\n\n' +
-      'The webhook stopped after the first 503 response. Add retry handling before rerunning the suite.',
-    canOpenSource: true,
-    sourceName: 'VS Code',
-    review: false,
-    buddy: foxBuddy,
-  },
 };
 
 window.readerAPI = {

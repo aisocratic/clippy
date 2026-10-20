@@ -54,8 +54,8 @@ contextBridge.exposeInMainWorld('clippyAPI', {
   // What a session Clippy started has been saying, for the panel that
   // shows more than the last line of it.
   feed: () => ipcRenderer.invoke('clippy-feed'),
-  // { lookedAway: true } is a click elsewhere after dealing with Clippy: it
-  // hides but keeps a perch or pin. Without it, the Hide button, which drops both.
-  hide: (opts) => ipcRenderer.send('clippy-hide', opts && opts.lookedAway ? { lookedAway: true } : null),
+  // The Hide button (and the card's ✕): puts Clippy away and drops a perch or
+  // pin with it. Nothing else in the renderer hides the window.
+  hide: () => ipcRenderer.send('clippy-hide'),
   quit: () => ipcRenderer.send('clippy-quit'),
 });

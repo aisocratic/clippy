@@ -474,6 +474,62 @@ test("Claude Code's own cached /usage percentages are read when present", async 
   assert.equal(await readOfficialUsage(path.join(dir, 'missing.json')), null);
 });
 
+test("Codex's own rate limits are read from the newest rollout's last turn", async () => {
+  const { readCodexUsage } = require('../src/usage');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clippy-codex-'));
+  const day = path.join(dir, '2026', '09', '03');
+  fs.mkdirSync(day, { recursive: true });
+
+  const tokenCount = (ts, rate_limits) =>
+    JSON.stringify({
+      timestamp: ts,
+      type: 'event_msg',
+      payload: { type: 'token_count', info: { total_token_usage: { input_tokens: 10 } }, rate_limits },
+    });
+  const limits = (primaryPercent, secondary = null) => ({
+    limit_id: 'codex',
+    primary: { used_percent: primaryPercent, window_minutes: 10080, resets_at: 1_788_747_985 },
+    secondary,
+    plan_type: 'prolite',
+  });
+
+  // An older rollout with the stale number, and a newer one whose last line
+  // — not its first — carries the fresh one. Both windows on the newer plan.
+  const older = path.join(day, 'rollout-2026-09-03T08-00-00-aaaa.jsonl');
+  const newer = path.join(day, 'rollout-2026-09-03T09-56-45-bbbb.jsonl');
+  fs.writeFileSync(older, `${tokenCount('2026-09-03T08:01:00.000Z', limits(9))}\n`);
+  fs.writeFileSync(
+    newer,
+    [
+      tokenCount('2026-09-03T13:57:19.425Z', limits(22)),
+      JSON.stringify({ timestamp: '2026-09-03T13:58:00.000Z', type: 'event_msg', payload: { type: 'agent_message', message: 'ok' } }),
+      tokenCount('2026-09-03T14:02:11.000Z', limits(23, { used_percent: 41, window_minutes: 300, resets_at: 1_788_540_000 })),
+      '',
+    ].join('\n')
+  );
+  fs.utimesSync(older, new Date('2026-09-03T08:01:00Z'), new Date('2026-09-03T08:01:00Z'));
+  fs.utimesSync(newer, new Date('2026-09-03T14:02:11Z'), new Date('2026-09-03T14:02:11Z'));
+
+  const official = await readCodexUsage(dir);
+  assert.equal(official.fetchedAtMs, Date.parse('2026-09-03T14:02:11.000Z'));
+  assert.equal(official.plan, 'prolite');
+  assert.deepEqual(
+    official.limits.map((l) => [l.label, l.percent]),
+    [
+      ['session · 5 hours', 41],
+      ['week · all models', 23],
+    ],
+    'shortest window first, named the way the Claude rows are'
+  );
+  assert.equal(official.limits[1].resetsAt, 1_788_747_985_000, 'Codex writes seconds; the panel wants ms');
+
+  // Nothing written yet, or no rollouts at all: null, and measured spend it is.
+  fs.writeFileSync(newer, `${JSON.stringify({ timestamp: '2026-09-03T15:00:00Z', type: 'session_meta', payload: {} })}\n`);
+  fs.writeFileSync(older, '');
+  assert.equal(await readCodexUsage(dir), null);
+  assert.equal(await readCodexUsage(path.join(dir, 'missing')), null);
+});
+
 test('a session poll reads what was appended, not the transcript again', async (t) => {
   const first = [
     assistant('2026-08-02T10:00:01Z', usage(5, 100, 20_000, 1_000)),

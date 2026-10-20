@@ -83,6 +83,29 @@ test('a held card is handed back when you are already in that window', () => {
   }
 });
 
+test('a failed tool never becomes a card or brings the window up', () => {
+  // "bash failed" used to be a held card: it popped Clippy up whenever the
+  // terminal was not focused, never expired, and only the corner (x) removed
+  // it — so a busy session stacked one per failed command and the buddy went
+  // to its stressed pose over nothing. A failed tool is ambient: the activity
+  // line turns red and that is all.
+  const sessions = read('src', 'sessions.js');
+  const visibility = read('src', 'visibility.js');
+  const renderer = read('src', 'renderer', 'clippy.js');
+
+  assert.doesNotMatch(sessions, /_reaction\('failure'/, 'the tracker must not emit a failure reaction');
+  assert.doesNotMatch(sessions, /_failed\(/);
+
+  const show = visibility.slice(0, visibility.indexOf("return 'show'"));
+  assert.doesNotMatch(show, /'failure'/, "'failure' must not be in the show group");
+  assert.match(visibility, /case 'failure':[^\n]*\n(?:[^\n]*\n)*?\s*return 'hide'/);
+
+  assert.doesNotMatch(renderer, /APPEARS_FOR = new Set\([^)]*'failure'/);
+  assert.doesNotMatch(renderer, /type: 'failure'/, 'no request is filed as a failure card');
+  // …and the ambient signal that replaces it is still drawn.
+  assert.match(renderer, /activityEl\.classList\.toggle\('failed', !activity\.ok\)/);
+});
+
 test('a question answered in Clippy is not then relayed back as "still waiting"', () => {
   // Codex draws its own picker for request_user_input and leaves it on screen
   // when a PreToolUse hook resolves the call for it. The agent has the answer
@@ -226,6 +249,45 @@ test('signing off one review leaves the next queued card on screen', () => {
   assert.match(decide.slice(0, 900), /showNextRequest\(rest\[Math\.min\(at, rest\.length - 1\)\]/);
 });
 
+test('Looks good hides only the window the review belonged to', () => {
+  const main = read('src', 'main.js');
+  const renderer = read('src', 'renderer', 'clippy.js');
+
+  // With several buddy windows up (the shared one plus a sandbox or two), the
+  // review is resolved by its own id and the only window it may put away is
+  // the one its session maps to — never a sweep over every window.
+  const review = main.slice(main.indexOf('async function resolveReview('), main.indexOf('function closeReviewsFor('));
+  assert.match(review, /const sessionId = pendingReviews\.get\(id\);/);
+  assert.match(review, /pendingReviews\.delete\(id\);/);
+  assert.doesNotMatch(review, /buddies\.values\(\)/);
+  assert.doesNotMatch(review, /hideBuddy\((?!sessionId\))/, 'every hide names the review\'s own session');
+
+  const hide = main.slice(main.indexOf('function hideBuddy('), main.indexOf('function placeBuddy('));
+  assert.match(hide, /const buddy = buddyOf\(key\);/);
+  assert.doesNotMatch(hide, /buddies\.values\(\)/, 'hideBuddy touches one window');
+
+  // The IPC routes by the globally unique id, not by which window sent it.
+  const ipc = main.slice(main.indexOf("ipcMain.on('clippy-decide'"));
+  assert.match(ipc.slice(0, 600), /if \(pendingReviews\.has\(id\)\) \{\s*resolveReview\(id, a, m\);/);
+
+  // And the renderer sends just the active card, dropping only that one.
+  const decide = renderer.slice(renderer.indexOf('function decide('));
+  assert.match(decide.slice(0, 900), /window\.clippyAPI\.decide\(activeRequestId, action, message\)/);
+  assert.doesNotMatch(decide.slice(0, 900), /requests\.clear\(\)/);
+});
+
+test('the menu bar 📎 opens its menu on either button', () => {
+  const main = read('src', 'main.js');
+  const tray = main.slice(main.indexOf('function createTray('), main.indexOf('function updateTray('));
+  assert.match(tray, /const showMenu = \(\) => tray\.popUpContextMenu\(trayMenu\(\)\);/);
+  assert.match(tray, /tray\.on\('click', showMenu\);/);
+  assert.match(tray, /tray\.on\('right-click', showMenu\);/);
+  assert.doesNotMatch(tray, /tray\.setContextMenu\(/, 'attached menus swallow left-clicks on macOS');
+  assert.doesNotMatch(main, /toggleSettingsWindow/);
+  assert.doesNotMatch(main, /Right-click for/, 'the tooltip no longer tells people to right-click');
+  assert.match(main, /label: 'Settings…', click: \(\) => openSettingsWindow\(\)/, 'settings still live in the menu');
+});
+
 test('the large card keeps its project and title clear of its close button', () => {
   const styles = read('src', 'renderer', 'clippy.css');
   const where = styles.slice(styles.indexOf('#card-where {'));
@@ -297,6 +359,35 @@ test('the under-Clippy activity preview opens complete entries in a reader windo
   assert.match(styles, /\.deed:focus-visible/);
 });
 
+test('a finished turn is one activity entry, not "signed off" twice', () => {
+  const renderer = read('src', 'renderer', 'clippy.js');
+  const html = read('src', 'renderer', 'index.html');
+  const main = read('src', 'main.js');
+
+  // The words and the dedupe live in the pure module, loaded before the renderer.
+  const deedsTag = html.indexOf('<script src="deeds.js">');
+  const rendererTag = html.indexOf('<script src="clippy.js">');
+  assert.ok(deedsTag > -1 && deedsTag < rendererTag, 'deeds.js must load before clippy.js');
+  // A bare global, the way ClippySummary is read: deeds.js declares a
+  // top-level const, which a plain script shares with the next one but never
+  // hangs on window.
+  assert.match(renderer, /deeds = ClippyDeeds\.recordDeed\(/);
+  assert.match(renderer, /ClippyDeeds\.deedFor\(action, req, message\)/);
+  assert.match(renderer, /ClippyDeeds\.reviewArrivalDeed\(evt\)/);
+  assert.doesNotMatch(renderer, /window\.ClippyDeeds/);
+  assert.doesNotMatch(renderer, /'the last turn'/);
+  // The reader page explains the deed rather than repeating the chip.
+  assert.match(renderer, /openActivityReader\(label \|\| 'Activity log', deed\.detail \|\| deed\.text\)/);
+
+  // A newer finished turn supersedes the older unanswered card for the same
+  // session, so two Stops in a row do not queue two identical cards.
+  const stop = main.slice(main.indexOf('async function handleStop('));
+  const body = stop.slice(0, stop.indexOf('async function resolveReview('));
+  const closes = body.indexOf('closeReviewsFor(reaction.sessionId)');
+  const queues = body.indexOf('pendingReviews.set(id');
+  assert.ok(closes > -1 && closes < queues, 'handleStop should close older reviews before queuing the new one');
+});
+
 test('a packaged DMG build checks for a verified update without downloading it silently', () => {
   const main = read('src', 'main.js');
   const updater = read('src', 'auto-update.js');
@@ -320,4 +411,62 @@ test('each popup stack reflects its own queue and never draws more than three ca
   assert.match(stack.slice(0, 1200), /Math\.min\(3, Math\.max\(1, count\)\)/);
   assert.match(stack.slice(0, 1200), /shown >= 2/);
   assert.match(stack.slice(0, 1200), /shown >= 3/);
+});
+
+test('the usage chart has one state: 📊 opens it whole', () => {
+  const html = read('src', 'renderer', 'index.html');
+  const renderer = read('src', 'renderer', 'clippy.js');
+  const styles = read('src', 'renderer', 'clippy.css');
+
+  // No fold: the panel used to open as a summary with a ▾ that grew it into
+  // the chart, so the bars you came for were always a second click away.
+  assert.doesNotMatch(html, /btn-usage-size/);
+  assert.doesNotMatch(html, /id="usage" class="hidden collapsed"/);
+  assert.match(html, /id="usage" class="hidden"/);
+  assert.match(html, /id="btn-usage-close"/);
+  assert.doesNotMatch(renderer, /usageExpanded|applyUsageExpansion|btnUsageSize/);
+  assert.doesNotMatch(styles, /#usage\.collapsed/);
+  assert.doesNotMatch(styles, /\.panel-tools/);
+
+  // The chart button and the tray both land on the same, whole panel.
+  assert.match(renderer, /onAction\('btn-stats'[\s\S]*?showUsage\(\)/);
+  assert.match(renderer, /case 'open-usage':\s*\{\s*showUsage\(\)/s);
+  // One bar per allowance the account is tracked against stays in the chart —
+  // for every agent on the machine, each under its own heading.
+  assert.match(renderer, /function renderOfficialBars/);
+  assert.match(renderer, /function renderMeasuredBars/);
+  assert.match(renderer, /groupHead\(`\$\{prefix\}plan allowance`\)/);
+  assert.match(renderer, /for \(const account of accounts\)/);
+  const main = read('src', 'main.js');
+  assert.match(main, /agent: 'claude'[^\n]*readOfficialUsage\(\)/);
+  assert.match(main, /agent: 'codex'[^\n]*readCodexUsage\(\)/);
+  assert.match(main, /accounts,\s*\n\s*now,/, 'the usage reply carries every agent');
+});
+
+test('the action bar is icons only: context, log (hidden by default) and hide', () => {
+  const html = read('src', 'renderer', 'index.html');
+  const renderer = read('src', 'renderer', 'clippy.js');
+  const styles = read('src', 'renderer', 'clippy.css');
+  const main = read('src', 'main.js');
+  const bar = html.slice(html.indexOf('<div id="controls"'), html.indexOf('<div id="who"'));
+
+  assert.deepEqual(
+    [...bar.matchAll(/id="(btn-[a-z]+)"/g)].map((m) => m[1]),
+    ['btn-stats', 'btn-messages', 'btn-hide']
+  );
+  assert.doesNotMatch(bar, /act-label/);
+  assert.match(bar, /id="btn-messages" class="act hidden"/);
+  assert.doesNotMatch(renderer, /onAction\('btn-chat'|onAction\('btn-settings'|function togglePet/);
+  assert.match(renderer, /onAction\('btn-stats'/);
+  assert.match(renderer, /onAction\('btn-hide'/);
+
+  // One state: no worded variant, no compact override of the bar.
+  assert.doesNotMatch(styles, /\.act-label/);
+  assert.doesNotMatch(styles, /body\.compact #controls/);
+  assert.doesNotMatch(styles, /body\.docked\.compact #controls/);
+
+  // Settings are still one click away — from the menus, not the bar.
+  assert.match(main, /label: 'Settings…', click: \(\) => openSettingsWindow\(\)/);
+  assert.match(html, /id="menu-settings"/);
+  assert.match(renderer, /openSettings\(\)/);
 });

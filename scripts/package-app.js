@@ -315,6 +315,9 @@ function packageApp({
   fs.cpSync(path.join(ROOT, 'src'), path.join(appDir, 'src'), {
     recursive: true,
     // Generated art is rebuilt into the bundle below; don't ship a stale copy.
+    // Custom buddies are never in here either: they live in userData (see
+    // characters.userThemesDir), so a new bundle neither carries nor replaces
+    // them.
     filter: (src) => !src.includes(path.join('renderer', 'assets')),
   });
   fs.cpSync(path.join(ROOT, 'bin'), path.join(appDir, 'bin'), { recursive: true });

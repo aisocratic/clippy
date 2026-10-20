@@ -46,11 +46,9 @@ function approval(requestId, toolName, toolInput, extra = {}) {
 function activity(toolName, toolInput, { state = 'start', ok = true } = {}) {
   const label = activityLabel(toolName, toolInput);
   return evt({
-    kind: ok ? 'activity' : 'failure',
+    kind: 'activity',
     status: 'working',
-    title: ok ? '' : `${toolName} failed`,
-    detail: ok ? '' : `The ${label.toLowerCase()} command failed. Read the complete output for details.`,
-    activity: { tool: toolName, label, state, ok },
+    activity: { tool: toolName, label, state, ok, error: ok ? '' : 'Exit code 1' },
   });
 }
 
@@ -108,7 +106,7 @@ const DEV_SCENARIOS = [
     id: 'tool-failed',
     group: 'Ambient',
     label: 'Tool failed',
-    hint: 'A failed tool opens a compact problem preview with a Read button.',
+    hint: 'A failed tool turns the activity line red with a ⚠ — nothing pops up.',
     events: [
       activity(
         'Bash',
@@ -347,9 +345,18 @@ function sandboxUsage(name = NAME) {
     return { ...week, byModel, totals: sumTotals(Object.values(byModel)) };
   })();
 
+  const windows = {
+    session: win(SESSION_WINDOW_MS, 2.6 * HOUR, {
+      'claude-opus-5': totals(48_000, 31_000, 2_400_000, 180_000),
+    }),
+    week,
+    weekOpus,
+  };
+
   return {
     name,
     now,
+    agent: 'claude',
     // The status summary's recap line — what "Claude" last said in this story.
     recap: 'Wired up the settings pane; running the test suite next.',
     session: {
@@ -359,13 +366,29 @@ function sandboxUsage(name = NAME) {
       contextLimit: 200_000,
       totals: totals(48_000, 31_000, 2_400_000, 180_000),
     },
-    windows: {
-      session: win(SESSION_WINDOW_MS, 2.6 * HOUR, {
-        'claude-opus-5': totals(48_000, 31_000, 2_400_000, 180_000),
-      }),
-      week,
-      weekOpus,
-    },
+    windows,
+    official: null,
+    // The panel is machine-wide, so the story has a second agent on the
+    // machine too: a Codex plan with the rate limits Codex writes down itself.
+    accounts: [
+      { agent: 'claude', title: 'Claude Code', official: null, windows },
+      {
+        agent: 'codex',
+        title: 'Codex',
+        official: {
+          fetchedAtMs: now - 4 * 60 * 1000,
+          plan: 'pro',
+          limits: [
+            { kind: 'secondary', group: 'session', percent: 12, severity: 'normal', resetsAt: now + 3.1 * HOUR, label: 'session · 5 hours' },
+            { kind: 'primary', group: 'weekly', percent: 37, severity: 'normal', resetsAt: now + 4.4 * 24 * HOUR, label: 'week · all models' },
+          ],
+        },
+        windows: {
+          session: win(SESSION_WINDOW_MS, 1.1 * HOUR, { 'gpt-5-codex': totals(30_000, 9_000, 600_000, 40_000) }),
+          week: win(WEEK_WINDOW_MS, 5 * 24 * HOUR, { 'gpt-5-codex': totals(210_000, 70_000, 5_100_000, 300_000) }, 6),
+        },
+      },
+    ],
   };
 }
 

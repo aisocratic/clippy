@@ -3,7 +3,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { encodePng } = require('../scripts/package-app');
-const { THEMES_DIR } = require('./characters');
+const { userThemesDir, LEGACY_THEMES_DIR } = require('./characters');
 
 const DRAW_SIZE = 16;
 const FRAME_W = 32;
@@ -56,7 +56,12 @@ function availableId(label, themesDir) {
   return id;
 }
 
-function createDrawnBuddy({ label, pixels, width = DRAW_SIZE, height = DRAW_SIZE }, themesDir = THEMES_DIR) {
+/**
+ * Write a pixel-editor drawing out as a one-pose sprite pack. `themesDir`
+ * defaults to the persistent user folder, never the app's own assets: a buddy
+ * drawn here has to outlive the next update.
+ */
+function createDrawnBuddy({ label, pixels, width = DRAW_SIZE, height = DRAW_SIZE }, themesDir = userThemesDir()) {
   const name = String(label || '').trim();
   if (!name) throw new Error('give your buddy a name');
   if (width !== DRAW_SIZE || height !== DRAW_SIZE || !Array.isArray(pixels) || pixels.length !== width * height) {
@@ -95,11 +100,53 @@ function createDrawnBuddy({ label, pixels, width = DRAW_SIZE, height = DRAW_SIZE
   return { id, label: name };
 }
 
-function removeCustomBuddy(id, themesDir = THEMES_DIR) {
+function removeCustomBuddy(id, themesDir = userThemesDir()) {
   const dir = themeDir(themesDir, id);
   if (!fs.existsSync(path.join(dir, 'theme.json'))) throw new Error('built-in buddies cannot be removed');
   fs.rmSync(dir, { recursive: true });
   return path.basename(dir);
 }
 
-module.exports = { DRAW_SIZE, createDrawnBuddy, removeCustomBuddy, slugFor };
+/**
+ * Move the packs an older build left inside the app bundle to the persistent
+ * folder — once. Custom buddies used to be written next to the generated
+ * cast, in `src/renderer/assets/themes/`, and every update replaced that
+ * whole bundle, art included. Anything still on disk when this build first
+ * runs is carried across here; anything an earlier update already deleted is
+ * beyond reach, which is the whole reason the folder moved.
+ *
+ * Only a folder with a `theme.json` is a pack (the generated cast has none),
+ * an id already present at the destination is left alone rather than
+ * overwritten, and a bundle we cannot write to (a read-only volume) keeps its
+ * copy — the copy in userData is the one that counts from now on.
+ *
+ * @returns {string[]} the ids that were moved
+ */
+function migrateLegacyThemes(from = LEGACY_THEMES_DIR, to = userThemesDir()) {
+  if (path.resolve(from) === path.resolve(to)) return [];
+  let entries;
+  try {
+    entries = fs.readdirSync(from, { withFileTypes: true });
+  } catch {
+    return []; // no legacy folder at all: a fresh install, or a checkout without assets
+  }
+  const moved = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !/^[\w.-]+$/.test(entry.name) || /^\.+$/.test(entry.name)) continue;
+    const src = path.join(from, entry.name);
+    if (!fs.existsSync(path.join(src, 'theme.json'))) continue;
+    const dest = path.join(to, entry.name);
+    if (fs.existsSync(dest)) continue;
+    fs.mkdirSync(to, { recursive: true });
+    fs.cpSync(src, dest, { recursive: true });
+    try {
+      fs.rmSync(src, { recursive: true, force: true });
+    } catch {
+      // read-only bundle: the copy is what matters
+    }
+    moved.push(entry.name);
+  }
+  return moved;
+}
+
+module.exports = { DRAW_SIZE, createDrawnBuddy, removeCustomBuddy, migrateLegacyThemes, slugFor };

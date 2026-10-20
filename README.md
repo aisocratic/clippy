@@ -66,12 +66,14 @@ Clippy is a **small buddy** by default and only grows a window when there's
 something to read — as tall as that thing needs, no more. **Click him** and he
 goes straight to the useful thing: a message you haven't seen yet, or — when
 there's nothing waiting — one panel that answers "how is this session doing?":
-what the agent is doing right now, and how much context and allowance it has
-spent (`660k left of 1.0M · 340k used (34%)` over a progress bar, with **▾** for
-real allowance bars covering the rolling 5-hour block, the week, and Opus's own
-week once you tell Clippy your plan). It is a panel of numbers and nothing else
-— **💬** is where you type, whether that's to the buddy or, picking its name
-from the row above, into that session's own terminal.
+what the agent is doing right now, how much context it has spent (`660k left of
+1.0M · 340k used (34%)` over a progress bar) and, under that, the real allowance
+bars covering the rolling 5-hour block, the week, and Opus's own week once you
+tell Clippy your plan. **📊** in the bar under the buddy opens the same panel,
+whole — there is no fold to open first. It is a panel of numbers and nothing
+else; the bar has just 📊 and hide. Typing to the buddy (or, picking its name
+from the row above the box, into that session's own terminal) has no button of
+its own: a chat you parked mid-sentence comes back with a click on the buddy.
 **Right-click** for everything else — the same stats, Settings, and hide.
 **Double-click** just says hi back, for about a second. The built-in buddies are
 all drawn in code: Clippy, the cat, and Clod are generated pixel art; Orbit and
@@ -106,7 +108,7 @@ interactive — their HTTP response is the hook's decision:
 | `PreToolUse` *(AskUserQuestion)* | ❓ **Question card** — Claude's options as buttons. What you pick is fed straight back, so the terminal picker never appears |
 | `PreToolUse` *(Bash, Edit, Write, Web*, Task, …)* | ⚙ **Activity line** — what Claude is doing now |
 | `PostToolUse` *(same tools)* | ✓ marks the action done |
-| `PostToolUseFailure` *(same tools)* | ⚠ surfaces the failure and its first error line |
+| `PostToolUseFailure` *(same tools)* | ⚠ turns the activity line red with the tool name — no popup. A failed command is routine inside a session; the agent sees the error and carries on |
 | `Notification` (`permission_prompt`) | 🔴 Urgent bounce — a prompt is waiting in the terminal |
 | `Notification` (`idle_prompt`) | 🟡 Reminder — Claude has been waiting for your reply |
 | `SubagentStart` / `SubagentStop` | a helper the session spun up: listed under it in Settings → Sessions, and the activity line says "Delegating to Explore" and then "Explore: Running: npm test" while it works |
@@ -199,7 +201,7 @@ waiting for an existing terminal to report through hooks. Install tmux first:
 brew install tmux
 ```
 
-Right-click the **📎 menu bar icon → New agent**. Pick Claude Code or Codex and
+Click the **📎 menu bar icon → New agent**. Pick Claude Code or Codex and
 a local folder, or choose **Over SSH…** and enter an SSH host plus the project
 path on that machine. An SSH config alias works anywhere `user@host` would.
 The agent CLI must already be installed and authenticated on the machine where
@@ -372,10 +374,10 @@ port first wins.
   Turning around is a mirror, so each pack says which way its art is drawn (and
   each animation may disagree with its pack: sheets often run left but sit
   facing the viewer, and art drawn facing the viewer is never mirrored at all).
-- **The menu bar**: click 📎 for the settings window (above); right-click for the
-  quick menu — per-session actions (show, perch, open window), Drive mode, every
-  on/off switch under *Quick settings* (permission requests, questions, review on
-  finish, perch), and quit.
+- **The menu bar**: click 📎 (either button) for the quick menu — per-session
+  actions (show, perch, open window), Drive mode, every on/off switch under
+  *Quick settings* (permission requests, questions, review on finish, perch),
+  the settings window (above), and quit.
 - **go to …↗** (on every card, named after that session's own app) and
   **open session ↗** (hover below
   Clippy) both raise that session's window and keep Clippy perched on it as a
@@ -529,9 +531,9 @@ would at least make the row say "Clippy" instead of "Electron".
 
 ## The settings window
 
-Click **📎 in the menu bar** and Clippy's settings window opens (right-click for
-the quick menu — sessions, Drive mode, quit). It's the one part of Clippy you sit
-and read: Sessions, Sounds, Buddies, Updates and Feedback, one page at a time.
+Click **📎 in the menu bar → Settings…** and Clippy's settings window opens. It's
+the one part of Clippy you sit and read: Sessions, Sounds, Buddies, Updates and
+Feedback, one page at a time.
 
 - **Sessions** — Clippy's own row at the top, saying which agent it is speaking
   for and what it wears, and under it every agent connected to it: project
@@ -543,7 +545,7 @@ and read: Sessions, Sounds, Buddies, Updates and Feedback, one page at a time.
 - **Buddies** — **one buddy stands in for every agent**, so three agents running
   is still one paperclip on your desk rather than three. It keeps **the face you
   pick** whoever it is speaking for, so there is one look to learn; the name
-  under its feet and the card say which agent it is talking about. Its 💬 chat
+  under its feet and the card say which agent it is talking about. Its chat
   has a row of everyone running: talk to the buddy, or pick an agent and type
   straight into its session. This is the one place Clippy's look is set: the
   size picker, and the cast — click a character and Clippy wears it (the
@@ -571,7 +573,7 @@ strings come from the same `toHookResponse` the app answers with, and a test
 asserts it.
 
 The on/off switches for what Clippy answers aren't in this window at all: they
-live in **📎 menu bar → Quick settings**, one right-click from anywhere. Turn one
+live in **📎 menu bar → Quick settings**, one click from anywhere. Turn one
 off and that moment goes back to the terminal exactly as if Clippy weren't
 running.
 
@@ -581,7 +583,7 @@ The built-in characters are drawn in code. If you'd rather use a sprite pack
 you downloaded, drop it in and Clippy wears it — no code change:
 
 ```
-src/renderer/assets/themes/my-cat/
+~/Library/Application Support/Clippy for Claude Code/themes/my-cat/
 ├── theme.json
 ├── idle.png        # a horizontal strip: frame, frame, frame…
 └── excited.png
@@ -598,8 +600,11 @@ src/renderer/assets/themes/my-cat/
 }
 ```
 
-The folder name is the character id, `label` is what the menus show, and each
-strip is stepped frame by frame at `fps`. Frames must sit in one horizontal row,
+(That is the packaged app's folder; a checkout run with `npm start` keeps its
+own under `~/Library/Application Support/clippy-for-claude/themes/`, and
+`CLIPPY_THEMES_DIR` points either somewhere else.) The folder name is the
+character id, `label` is what the menus show, and each strip is stepped frame
+by frame at `fps`. Frames must sit in one horizontal row,
 all the same size. Only `idle` is required — anything missing falls back to
 `excited`, then `idle`. Restart the app (or reload the bench) and the theme
 appears in the settings window and in the buddy's own **🎨 Buddy & size** menu.
@@ -630,8 +635,11 @@ Pixel art is scaled by whole numbers only, so a 32px-wide frame lands exactly on
 the Small/Medium/Large steps (2×/3×/4×). Sheets of other sizes still work, they
 just scale to the nearest whole multiple that fits.
 
-`src/renderer/assets/` is gitignored, so dropped-in packs stay on your machine
-and are never redistributed by this repo. That's deliberate: Clippy ships only
+Packs live in Application Support, not in the repo and not in the app bundle:
+they stay on your machine, are never redistributed by this repo, and survive
+every update (the updater replaces the whole `.app`, which is exactly why
+nothing of yours is kept inside it — a pack an older build wrote there is
+moved out the first time this one starts). That's deliberate: Clippy ships only
 art it draws itself, so the MIT licence here covers everything in the tree. To
 *publish* a theme, publish it as its own repo with its licence attached.
 

@@ -29,11 +29,11 @@ const COMPACT_H = 200;
 // desktop; an iframe has nothing to move, so they're labelled instead of faked.
 const WINDOW_MOTION = new Set(['dock', 'walk-to-prompt']);
 
-// Cards that wait for an answer, and every kind the renderer files as a
-// request — which is every kind the tester has to be able to take back off the
-// stage when you click the next state.
+// Cards that wait for an answer — every kind the renderer files as a request,
+// which is every kind the tester has to be able to take back off the stage
+// when you click the next state.
 const HELD_KINDS = ['review', 'approval', 'answer'];
-const CARD_KINDS = new Set([...HELD_KINDS, 'failure']);
+const CARD_KINDS = new Set(HELD_KINDS);
 
 const frames = []; // every mounted frame, for routing its replies back to it
 const playTimers = new Map();
@@ -101,8 +101,8 @@ const flows = {
     stages: [
       stage('Resting', 'Small Clippy', idle()),
       stage('Prompt running', 'Running the test suite', working('Bash', 'Running: npm test')),
-      stage('Response', 'Tool failed', base({ kind: 'failure', status: 'working', title: 'Bash failed · npm test', detail: 'Expected retry count: 3. Received retry count: 1. The webhook stopped after the first 503 response.', activity: { tool: 'Bash', label: 'Running: npm test', state: 'done', ok: false, error: 'Expected retry count: 3. Received retry count: 1.' } })),
-      popup('Expanded popup', 'Failure details', '/reader/?flow=failure'),
+      // A failed tool is ambient: the activity line turns red, nothing pops up.
+      stage('Response', 'Tool failed', base({ kind: 'activity', status: 'working', activity: { tool: 'Bash', label: 'Running: npm test', state: 'done', ok: false, error: 'Expected retry count: 3. Received retry count: 1.' } })),
     ],
   },
 };
@@ -205,9 +205,9 @@ function loadLiveFrame() {
 /**
  * Drop anything the previous story still has in flight. Held cards are closed
  * the way main closes a session's stale requests when it moves on, and the
- * session itself is removed, which is what takes a lingering nudge or failure
- * preview off the stage — otherwise the next state you click arrives behind a
- * queue of the last three.
+ * session itself is removed, which is what takes a lingering nudge off the
+ * stage — otherwise the next state you click arrives behind a queue of the
+ * last three.
  */
 function stopLive() {
   live.timers.forEach(clearTimeout);
@@ -254,9 +254,9 @@ function playSteps(steps, tag, label, button) {
           live.open.add(requestId);
           if (step.ref) refs.set(step.ref, requestId);
         } else if (CARD_KINDS.has(event.kind) && !event.requestId) {
-          // A card the scenario never meant to hold (a failure preview) still
-          // becomes a request in the renderer, and one it names itself. Name it
-          // here instead, so the next state you click can close it.
+          // A card the scenario never meant to hold still becomes a request in
+          // the renderer, and one it names itself. Name it here instead, so
+          // the next state you click can close it.
           event.requestId = `${tag}-${++live.seq}`;
           live.open.add(event.requestId);
         } else if (step.ref && refs.has(step.ref)) {

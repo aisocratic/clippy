@@ -732,6 +732,86 @@ async function readOfficialUsage(file = path.join(require('node:os').homedir(), 
   return { fetchedAtMs: Number(cached.fetchedAtMs) || 0, limits: rows };
 }
 
+/* ---------------- The real allowance, as Codex writes it down ---------------- */
+
+// How many of the newest rollouts to look in for a rate-limit line. Codex
+// stamps one on every token_count event, so the newest rollout that has spent
+// anything almost always answers; a couple more cover a rollout that only
+// listed its prompt and quit.
+const CODEX_ROLLOUTS_TO_TRY = 3;
+
+/**
+ * A Codex rate-limit window as a panel row. Codex names its windows by
+ * length only, so the label follows the minutes: five hours is the session
+ * row, a week is the week row, anything else says its span.
+ */
+function codexLimitRow(kind, win) {
+  if (!win || typeof win.used_percent !== 'number') return null;
+  const minutes = Number(win.window_minutes) || 0;
+  const label =
+    minutes === 5 * 60
+      ? 'session · 5 hours'
+      : minutes === 7 * 24 * 60
+      ? 'week · all models'
+      : minutes >= 24 * 60
+      ? `${Math.round(minutes / (24 * 60))} days`
+      : minutes > 0
+      ? `${Math.round(minutes / 60)} hours`
+      : kind;
+  const percent = Math.max(0, win.used_percent);
+  return {
+    kind,
+    group: minutes === 7 * 24 * 60 ? 'weekly' : minutes === 5 * 60 ? 'session' : kind,
+    percent,
+    severity: percent >= 100 ? 'exceeded' : 'normal',
+    // Codex writes seconds since the epoch, Claude Code an ISO string.
+    resetsAt: win.resets_at ? Number(win.resets_at) * 1000 || 0 : 0,
+    label,
+  };
+}
+
+/**
+ * Codex's own answer to "how much of my plan is left": every `token_count`
+ * event in a rollout carries the `rate_limits` the server just reported —
+ * used percentage, window length and reset time, for the primary window and
+ * the secondary one when the plan has two. The newest rollout's newest such
+ * line is the freshest number on the machine, so that is the one shown.
+ *
+ * Same shape as `readOfficialUsage`, so the panel draws both the same way.
+ *
+ * @param {string} [sessionsDir]  ~/.codex/sessions, or a test folder
+ * @returns {Promise<{fetchedAtMs: number, plan: string, limits: Array}|null>}
+ */
+async function readCodexUsage(sessionsDir = path.join(require('node:os').homedir(), '.codex', 'sessions')) {
+  const files = await recentTranscripts(sessionsDir, 0);
+  for (const { file } of files.slice(0, CODEX_ROLLOUTS_TO_TRY)) {
+    const found = await readBackward(
+      file,
+      (line) => {
+        if (line.indexOf('"rate_limits"') === -1) return undefined;
+        const entry = parseLine(line);
+        const limits = entry && entry.payload && entry.payload.rate_limits;
+        if (!limits || typeof limits !== 'object') return undefined;
+        const rows = [
+          codexLimitRow('secondary', limits.secondary),
+          codexLimitRow('primary', limits.primary),
+        ].filter(Boolean);
+        // Shortest window first, the way the Claude rows read.
+        rows.sort((a, b) => (a.group === 'session' ? -1 : b.group === 'session' ? 1 : 0));
+        if (rows.length === 0) return undefined;
+        return {
+          fetchedAtMs: Date.parse(entry.timestamp) || 0,
+          plan: typeof limits.plan_type === 'string' ? limits.plan_type : '',
+          limits: rows,
+        };
+      },
+      { chunkBytes: TRANSCRIPT_TAIL_BYTES, maxLineBytes: MAX_LINE_BYTES }
+    );
+    if (found) return found;
+  }
+  return null;
+}
+
 module.exports = {
   parseTranscript,
   modelFromTranscriptFile,
@@ -748,6 +828,7 @@ module.exports = {
   agesOutAt,
   usageWindows,
   readOfficialUsage,
+  readCodexUsage,
   OPUS,
   SESSION_WINDOW_MS,
   WEEK_WINDOW_MS,

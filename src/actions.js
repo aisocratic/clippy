@@ -128,12 +128,13 @@ const ACTIONS = [
     scenario: 'activity-failed',
     icon: '😰',
     title: 'Show when things are going wrong',
-    summary: 'A failed tool, or a context window more than 30% full, makes the buddy sweat ' +
-      'and turns the activity line red.',
+    summary: 'A failed tool turns the activity line red (⚠ Bash failed) without popping up; ' +
+      'a context window more than 30% full makes the buddy sweat.',
     appliesTo: 'Claude + Codex',
     hook: 'PostToolUseFailure',
     when: 'A tool fails, or this session has used more than 30% of its context window.',
-    shows: 'The buddy sweats and shivers until it settles — and the activity line turns red.',
+    shows: 'A failed tool only turns the activity line red — no card, no popup. ' +
+      'A tight context window makes the buddy sweat and shiver until it settles.',
     passive: true,
   },
   {

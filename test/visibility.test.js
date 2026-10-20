@@ -5,13 +5,15 @@ const assert = require('node:assert');
 const { windowActionFor } = require('../src/visibility');
 
 test('Clippy shows up when Claude is done or wants something', () => {
-  for (const kind of ['attention', 'approval', 'answer', 'question', 'review', 'failure']) {
+  for (const kind of ['attention', 'approval', 'answer', 'question', 'review']) {
     assert.equal(windowActionFor(kind), 'show', kind);
   }
 });
 
 test('ambient chatter puts Clippy away', () => {
-  for (const kind of ['activity', 'clear', 'info']) {
+  // 'failure' included: a failed tool is routine inside a session and only
+  // colours the activity line — it must never bring the window up.
+  for (const kind of ['activity', 'failure', 'clear', 'info']) {
     assert.equal(windowActionFor(kind), 'hide', kind);
   }
 });

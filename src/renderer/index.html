@@ -102,39 +102,37 @@
       </div>
     </div>
 
-    <!-- One left click opens this, collapsed: a glance at the session — its
-         state, what the agent is doing right now, the model, and how full the
-         context is. ▾ grows the same window into the fuller panel (the
-         allowance bars, the plan note, and a box to keep talking to it), and
-         ▴ folds it back. Never a second window. -->
-    <div id="usage" class="hidden collapsed">
-      <!-- Top-right, like any window: (x) closes, and the fold sits under it.
-           Both used to live at the foot of the panel, which put "close" beside
-           the actions and left every popup closing somewhere different. -->
-      <div class="panel-tools">
-        <button class="panel-x" id="btn-usage-close" title="Close" aria-label="Close">×</button>
-        <button id="btn-usage-size"
-                title="Show more: what this session has spent, and on what">▾</button>
-      </div>
+    <!-- One left click (or 📊) opens this, whole: the session's state, what
+         the agent is doing right now, the model, how full its context is —
+         and under that, one bar per allowance the account is tracked against
+         (see src/usage.js). One state, never a fold and never a second window:
+         it used to open as a summary with a ▾ to grow it, and the chart you
+         came for was always one more click away. -->
+    <div id="usage" class="hidden">
+      <!-- Top-right, like any window: (x) closes. It used to live at the foot
+           of the panel, which put "close" beside the actions and left every
+           popup closing somewhere different. -->
+      <button class="panel-x" id="btn-usage-close" title="Close" aria-label="Close">×</button>
       <!-- No name row here: the RPG plate under the buddy already carries the
            pet's name and the folder · model line under it. -->
       <div id="usage-status"></div>
       <div id="usage-recap" class="hidden"></div>
       <div id="usage-bar"><div id="usage-bar-fill"></div></div>
       <div id="usage-context"></div>
-      <!-- Nothing to type into. ▾ answers "how is this session doing" and that
-           is all it does; a box for talking to the agent sitting inside a panel
-           of numbers meant two different jobs shared one window, and you could
-           not open the numbers without also being offered the box. Talking has
-           its own button under the buddy (💬), which is where it lives. -->
+      <!-- Nothing to type into. This answers "how is this session doing" and
+           that is all it does; a box for talking to the agent sitting inside a
+           panel of numbers meant two different jobs shared one window, and you
+           could not open the numbers without also being offered the box. -->
       <div id="usage-detail">
         <div id="usage-bars"></div>
         <div id="usage-note"></div>
       </div>
     </div>
 
-    <!-- The 💬 button under the buddy opens this: a word with the *pet*, which
-         never reaches the session it is sitting on. -->
+    <!-- A word with the *pet*, which never reaches the session it is sitting
+         on. There is no button for it in the bar any more: it comes back on a
+         click of the buddy only when it was parked mid-conversation (see
+         primaryAction in clippy.js). -->
     <!-- Who the chat is addressed to. Outside the panel on purpose: with one
          buddy standing in for every agent this is a row of its own, not a
          header crowding the top of the card. -->
@@ -228,22 +226,24 @@
          recent messages, settings) were only reachable by knowing to
          right-click. One row, one home, under his feet: it appears when you
          point at him or while a panel is up, and every item is one click.
-         Labelled as well as drawn, because a glyph at 10px is a guess. -->
+         Icons only, and only one state: it used to grow words beside the
+         icons whenever a panel was up, so the row changed shape under the
+         pointer. The tooltip carries the word. Just context and hide (plus the
+         log, revealed only for a session Clippy started); chat and settings
+         are gone from here — settings stays in the right-click and menu-bar
+         menus. -->
     <div id="controls" role="toolbar" aria-label="Buddy actions">
-      <button id="btn-chat" class="act" title="Chat — talk to your buddy, or through it to an agent">
-        <span class="act-icon" aria-hidden="true">💬</span><span class="act-label">chat</span>
+      <button id="btn-stats" class="act" aria-label="context"
+              title="Context & usage: session state, context remaining and spend">
+        <span class="act-icon" aria-hidden="true">📊</span>
       </button>
-      <button id="btn-stats" class="act" title="Context & usage: session state, context remaining and spend">
-        <span class="act-icon" aria-hidden="true">📊</span><span class="act-label">context</span>
+      <button id="btn-messages" class="act hidden" aria-label="log"
+              title="What this session has been saying">
+        <span class="act-icon" aria-hidden="true">📜</span>
       </button>
-      <button id="btn-messages" class="act hidden" title="What this session has been saying">
-        <span class="act-icon" aria-hidden="true">📜</span><span class="act-label">log</span>
-      </button>
-      <button id="btn-settings" class="act" title="Clippy's settings">
-        <span class="act-icon" aria-hidden="true">⚙</span><span class="act-label">settings</span>
-      </button>
-      <button id="btn-hide" class="act" title="Hide until the next update (Clippy stays on in the menu bar)">
-        <span class="act-icon" aria-hidden="true">×</span><span class="act-label">hide</span>
+      <button id="btn-hide" class="act" aria-label="hide"
+              title="Hide until the next update (Clippy stays on in the menu bar)">
+        <span class="act-icon" aria-hidden="true">×</span>
       </button>
     </div>
 
@@ -268,6 +268,7 @@
   <script src="sounds.js"></script>
   <script src="markdown.js"></script>
   <script src="summary.js"></script>
+  <script src="deeds.js"></script>
   <script src="clippy.js"></script>
 </body>
 </html>

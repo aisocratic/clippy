@@ -160,6 +160,10 @@ async function stagedApp(dmg, directory) {
   return stage;
 }
 
+// The old bundle is removed outright before the new one is copied in. That is
+// only safe for the user's own art because custom buddies live outside the
+// bundle, in userData (see characters.userThemesDir) — nothing under the .app
+// is anyone's but ours.
 function installerScript({ pid, source, destination, work }) {
   const replace = `/bin/rm -rf ${shellQuote(destination)} && /usr/bin/ditto --rsrc --extattr ${shellQuote(source)} ${shellQuote(destination)}`;
   const privilegedReplace = `do shell script ${JSON.stringify(replace)} with administrator privileges`;

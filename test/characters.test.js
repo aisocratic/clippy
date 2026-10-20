@@ -5,6 +5,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { pathToFileURL } = require('node:url');
 const {
   CHARACTERS,
   SIZES,
@@ -110,9 +111,36 @@ test('a dropped-in sprite sheet becomes a character', () => {
   assert.equal(theme.id, 'my-cat');
   assert.equal(theme.label, '🐈 My cat');
   assert.equal(theme.sheet.fps, 8);
-  // Paths are handed to the renderer, so they're relative to the renderer.
-  assert.equal(theme.sheet.poses.idle.file, 'assets/themes/my-cat/idle.png');
+  // Paths are handed to the renderer as absolute file:// URLs: the folder lives
+  // in userData now, nowhere near index.html.
+  assert.equal(theme.sheet.poses.idle.file, pathToFileURL(path.join(dir, 'my-cat', 'idle.png')).href);
   assert.equal(theme.sheet.poses.excited.frames, 6);
+  // The web bench serves the folder over http and addresses it its own way.
+  const [served] = customThemes(dir, (_d, id, file) => `/user-themes/${id}/${file}`);
+  assert.equal(served.sheet.poses.excited.file, '/user-themes/my-cat/run.png');
+});
+
+test('a theme.json cannot point the renderer outside its own folder', () => {
+  const dir = tmpThemes({
+    sneaky: {
+      'theme.json': JSON.stringify({
+        frameWidth: 32,
+        frameHeight: 32,
+        idle: { file: 'my sheet ✨.png', frames: 2 },
+        excited: { file: '../../etc/passwd', frames: 2 },
+        walk: { file: '/etc/passwd', frames: 2 },
+      }),
+    },
+  });
+  const [pack] = customThemes(dir);
+  const home = pathToFileURL(path.join(dir, 'sneaky')).href;
+  assert.equal(pack.sheet.poses.walk, undefined, 'an absolute path is not a pose');
+  assert.deepEqual(pack.sheet.poses.excited, pack.sheet.poses.idle, 'nor is a climb out of the folder');
+  for (const pose of Object.values(pack.sheet.poses)) {
+    assert.ok(pose.file.startsWith(`${home}/`), `${pose.file} leaves the pack folder`);
+  }
+  // Odd but honest names are percent-encoded, so they survive a CSS url("…").
+  assert.equal(pack.sheet.poses.idle.file, `${home}/my%20sheet%20%E2%9C%A8.png`);
 });
 
 test('a pack says which way its art is drawn, and right is the default', () => {
@@ -312,9 +340,9 @@ test('sheet sizes are read straight out of the image header', () => {
 
 test('a pack cannot point its sprite sheet outside the themes folder', () => {
   // theme.json is whatever a downloaded pack shipped, and its `file` is pasted
-  // into a CSS url("assets/themes/<id>/<file>") in the renderer. A traversal
-  // would read a file elsewhere on the disk; a quote would close the url() and
-  // let the rest of the name be CSS. Either way the pose is not a pose.
+  // into a CSS url("...") in the renderer. A traversal would read a file
+  // elsewhere on the disk; a quote would close the url() and let the rest of
+  // the name be CSS. Either way the pose is not a pose.
   const pose = (file) => ({ frameWidth: 32, frameHeight: 32, idle: { file, frames: 4 } });
   const dir = tmpThemes({
     escape: { 'theme.json': JSON.stringify(pose('../../../../etc/passwd')) },
@@ -329,7 +357,10 @@ test('a pack cannot point its sprite sheet outside the themes folder', () => {
     customThemes(dir).map((t) => t.id),
     ['fine']
   );
-  assert.equal(customThemes(dir)[0].sheet.poses.idle.file, 'assets/themes/fine/my sheet ✨.webp');
+  assert.equal(
+    customThemes(dir)[0].sheet.poses.idle.file,
+    pathToFileURL(path.join(dir, 'fine', 'my sheet ✨.webp')).href
+  );
 });
 
 test('a themes folder is scanned once and again only when it changes', () => {

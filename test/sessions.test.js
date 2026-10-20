@@ -5,6 +5,7 @@ const assert = require('node:assert');
 const os = require('node:os');
 const path = require('node:path');
 const { SessionTracker } = require('../src/sessions');
+const { windowActionFor } = require('../src/visibility');
 
 const payload = (id, cwd = '/Users/me/projects/my-app') => ({
   session_id: id,
@@ -92,15 +93,16 @@ test('PreToolUse/PostToolUse drive the activity line (meaningful tools only)', (
     success: false,
   });
   assert.equal(fail.activity.ok, false);
-  assert.match(fail.message, /failed/);
+  assert.equal(fail.kind, 'activity');
+  assert.equal(fail.message, '');
 
   // UserPromptSubmit resets the activity; SessionStart clears it.
   assert.equal(t.handle('UserPromptSubmit', null, payload('s1')).activity.label, 'Working…');
 });
 
-test('a failed tool arrives on PostToolUseFailure, not PostToolUse', () => {
-  // Claude Code only fires PostToolUse on success, so this is the event that
-  // actually produces the ⚠ in the activity line.
+test('a failed tool only marks the activity line — it never pops a card', () => {
+  // Claude Code only fires PostToolUse on success, so PostToolUseFailure is
+  // the event that actually produces the ⚠ in the activity line.
   const t = new SessionTracker();
   t.handle('SessionStart', null, payload('s1'));
 
@@ -114,7 +116,8 @@ test('a failed tool arrives on PostToolUseFailure, not PostToolUse', () => {
   assert.equal(failed.activity.state, 'done');
   assert.equal(failed.activity.ok, false);
   assert.equal(failed.activity.error, 'Exit code 1'); // first line only
-  assert.match(failed.message, /Bash failed/);
+  assert.equal(failed.kind, 'activity');
+  assert.equal(failed.message, '');
 
   // Hitting esc isn't a failure — don't cry wolf.
   const stopped = t.handle('PostToolUseFailure', null, {
@@ -126,6 +129,46 @@ test('a failed tool arrives on PostToolUseFailure, not PostToolUse', () => {
   });
   assert.equal(stopped.activity.ok, true);
   assert.equal(stopped.message, '');
+});
+
+test('routine tool failures stay ambient: no popup, and the session is not "waiting on you"', () => {
+  // "bash failed" used to become a held card that popped Clippy up and never
+  // went away on its own, so a busy session stacked one per failed command.
+  // A failed tool is part of a working session — the agent sees the error and
+  // carries on — so every shape a failure arrives in maps to an ambient
+  // 'activity' reaction, which the visibility policy hides.
+  const t = new SessionTracker();
+  t.handle('SessionStart', null, payload('s1'));
+  const codex = { ...payload('cx'), agent: 'codex' };
+  t.handle('SessionStart', null, codex);
+
+  const shapes = [
+    ['PostToolUseFailure', { ...payload('s1'), error: 'Exit code 1\nnpm ERR! Test failed.' }],
+    ['PostToolUse', { ...payload('s1'), success: false }],
+    ['PostToolUse', { ...payload('s1'), tool_response: { is_error: true } }],
+    ['PostToolUse', { ...payload('s1'), tool_response: { isError: true } }],
+    ['PostToolUse', { ...codex, tool_response: { exit_code: 2 } }],
+    ['PostToolUse', { ...codex, tool_response: { metadata: { exit_code: 1 } } }],
+  ];
+  for (const [event, body] of shapes) {
+    const r = t.handle(event, null, { ...body, tool_name: 'Bash', tool_input: { command: 'npm test' } });
+    assert.equal(r.kind, 'activity', event);
+    assert.equal(r.activity.ok, false, event);
+    assert.equal(r.message, '', event);
+    assert.equal(windowActionFor(r.kind), 'hide', event);
+  }
+
+  // Ten failures in a row are still one working session, not ten things to deal with.
+  for (let i = 0; i < 10; i++) {
+    t.handle('PostToolUseFailure', null, {
+      ...payload('s1'),
+      tool_name: 'Bash',
+      tool_input: { command: 'false' },
+      error: 'Exit code 1',
+    });
+  }
+  assert.deepEqual(t.counts(), { total: 2, waiting: 0 });
+  assert.equal(t.statusFor('s1'), 'working');
 });
 
 test('stale sessions are swept, parked ones get a longer leash', () => {
@@ -203,7 +246,7 @@ test('Codex sessions keep their identity and detect non-zero PostToolUse exits',
     tool_response: { exit_code: 1 },
   });
   assert.equal(failed.activity.ok, false);
-  assert.match(failed.message, /failed/);
+  assert.equal(failed.kind, 'activity');
   assert.equal(t.agentFor('cx'), 'codex');
 });
 

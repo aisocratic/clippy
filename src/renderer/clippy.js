@@ -76,7 +76,6 @@ const usageBarFill = document.getElementById('usage-bar-fill');
 const usageContext = document.getElementById('usage-context');
 const usageBars = document.getElementById('usage-bars');
 const usageNote = document.getElementById('usage-note');
-const btnUsageSize = document.getElementById('btn-usage-size');
 
 const feedEl = document.getElementById('feed');
 const feedSrc = document.getElementById('feed-src');
@@ -129,13 +128,10 @@ const btnQgoto = document.getElementById('btn-qgoto');
 
 // sessionId -> { message, urgency, name, lastNudge, snoozedUntil, acknowledged }
 const pending = new Map();
-// requestId -> { id, type: 'approval'|'review'|'answer'|'failure', name, title,
+// requestId -> { id, type: 'approval'|'review'|'answer', name, title,
 // detail, expiresAt, holdMs }
 const requests = new Map();
 let activeRequestId = null;
-// Has the user clicked Clippy since it last appeared? Until they have, a click
-// somewhere else on the screen is them doing something else, not a dismissal.
-let engaged = false;
 let myStatus = 'idle';
 let sleepingUntil = 0;
 
@@ -249,11 +245,7 @@ const DEMANDING = [cardEl, qcardEl, menuEl];
 const isOpen = (el) => !el.classList.contains('hidden');
 
 /**
- * Where hide/chat live right now.
- *
- * With nothing open they float above the buddy's head. A panel takes that space
- * the moment it opens, so the row moves *into* the panel and becomes its last
- * row rather than a pair of buttons hovering over the top of it.
+ * Where the action bar (context / hide) lives right now, and whether it shows.
  *
  * Called from syncMode before it measures, so the height main is given already
  * accounts for wherever the row ended up.
@@ -917,9 +909,8 @@ function showActivity(name, activity) {
    These are the deeds themselves: kept in state (so a panel opening and
    closing does not lose them), capped, newest first. */
 
-const DEEDS_KEPT = 50;
 const DEEDS_PREVIEW = 2;
-const deeds = [];
+let deeds = [];
 
 /** hh:mm — the day is never in question for something this recent. */
 const deedClock = (at) =>
@@ -929,9 +920,11 @@ const deedClock = (at) =>
  * Record something the buddy did.
  *
  * `who` is the agent it was about — with one buddy answering for several, "I
- * allowed that" is meaningless without saying whose.
+ * allowed that" is meaningless without saying whose. `detail` is what the
+ * reader window shows instead of the chip's one line; `key` names the thing
+ * the deed is about, so a later deed about the same thing replaces it.
  */
-function noteDeed(text, { who = '' } = {}) {
+function noteDeed(text, { who = '', key = '', detail = '' } = {}) {
   if (!text) return;
   // Whose face the card wears, worked out now rather than at render time: the
   // roster moves, and a deed is a record of something that already happened.
@@ -939,8 +932,8 @@ function noteDeed(text, { who = '' } = {}) {
   const from = mine
     ? { character: settings.character, color: me.color, name: me.name }
     : petRoster.find((a) => a.name === who) || { name: who, color: me.color };
-  deeds.unshift({ text, who, at: Date.now(), from });
-  deeds.length = Math.min(deeds.length, DEEDS_KEPT);
+  // The cap lives with the dedupe, in deeds.js.
+  deeds = ClippyDeeds.recordDeed(deeds, { text, detail, key, who, at: Date.now(), from, count: 1 });
   renderDeeds();
 }
 
@@ -986,7 +979,9 @@ function makeDeed(deed) {
   body.className = 'deed-body';
   const what = document.createElement('span');
   what.className = 'deed-what';
-  what.textContent = deed.text;
+  // The same thing done twice in a row is one chip with a count, not two
+  // chips saying the same words.
+  what.textContent = deed.count > 1 ? `${deed.text} ×${deed.count}` : deed.text;
   // One buddy can be answering for several agents, so the card names the
   // session — except when it is the one the plate underneath already names.
   const meta = document.createElement('span');
@@ -1004,7 +999,8 @@ function openDeed(deed) {
   const label = [deed.who && deed.who !== me.name ? deed.who : me.name, deedClock(deed.at)]
     .filter(Boolean)
     .join(' · ');
-  window.clippyAPI.openActivityReader(label || 'Activity log', deed.text);
+  // The page explains what happened; the chip only had room to name it.
+  window.clippyAPI.openActivityReader(label || 'Activity log', deed.detail || deed.text);
 }
 
 function openAllDeeds() {
@@ -1013,7 +1009,7 @@ function openAllDeeds() {
       const label = [deed.who && deed.who !== me.name ? deed.who : me.name, deedClock(deed.at)]
         .filter(Boolean)
         .join(' · ');
-      return `## ${label}\n\n${deed.text}`;
+      return `## ${label}\n\n${deed.detail || deed.text}`;
     })
     .join('\n\n---\n\n');
   window.clippyAPI.openActivityReader('Activity log', text);
@@ -1213,30 +1209,13 @@ function windowBar(row, win, weekTotal, now, agent = 'claude') {
   });
 }
 
-// Whether the panel is grown into the full view. A fresh open always starts
-// at the collapsed summary; growing it is a choice you make each visit — but a
-// parked panel comes back as you left it.
-let usageExpanded = false;
-
-function applyUsageExpansion() {
-  usageEl.classList.toggle('collapsed', !usageExpanded);
-  // The same button both ways, pointing the way the panel will move: the
-  // ordinary disclosure chevron, down to open it and up to fold it back.
-  btnUsageSize.textContent = usageExpanded ? '▴' : '▾';
-  btnUsageSize.title = usageExpanded
-    ? 'Back to the summary'
-    : 'Show more: the allowance bars, and a box to talk to this agent';
-}
-
 /**
- * The one panel a left click opens — collapsed to a status summary first: the
- * session's state, what the agent is doing right now, the model, and how full
- * the context is. The ▾ button grows the same window into the full view (the
- * allowance bars and a box to say the next thing) and ▴ folds it back — one
- * panel either way.
- *
- * Every open starts at the collapsed summary, including one coming back from
- * having stepped aside — see parkPanels.
+ * The one panel a left click (or 📊) opens, and it opens whole: the session's
+ * state, what the agent is doing right now, the model, how full the context
+ * is — and under that one bar per allowance the account is tracked against,
+ * straight from src/usage.js. One state. It used to open as a summary with a
+ * ▾ that grew it into the chart, so the bars you came for were always a
+ * second click away and a parked panel came back folded.
  */
 async function showUsage() {
   const data = await window.clippyAPI.usage();
@@ -1249,9 +1228,6 @@ async function showUsage() {
   petEl.classList.add('hidden');
   qcardEl.classList.add('hidden');
   menuEl.classList.add('hidden');
-
-  usageExpanded = false;
-  applyUsageExpansion();
 
   latestRecap = data.recap || '';
   if (session?.model && session.model !== me.model) {
@@ -1281,31 +1257,47 @@ async function showUsage() {
     usageContext.textContent = 'no transcript for this session yet';
   }
 
-  // Cached input dwarfs everything else (it's re-read every turn), so every bar
-  // counts total-with-cache — the same thing the plan's allowance is spent on.
-  const week = windows && windows.week;
-  const weekTotal = week ? allTokens(week.totals) : 0;
   usageBars.replaceChildren();
 
-  if (data.official && data.official.limits && data.official.limits.length) {
-    renderOfficialBars(data.official, now);
-  } else {
-    renderMeasuredBars(data, windows, week, weekTotal, now);
+  // Every agent on this machine gets its own run of bars, this buddy's own
+  // agent first. Main sends them as `accounts`; the sandbox and an older main
+  // send one agent's worth at the top level, which reads as one account.
+  const accounts =
+    data.accounts && data.accounts.length
+      ? data.accounts
+      : [{ agent: data.agent, title: AGENT_TITLES[data.agent] || data.agent, official: data.official, windows }];
+  const notes = [];
+  for (const account of accounts) {
+    // With one account the heading is just what the bars are; with more, it
+    // also says whose they are.
+    const prefix = accounts.length > 1 ? `${account.title} · ` : '';
+    const hasOfficial = account.official && account.official.limits && account.official.limits.length;
+    notes.push(hasOfficial ? renderOfficialBars(account, prefix, now) : renderMeasuredBars(account, prefix, now));
   }
+  usageNote.textContent = notes.join(' ');
 
   usageEl.classList.remove('hidden');
   syncMode();
 }
 
+const AGENT_TITLES = { claude: 'Claude Code', codex: 'Codex', openclaw: 'OpenClaw' };
+
 /**
- * The real thing, kept simple: what's LEFT of each limit, straight from
- * Claude Code's own cached /usage numbers. The 5-hour block is the near-term
- * row, the week rows carry the total and whichever model the plan counts on
- * its own. Nothing else — this is a glance, not a report.
+ * The real thing, kept simple: what's LEFT of each limit, straight from the
+ * agent's own numbers — the /usage answer Claude Code caches, the rate limits
+ * Codex stamps on its rollouts. The 5-hour block is the near-term row, the
+ * week rows carry the total and whichever model the plan counts on its own.
+ * Nothing else — this is a glance, not a report. Returns the line for the
+ * note under the bars, so several accounts can share the one note.
  */
-function renderOfficialBars(official, now) {
+function renderOfficialBars(account, prefix, now) {
+  const { official } = account;
+  const codex = account.agent === 'codex';
   const age = now - (official.fetchedAtMs || 0);
   const fetched = official.fetchedAtMs ? clockOf(official.fetchedAtMs, now) : 'some time ago';
+  // Two blocks read as one otherwise: the bar above is this session's context
+  // window, these are the account's allowances. A heading says which is which.
+  usageBars.append(groupHead(`${prefix}plan allowance`));
   for (const limit of official.limits) {
     const left = Math.max(0, 100 - limit.percent);
     const resets = limit.resetsAt ? `resets ${clockOf(limit.resetsAt, now)}` : '';
@@ -1313,28 +1305,42 @@ function renderOfficialBars(official, now) {
       bar(limit.label, `${left}% left`, Math.min(1, limit.percent / 100), {
         sub: resets,
         tone: limit.percent >= 85 || limit.severity !== 'normal' ? 'hot' : limit.percent >= 60 ? 'warn' : '',
-        hint:
-          `${limit.percent}% of this limit used — Claude Code's own number, cached when ` +
-          `/usage last loaded (${fetched}).`,
+        hint: codex
+          ? `${limit.percent}% of this limit used — Codex's own number, from the rate limits it ` +
+            `wrote down with its last turn (${fetched}).`
+          : `${limit.percent}% of this limit used — Claude Code's own number, cached when ` +
+            `/usage last loaded (${fetched}).`,
       })
     );
   }
-  usageNote.textContent =
-    `From /usage, cached ${fetched}` +
-    `${age > 6 * 60 * 60 * 1000 ? ' — getting stale: open /usage in any session to refresh' : ''}.`;
+  const who = prefix ? `${account.title}: ` : '';
+  if (codex) {
+    const plan = official.plan ? ` (${official.plan} plan)` : '';
+    return `${who}from Codex's last turn, ${fetched}${plan}.`;
+  }
+  return (
+    `${who}from /usage, cached ${fetched}` +
+    `${age > 6 * 60 * 60 * 1000 ? ' — getting stale: open /usage in any session to refresh' : ''}.`
+  );
 }
 
 /**
  * The measured-spend fallback: per-window bars from the transcripts, then
  * where it went by model. The note must never fudge whose number the bars
- * are — measured spend, not an allowance.
+ * are — measured spend, not an allowance. Returns the note line.
  */
-function renderMeasuredBars(data, windows, week, weekTotal, now) {
-  const rows = data.agent === 'codex' ? WINDOWS.filter((row) => row.key !== 'weekOpus') : WINDOWS;
+function renderMeasuredBars(account, prefix, now) {
+  const { agent, windows } = account;
+  // Cached input dwarfs everything else (it's re-read every turn), so every bar
+  // counts total-with-cache — the same thing the plan's allowance is spent on.
+  const week = windows && windows.week;
+  const weekTotal = week ? allTokens(week.totals) : 0;
+  const rows = agent === 'codex' ? WINDOWS.filter((row) => row.key !== 'weekOpus') : WINDOWS;
+  usageBars.append(groupHead(`${prefix}measured spend`));
   for (const row of rows) {
     const win = windows && windows[row.key];
     if (!win) continue;
-    usageBars.append(windowBar(row, win, weekTotal, now, data.agent));
+    usageBars.append(windowBar(row, win, weekTotal, now, agent));
   }
 
   const models = Object.entries((week && week.byModel) || {})
@@ -1342,10 +1348,7 @@ function renderMeasuredBars(data, windows, week, weekTotal, now) {
     .sort((a, b) => b[1] - a[1])
     .slice(0, 3);
   if (models.length) {
-    const head = document.createElement('div');
-    head.className = 'ubar-group';
-    head.textContent = 'by model, last 7 days';
-    usageBars.append(head);
+    usageBars.append(groupHead(`${prefix}by model, last 7 days`));
     for (const [model, spent] of models) {
       usageBars.append(
         bar(shortModel(model), fmtTokens(spent), weekTotal > 0 ? spent / weekTotal : 0, {
@@ -1356,30 +1359,30 @@ function renderMeasuredBars(data, windows, week, weekTotal, now) {
     }
   }
 
-  usageNote.textContent = data.agent === 'codex'
-    ? 'Measured from local Codex rollout transcripts. These are token totals, not your remaining account allowance.'
-    : 'Bars are shares of the last 7 days — measured spend, not an allowance. Run /usage in ' +
-      'Claude Code once and Clippy picks up the real percentages it caches, no setup needed.';
+  const who = prefix ? `${account.title}: ` : '';
+  return agent === 'codex'
+    ? `${who}measured from local Codex rollouts — token totals, not what's left of the plan.`
+    : `${who}bars are shares of the last 7 days — measured spend, not an allowance. Run /usage in ` +
+        'Claude Code once and Clippy picks up the real percentages it caches, no setup needed.';
+}
+
+// A small uppercase heading over a run of bars, so two kinds of number in one
+// column never read as one list.
+function groupHead(text) {
+  const head = document.createElement('div');
+  head.className = 'ubar-group';
+  head.textContent = text;
+  return head;
 }
 
 function hideUsage() {
   parkedPanel = null; // an explicit close is not a parking — nothing comes back
-  usageExpanded = false; // the next open starts at the summary again
   usageEl.classList.add('hidden');
   syncMode();
 }
 
-// Same window, grown or shrunk — the bars were rendered when the panel opened,
-// so this only reveals or hides them and asks main for the window that fits.
-// Never a second panel.
-btnUsageSize.addEventListener('click', () => {
-  usageExpanded = !usageExpanded;
-  applyUsageExpansion();
-  syncMode();
-});
-
 /* ---------- Talking to the pet ----------
-   The 💬 button under the buddy. Everything else in this window talks to the
+   Everything else in this window talks to the
    coding session; this talks to the animal sitting on top of it, and main
    keeps the two apart (src/pet-chat.js). */
 
@@ -1623,11 +1626,6 @@ function hidePet() {
   parkedPanel = null;
   petEl.classList.add('hidden');
   syncMode();
-}
-
-function togglePet() {
-  if (petEl.classList.contains('hidden')) showPet();
-  else hidePet();
 }
 
 /**
@@ -1900,12 +1898,12 @@ petChip.addEventListener('click', () => {
 });
 document.getElementById('feed-close').addEventListener('click', hideFeed);
 /**
- * The action bar under the buddy.
+ * The action bar under the buddy: context, the log (only for a session Clippy
+ * started) and hide. Icons only, one state.
  *
- * Each of these was already reachable — two as floating word-buttons that a
- * panel would adopt as its footer, the rest only by knowing to right-click. The
- * bar is the one surface now; the context menu stays as a shortcut for people
- * who already reach for it, and both drive the same functions.
+ * Chat and settings used to sit here too. Settings stays in the right-click
+ * menu (#menu-settings, below) and the menu-bar menu; the chat comes back on a
+ * click of the buddy when it was parked mid-conversation (primaryAction).
  *
  * stopPropagation throughout: a click that reaches the buddy underneath would
  * also run primaryAction and open something else on top of what was just asked
@@ -1917,7 +1915,6 @@ const onAction = (id, run) =>
     run();
   });
 
-onAction('btn-chat', togglePet);
 onAction('btn-stats', () => {
   if (usageEl.classList.contains('hidden')) showUsage();
   else hideUsage();
@@ -1926,7 +1923,6 @@ onAction('btn-messages', () => {
   if (feedEl.classList.contains('hidden')) showFeed();
   else hideFeed();
 });
-onAction('btn-settings', () => window.clippyAPI.openSettings());
 
 /* ---------- Drive mode panel (Clippy-driven Agent SDK session) ---------- */
 
@@ -2103,7 +2099,6 @@ function showNextRequest(id = null) {
   const isApproval = next.type === 'approval';
   const isAnswer = next.type === 'answer';
   const isReview = next.type === 'review';
-  const isFailure = next.type === 'failure';
   const isPlan = next.variant === 'plan';
   // A plan is a page, not a blurb: the card grows (clippy.css) and syncMode
   // asks main for a window wide and tall enough to read it in.
@@ -2115,16 +2110,12 @@ function showNextRequest(id = null) {
   // session that window heard from most recently.
   if (next.source) source = { ...source, ...next.source };
   applySource();
-  const closeTip =
-    isReview || isFailure
-      ? 'Close'
-      : `Close — ${there(next)} will ask you there instead`;
+  const closeTip = isReview ? 'Close' : `Close — ${there(next)} will ask you there instead`;
   btnCardX.dataset.tooltip = closeTip;
   btnCardX.setAttribute('aria-label', closeTip);
   paintWhere(next);
   cardTitle.textContent = isReview ? `${next.agentName || 'Claude'} Finished` : next.title;
   cardEl.classList.toggle('review', isReview);
-  cardEl.classList.toggle('failure', isFailure);
 
   // Answerable multiple-choice question — option buttons. The answer is fed
   // straight back to the agent (Claude: updatedInput.answers; Codex: the
@@ -2163,11 +2154,11 @@ function showNextRequest(id = null) {
   cardPromptPreview.textContent = promptShown;
   cardPromptRow.classList.toggle('hidden', !promptShown);
   cardResponseLabel.classList.toggle('hidden', !isReview);
-  const shown = summarise(next.detail || '', isReview ? 150 : isFailure ? 180 : 220);
+  const shown = summarise(next.detail || '', isReview ? 150 : 220);
   if (isReview) cardDetail.textContent = shown.replace(/\s+/g, ' ');
   else setMarkdown(cardDetail, shown);
   cardDetail.classList.toggle('hidden', !shown);
-  cardMore.textContent = isReview || isFailure ? 'Read' : 'read it all ↗';
+  cardMore.textContent = isReview ? 'Read' : 'read it all ↗';
   offerTheRest({ ...next, truncated: next.truncated || shown !== (next.detail || '') });
   cardInput.value = next.draft || '';
   cardInput.placeholder = isPlan
@@ -2182,8 +2173,8 @@ function showNextRequest(id = null) {
   btnAllow.classList.toggle('hidden', !isApproval);
   btnDeny.classList.toggle('hidden', !isApproval);
   btnPass.classList.toggle('hidden', !isApproval || next.noPass); // Drive has no terminal
-  btnGood.classList.toggle('hidden', isApproval || isFailure);
-  btnFeedback.classList.toggle('hidden', isApproval || isFailure);
+  btnGood.classList.toggle('hidden', isApproval);
+  btnFeedback.classList.toggle('hidden', isApproval);
   // On a review card the first click on "Send feedback" opens the box, so the
   // button starts enabled; once the box is open it disables until there's text.
   btnFeedback.disabled = false;
@@ -2212,7 +2203,7 @@ function showNextRequest(id = null) {
 function offerTheRest(req) {
   // A finished-response card is deliberately only one line. Reading is always
   // available beside it, even when the complete answer happened to be short.
-  if (req.type === 'review' || req.type === 'failure') {
+  if (req.type === 'review') {
     cardMore.classList.toggle('hidden', !req.detail);
     return;
   }
@@ -2249,10 +2240,6 @@ cardMore.addEventListener('click', () => {
   // page, and a page wants a window.
   const req = requests.get(activeRequestId);
   if (req) {
-    if (req.type === 'failure') {
-      window.clippyAPI.openActivityReader(req.title || 'Failure details', req.detail || req.title);
-      return;
-    }
     window.clippyAPI.openReader(req.id, {
       title: req.title,
       prompt: req.prompt || '',
@@ -2340,22 +2327,14 @@ function answersComplete() {
   return Object.values(answerState).every((v) => (Array.isArray(v) ? v.length > 0 : v != null));
 }
 
-const DEED_WORDS = {
-  allow: 'allowed',
-  deny: 'denied',
-  pass: 'handed back',
-  dismiss: 'waved away',
-  answer: 'answered',
-  feedback: 'sent feedback on',
-  ok: 'signed off',
-};
-
 function decide(action, message = '') {
   if (!activeRequestId) return;
   const req = requests.get(activeRequestId);
   if (req) {
-    const what = req.type === 'review' ? 'the last turn' : req.title || 'a request';
-    noteDeed(`${DEED_WORDS[action] || action} ${what}`, { who: req.name });
+    // The words live in deeds.js: a signed-off turn is named by what it
+    // ended with, and its reader page says what happened, not just "signed off".
+    const deed = ClippyDeeds.deedFor(action, req, message);
+    noteDeed(deed.text, { who: req.name, key: deed.key, detail: deed.detail });
   }
   window.clippyAPI.decide(activeRequestId, action, message);
   const queue = [...requests.keys()];
@@ -2425,12 +2404,7 @@ window.clippyAPI.onIdentity((id) => {
   applyIdentity();
 });
 
-const APPEARS_FOR = new Set(['attention', 'approval', 'answer', 'question', 'review', 'failure']);
-
 function handleEvent(evt) {
-  // Something new to look at starts the clock again: the user has to click
-  // Clippy before a click elsewhere can put this one away.
-  if (APPEARS_FOR.has(evt.kind)) engaged = false;
   if (evt.status) myStatus = evt.status;
   if (evt.agent && evt.agent !== me.agent) {
     me.agent = evt.agent;
@@ -2455,9 +2429,11 @@ function handleEvent(evt) {
     case 'review': {
       if (evt.kind === 'review') {
         // The turn ending is worth remembering whether or not the card is
-        // ever answered — it is the "we completed this" line.
-        const said = (evt.message || '').replace(/^.*? finished:?\s*/i, '').trim();
-        noteDeed(said ? `finished: ${said.slice(0, 70)}` : 'finished a turn', { who: evt.name });
+        // ever answered — it is the "we completed this" line. Keyed to the
+        // turn, so signing the card off later replaces this entry rather
+        // than adding a second one about the same turn.
+        const deed = ClippyDeeds.reviewArrivalDeed(evt);
+        noteDeed(deed.text, { who: evt.name, key: deed.key, detail: deed.detail });
       }
       // A review card carries no deadline (expiresAt 0): the hook was already
       // answered, so the card can wait for as long as the user does.
@@ -2483,27 +2459,6 @@ function handleEvent(evt) {
       });
       if (!activeRequestId) showNextRequest();
       else showQueueDepth(); // another one queued behind the open card
-      break;
-    }
-    case 'failure': {
-      const activity = evt.activity || {};
-      showActivity(evt.name, activity);
-      const id = evt.requestId || `failure-${evt.sessionId || 'session'}-${Date.now()}`;
-      requests.set(id, {
-        id,
-        type: 'failure',
-        name: evt.name,
-        sessionId: evt.sessionId || '',
-        agentName: evt.agentName || '',
-        source: evt.source || null,
-        color: evt.color || me.color,
-        title: evt.title || `${activity.tool || 'Tool'} failed`,
-        detail: evt.detail || activity.error || evt.message || activity.label || 'The tool failed.',
-        expiresAt: 0,
-        holdMs: 1,
-      });
-      if (!activeRequestId) showNextRequest(id);
-      else showQueueDepth();
       break;
     }
     case 'answer': {
@@ -2544,8 +2499,20 @@ function handleEvent(evt) {
       driveActivity.textContent = `⚙ ${evt.label || ''}`;
       driveActivity.classList.toggle('hidden', !evt.label);
       break;
-    case 'activity': {
-      showActivity(evt.name, evt.activity);
+    case 'activity':
+    case 'failure': {
+      // A failed tool is ambient — the agent sees the error and usually
+      // carries on — so it only turns the activity line red (⚠). It is still
+      // worth finding later, so it goes in the activity log without popping
+      // anything up. 'failure' is what an older main sent for the same thing.
+      const activity = evt.activity;
+      showActivity(evt.name, activity);
+      if (activity && activity.ok === false && activity.state === 'done') {
+        // The same failure again folds into the line above (recordDeed
+        // counts it) rather than filling the log with repeats.
+        const text = `⚠ ${activity.tool || 'tool'} failed — ${activity.error || activity.label || ''}`.trim();
+        noteDeed(text, { who: evt.name });
+      }
       break;
     }
     case 'can-open': {
@@ -2881,12 +2848,6 @@ btnCardX.addEventListener('click', () => {
   const req = requests.get(activeRequestId);
   if (!req) return;
   if (req.type === 'review') return decide('ok');
-  if (req.type === 'failure') {
-    requests.delete(activeRequestId);
-    showNextRequest();
-    render();
-    return window.clippyAPI.hide();
-  }
   // An answerable question is waved away; an approval is passed back. Both end
   // up as {} on the wire — the agent asks for itself.
   decide(req.type === 'answer' ? 'dismiss' : 'pass');
@@ -2963,9 +2924,8 @@ function syncComposing(el, box) {
 /**
  * What a plain click should just do, no menu in the way: a message you haven't
  * seen yet wins (it's why the buddy is bouncing), otherwise the session's
- * status summary opens — "how is this session doing?", with ▾ for the
- * spend and a box to type the next prompt into. Everything else is a
- * right-click away.
+ * usage panel opens whole — "how is this session doing?", context and the
+ * account's allowances in one look. Everything else is a right-click away.
  */
 const CLICK_ACK_MS = 900;
 function primaryAction() {
@@ -2979,7 +2939,7 @@ function primaryAction() {
   // quietly swap it for something else. It used to: a waiting message won this
   // race, the bubble took the panel's place, and a half-typed sentence went
   // with it — you clicked the animal you were talking to and it changed the
-  // subject. Clicking him now closes the chat, the same way 💬 does, and
+  // subject. Clicking him now closes the chat, the same way its (x) does, and
   // mid-sentence it stays put — the rule parking already follows.
   if (!petEl.classList.contains('hidden')) {
     if (petInput.value.trim() || petThinking) return;
@@ -3117,7 +3077,8 @@ document.addEventListener('click', (e) => {
 
 // Clicking a different window entirely (the terminal, another app) never
 // reaches the listener above — it's a separate native window and no DOM click
-// happens here at all. Losing focus is the one signal that covers that case.
+// happens here at all. Losing focus is the one signal that covers that case,
+// and all it does is park the panel: see the blur listener below.
 /* ---------- Parking: the panel steps aside when you do ----------
    Move the mouse away (or click into another window) and whatever's open over
    the buddy's head — the info panel or the menu — hides. Clicking the buddy
@@ -3142,10 +3103,6 @@ function parkPanels() {
   if (!usageEl.classList.contains('hidden')) {
     usageEl.classList.add('hidden');
     parkedPanel = 'usage';
-    // Stepping aside folds it: you looked away, so the next look starts at the
-    // summary rather than dropping you back into the bars and the composer.
-    usageExpanded = false;
-    applyUsageExpansion();
     syncMode();
   } else if (!petEl.classList.contains('hidden')) {
     petEl.classList.add('hidden');
@@ -3171,34 +3128,10 @@ document.documentElement.addEventListener('mouseleave', () => {
   clearTimeout(parkTimer);
   parkTimer = setTimeout(parkPanels, 250);
 });
-/* ---------- Looking away: a click elsewhere puts Clippy away, once you have
-   clicked it. Clippy pops up while you are doing something else, and the next
-   click you make — on whatever you were doing — used to be the one that took
-   it off the screen, before you had read it. So a click outside only counts
-   after a click on Clippy. A held approval or question stays regardless: the
-   agent is waiting on it, and the reminder brings it back if it is hidden. */
-const holdingDecision = () => {
-  const req = requests.get(activeRequestId);
-  return Boolean(req) && (req.type === 'approval' || req.type === 'answer');
-};
-
-document.addEventListener(
-  'mousedown',
-  () => {
-    engaged = true;
-  },
-  true
-);
-
-window.addEventListener('blur', () => {
-  parkPanels();
-  if (!engaged || document.hidden || holdingDecision()) return;
-  window.clippyAPI.hide({ lookedAway: true });
-});
-
-document.addEventListener('visibilitychange', () => {
-  if (!document.hidden) engaged = false; // shown again: back to square one
-});
+// Clicking into another window only folds an open panel (usage, chat, menu),
+// the way moving the mouse away does. It never hides Clippy: nothing but the
+// card's ✕, the menu's Hide, the tray, or an answered card puts him away.
+window.addEventListener('blur', parkPanels);
 
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {

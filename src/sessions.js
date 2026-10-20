@@ -79,22 +79,6 @@ class SessionTracker {
   }
 
   /**
-   * A tool that failed.
-   *
-   * Two hook shapes arrive here — Claude's PostToolUseFailure and a Codex
-   * PostToolUse carrying a non-zero exit — and both end up as the same card,
-   * so the headline, the title and the complete output the reader opens are
-   * decided once. `detail` falls back to the headline when the hook sent
-   * nothing quotable.
-   */
-  _failed(s, tool, detail) {
-    const reaction = this._reaction('failure', 'normal', s, `${tool} failed in “${s.name}”.`);
-    reaction.title = `${tool} failed`;
-    reaction.detail = detail || reaction.message;
-    return reaction;
-  }
-
-  /**
    * The part every tool hook says the same way: this session is working, on
    * this tool, doing this. Only what became of the tool call differs.
    */
@@ -185,6 +169,11 @@ class SessionTracker {
       case 'PostToolUse': {
         // Claude has a separate failure event; Codex sends PostToolUse even for
         // a non-zero shell exit. Accept both shapes without inventing success.
+        //
+        // A tool that failed is still ambient: the agent has the error text in
+        // front of it and normally retries or adapts, so a non-zero exit is
+        // part of a working session, not a message for the user. It shows as
+        // a red ⚠ on the activity line and never as a card or a popup.
         const response = payload.tool_response;
         const exitCode = response && typeof response === 'object'
           ? response.exit_code ?? response.metadata?.exit_code ?? response.structuredContent?.exit_code
@@ -194,21 +183,24 @@ class SessionTracker {
           !response?.is_error &&
           !response?.isError &&
           (exitCode === undefined || exitCode === 0);
-        const tool = this._tooling(s, payload, 'done', ok);
-        if (ok) return this._reaction('activity', 'low', s, '');
-        const raw = typeof response === 'string' ? response : response ? JSON.stringify(response) : '';
-        return this._failed(s, tool, raw);
+        this._tooling(s, payload, 'done', ok);
+        if (!ok) {
+          s.activity.error = firstLine(
+            typeof response === 'string' ? response : response?.error || response?.stderr || ''
+          );
+        }
+        return this._reaction('activity', 'low', s, '');
       }
 
       case 'PostToolUseFailure': {
         // The tool actually failed (non-zero exit, error thrown, …) — payload
         // carries `error`. An interrupt is the user hitting esc, not a failure,
-        // so it gets a plain "done" rather than a ⚠.
+        // so it gets a plain "done" rather than a ⚠. Either way it is ambient
+        // (see PostToolUse): the activity line turns red, nothing pops up.
         const interrupted = payload.is_interrupt === true;
-        const tool = this._tooling(s, payload, 'done', interrupted);
+        this._tooling(s, payload, 'done', interrupted);
         s.activity.error = interrupted ? '' : firstLine(payload.error);
-        if (interrupted) return this._reaction('activity', 'low', s, '');
-        return this._failed(s, tool, String(payload.error || '').slice(0, 4000));
+        return this._reaction('activity', 'low', s, '');
       }
 
       case 'SubagentStart': {
