@@ -40,6 +40,10 @@
  * that suit them. Rows you never name still show up in the settings window, so
  * you can look through a sheet and come back for them.
  *
+ * A frame count is a most: the sheet is read and a pose plays only the frames
+ * its row actually draws, so a pet with four idle frames does not blink out
+ * for two of every six.
+ *
  * Any pose flag takes a third field to override the pack's facing for that one
  * animation, because sheets are not consistent with themselves:
  *
@@ -51,6 +55,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
+const zlib = require('node:zlib');
 const execFileAsync = promisify(execFile);
 const { userThemesDir, POSES } = require('../src/characters');
 
@@ -62,6 +67,9 @@ const { userThemesDir, POSES } = require('../src/characters');
 const CATALOG_URL = 'https://openpets.dev/pets/catalog.v3.json';
 // The catalog's own installer caps downloads at 50MB; same bar here.
 const MAX_ZIP_BYTES = 50 * 1024 * 1024;
+
+// The two poses every pack gets without being asked.
+const GRID_POSES = { idle: '0:6', excited: '3:4' };
 
 const args = process.argv.slice(2);
 const flag = (name, fallback) => {
@@ -119,6 +127,146 @@ function imageSize(file) {
   }
 
   throw new Error(`${path.basename(file)}: only PNG and WebP sheets are understood`);
+}
+
+/**
+ * Each pixel's alpha, from a PNG, as one byte per pixel — enough to tell a
+ * drawn frame from an empty one without pulling in an image library. Handles
+ * what sheets are saved as (and what `sips` writes): 8- or 16-bit, any colour
+ * type, not interlaced. Anything else throws, and the caller goes without.
+ *
+ * @param {Buffer} buf  the whole file
+ * @returns {{ width: number, height: number, alpha: Uint8Array }}
+ */
+function pngAlpha(buf) {
+  if (!buf.slice(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) {
+    throw new Error('not a PNG');
+  }
+  let header = null;
+  let transparent = null; // tRNS: palette alphas, or the one colour that is see-through
+  const idat = [];
+  for (let at = 8; at + 8 <= buf.length; ) {
+    const length = buf.readUInt32BE(at);
+    const type = buf.toString('ascii', at + 4, at + 8);
+    const data = buf.subarray(at + 8, at + 8 + length);
+    if (type === 'IHDR') {
+      header = {
+        width: data.readUInt32BE(0),
+        height: data.readUInt32BE(4),
+        depth: data[8],
+        colour: data[9],
+        interlace: data[12],
+      };
+    } else if (type === 'tRNS') transparent = Buffer.from(data);
+    else if (type === 'IDAT') idat.push(data);
+    else if (type === 'IEND') break;
+    at += 12 + length;
+  }
+  if (!header) throw new Error('a PNG without a header');
+  const { width, height, depth, colour, interlace } = header;
+  const channels = { 0: 1, 2: 3, 3: 1, 4: 2, 6: 4 }[colour];
+  if (!channels || interlace || !(depth === 8 || (depth === 16 && colour !== 3))) {
+    throw new Error(`a ${depth}-bit colour-type-${colour}${interlace ? ' interlaced' : ''} PNG`);
+  }
+  // A frame-sized buffer per row of the sheet is fine; a 50MB bomb is not.
+  if (width * height > 64 * 1024 * 1024) throw new Error(`a ${width}x${height} PNG is too big to read`);
+
+  const bpp = (channels * depth) / 8;
+  const stride = width * bpp;
+  const raw = zlib.inflateSync(Buffer.concat(idat));
+  if (raw.length < (stride + 1) * height) throw new Error('a PNG cut short');
+
+  // tRNS keeps a grey or RGB key as 16-bit samples whatever the depth.
+  const key =
+    transparent && (colour === 0 || colour === 2) && transparent.length >= channels * 2
+      ? depth === 16
+        ? transparent.subarray(0, bpp)
+        : Buffer.from(Array.from({ length: channels }, (_, c) => transparent[c * 2 + 1]))
+      : null;
+  const alpha = new Uint8Array(width * height);
+  let prev = Buffer.alloc(stride);
+  let line = Buffer.alloc(stride);
+  for (let y = 0; y < height; y++) {
+    const start = y * (stride + 1);
+    const filter = raw[start];
+    for (let x = 0; x < stride; x++) {
+      const value = raw[start + 1 + x];
+      const left = x >= bpp ? line[x - bpp] : 0;
+      const up = prev[x];
+      const corner = x >= bpp ? prev[x - bpp] : 0;
+      let predicted = 0;
+      if (filter === 1) predicted = left;
+      else if (filter === 2) predicted = up;
+      else if (filter === 3) predicted = (left + up) >> 1;
+      else if (filter === 4) {
+        const p = left + up - corner;
+        const pa = Math.abs(p - left);
+        const pb = Math.abs(p - up);
+        const pc = Math.abs(p - corner);
+        predicted = pa <= pb && pa <= pc ? left : pb <= pc ? up : corner;
+      } else if (filter !== 0) throw new Error(`a PNG row with filter ${filter}`);
+      line[x] = (value + predicted) & 0xff;
+    }
+    for (let x = 0; x < width; x++) {
+      const px = x * bpp;
+      let a = 255;
+      if (colour === 6 || colour === 4) a = line[px + bpp - depth / 8];
+      else if (colour === 3) a = transparent && line[px] < transparent.length ? transparent[line[px]] : 255;
+      // Grey or RGB keyed out by tRNS: that one colour is clear, every other opaque.
+      else if (key && line.subarray(px, px + bpp).equals(key)) a = 0;
+      alpha[y * width + x] = a;
+    }
+    [prev, line] = [line, prev];
+  }
+  return { width, height, alpha };
+}
+
+/**
+ * How many frames each row of a sheet draws: the run of cells from the left
+ * with anything opaque in them, stopping at the first empty one (as the
+ * board's idle strips do). Pure.
+ *
+ * @returns {number[]} one count per row
+ */
+function drawnFrames({ width, height, alpha }, columns, rows) {
+  const cellWidth = Math.floor(width / columns);
+  const cellHeight = Math.floor(height / rows);
+  const drawn = (row, column) => {
+    for (let y = row * cellHeight; y < (row + 1) * cellHeight; y++) {
+      const from = y * width + column * cellWidth;
+      for (let x = from; x < from + cellWidth; x++) if (alpha[x]) return true;
+    }
+    return false;
+  };
+  return Array.from({ length: rows }, (_, row) => {
+    let count = 0;
+    while (count < columns && drawn(row, count)) count++;
+    return count;
+  });
+}
+
+/**
+ * `drawnFrames` for a sheet on disk, or null when it cannot be read — then
+ * every pose keeps the count it was given, as before this looked. A WebP (what
+ * OpenPets ships) is turned into a PNG by `sips`, which ships with macOS like
+ * the `ditto` that unpacked it.
+ */
+async function sheetRows(file, columns, rows) {
+  let tmp = null;
+  try {
+    let png = file;
+    if (!/\.png$/i.test(file)) {
+      tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'clippy-sheet-'));
+      png = path.join(tmp, 'sheet.png');
+      await execFileAsync('sips', ['-s', 'format', 'png', file, '--out', png]);
+    }
+    return drawnFrames(pngAlpha(fs.readFileSync(png)), columns, rows);
+  } catch (err) {
+    console.warn(`⚠ could not count the frames in ${path.basename(file)} (${err.message}) — keeping the counts given`);
+    return null;
+  } finally {
+    if (tmp) fs.rmSync(tmp, { recursive: true, force: true });
+  }
 }
 
 /**
@@ -265,7 +413,7 @@ async function installPack(src, opts = {}) {
   if (!fetched) return installFromFolder(path.resolve(src), opts);
   const { dir, tmp } = await fetchPack(src);
   try {
-    return installFromFolder(dir, opts);
+    return await installFromFolder(dir, opts);
   } finally {
     // Otherwise every install leaves the zip and its unpacked copy — up to
     // 100MB a go — sitting in the temp directory for the OS to deal with.
@@ -275,7 +423,7 @@ async function installPack(src, opts = {}) {
 
 /** The install proper, from a folder on disk. Packs zip up either flat or
  *  inside a folder of their own name, so look one level down for the pet.json. */
-function installFromFolder(from, opts) {
+async function installFromFolder(from, opts) {
   let dir = from;
   if (!fs.existsSync(path.join(dir, 'pet.json'))) {
     const nested = fs
@@ -322,10 +470,22 @@ function installFromFolder(from, opts) {
     );
   }
 
+  // What each row really draws, so a pose never steps onto empty cells: a
+  // pet with four idle frames would otherwise vanish for two of every six.
+  const drawn = await sheetRows(sheetFile, columns, rows);
   const poses = {};
   for (const name of POSES) {
-    const spec = opts[name] || (name === 'idle' ? '0:6' : name === 'excited' ? '3:4' : null);
-    if (spec) poses[name] = { file: sheetName, ...pose(spec, name) };
+    const spec = opts[name] || GRID_POSES[name];
+    if (!spec) continue;
+    const p = { file: sheetName, ...pose(spec, name) };
+    const count = drawn ? drawn[p.row] : undefined;
+    if (count === 0 && name !== 'idle') {
+      // An empty row is no animation: the pose falls back to excited or idle.
+      console.warn(`⚠ row ${p.row} draws nothing — no ${name} for this pack`);
+      continue;
+    }
+    if (count > 0 && count < p.frames) p.frames = count;
+    poses[name] = p;
   }
 
   const theme = {
@@ -382,4 +542,13 @@ if (require.main === module) {
   });
 }
 
-module.exports = { imageSize, packUrl, zipUrlFor, catalogPets, assertNoLinks, installPack };
+module.exports = {
+  imageSize,
+  packUrl,
+  zipUrlFor,
+  catalogPets,
+  assertNoLinks,
+  installPack,
+  pngAlpha,
+  drawnFrames,
+};

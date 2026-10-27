@@ -5,7 +5,79 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { zipUrlFor, catalogPets, assertNoLinks, installPack } = require('../scripts/add-sprite-pack');
+const zlib = require('node:zlib');
+const {
+  zipUrlFor,
+  catalogPets,
+  assertNoLinks,
+  installPack,
+  pngAlpha,
+  drawnFrames,
+} = require('../scripts/add-sprite-pack');
+
+/**
+ * A real RGBA PNG, every row run through filter `y % 5` so the decoder has to
+ * undo all five. CRCs are left zero: nothing here checks them.
+ */
+function encodePng(width, height, rgba) {
+  const stride = width * 4;
+  const rows = [];
+  for (let y = 0; y < height; y++) {
+    const filter = y % 5;
+    const line = rgba.subarray(y * stride, (y + 1) * stride);
+    const prev = y ? rgba.subarray((y - 1) * stride, y * stride) : Buffer.alloc(stride);
+    const out = Buffer.alloc(stride + 1);
+    out[0] = filter;
+    for (let x = 0; x < stride; x++) {
+      const left = x >= 4 ? line[x - 4] : 0;
+      const up = prev[x];
+      const corner = x >= 4 ? prev[x - 4] : 0;
+      const p = left + up - corner;
+      const paeth =
+        Math.abs(p - left) <= Math.abs(p - up) && Math.abs(p - left) <= Math.abs(p - corner)
+          ? left
+          : Math.abs(p - up) <= Math.abs(p - corner)
+            ? up
+            : corner;
+      const predicted = [0, left, up, (left + up) >> 1, paeth][filter];
+      out[x + 1] = (line[x] - predicted) & 0xff;
+    }
+    rows.push(out);
+  }
+  const chunk = (type, data) => {
+    const head = Buffer.alloc(8);
+    head.writeUInt32BE(data.length, 0);
+    head.write(type, 4, 'ascii');
+    return Buffer.concat([head, data, Buffer.alloc(4)]);
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8;
+  ihdr[9] = 6;
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk('IHDR', ihdr),
+    chunk('IDAT', zlib.deflateSync(Buffer.concat(rows))),
+    chunk('IEND', Buffer.alloc(0)),
+  ]);
+}
+
+/** An 8x9 sheet of 4x4 cells where row r draws `drawn[r]` frames from the left. */
+function sheet(drawn) {
+  const width = 8 * 4;
+  const height = 9 * 4;
+  const rgba = Buffer.alloc(width * height * 4);
+  drawn.forEach((count, row) => {
+    for (let column = 0; column < count; column++) {
+      // One opaque pixel in the cell's far corner is enough to be drawn.
+      const x = column * 4 + 3;
+      const y = row * 4 + 3;
+      rgba.fill(255, (y * width + x) * 4, (y * width + x) * 4 + 4);
+    }
+  });
+  return encodePng(width, height, rgba);
+}
 
 // A slice of the real catalog's shape: id, and a zip whose path carries the
 // gallery slug.
@@ -133,4 +205,52 @@ test('a catalog shape we do not recognise is empty, not a crash', async () => {
   assert.deepEqual(await catalogPets(null, boom), []);
   // A page that came back malformed costs its pets, not the whole install.
   assert.deepEqual(await catalogPets({ pages: ['a', 'b'] }, async (u) => (u === 'a' ? { pets: PETS } : null)), PETS);
+});
+
+test('a PNG’s alpha is read back through every row filter', () => {
+  const width = 7;
+  const height = 10;
+  const rgba = Buffer.alloc(width * height * 4);
+  for (let i = 0; i < rgba.length; i++) rgba[i] = (i * 37 + (i >> 3) * 11) & 0xff;
+  const { width: w, height: h, alpha } = pngAlpha(encodePng(width, height, rgba));
+  assert.equal(w, width);
+  assert.equal(h, height);
+  assert.deepEqual([...alpha], Array.from({ length: width * height }, (_, i) => rgba[i * 4 + 3]));
+  assert.throws(() => pngAlpha(Buffer.from('RIFF....WEBP')), /not a PNG/);
+});
+
+test('a row counts its drawn frames from the left, up to the first empty cell', () => {
+  const counts = [6, 8, 8, 4, 5, 8, 6, 6, 6];
+  assert.deepEqual(drawnFrames(pngAlpha(sheet(counts)), 8, 9), counts);
+  // A gap ends the animation: what comes after it is not played.
+  const gappy = pngAlpha(sheet([2, 0, 0, 0, 0, 0, 0, 0, 0]));
+  const x = 5 * 4 + 1; // something drawn in column 5 of row 0
+  gappy.alpha[1 * gappy.width + x] = 255;
+  assert.equal(drawnFrames(gappy, 8, 9)[0], 2);
+});
+
+test('a pose plays only the frames its row draws', async (t) => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'clippy-frames-'));
+  const before = process.env.CLIPPY_THEMES_DIR;
+  process.env.CLIPPY_THEMES_DIR = path.join(tmp, 'themes');
+  t.after(() => {
+    if (before == null) delete process.env.CLIPPY_THEMES_DIR;
+    else process.env.CLIPPY_THEMES_DIR = before;
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  // Four idle frames where the layout has room for six, and no jump at all.
+  const pack = path.join(tmp, 'nori-openpets');
+  fs.mkdirSync(pack);
+  fs.writeFileSync(path.join(pack, 'spritesheet.png'), sheet([4, 8, 8, 4, 0, 8, 6, 6, 6]));
+  fs.writeFileSync(path.join(pack, 'pet.json'), JSON.stringify({ id: 'nori', spritesheetPath: 'spritesheet.png' }));
+
+  const { theme } = await installPack(pack, { walk: '1:8', cheer: '4:5' });
+  const brief = Object.fromEntries(Object.entries(theme.poses).map(([name, p]) => [name, [p.row, p.frames]]));
+  assert.deepEqual(brief, {
+    idle: [0, 4], // not 6: two blank frames would flash
+    excited: [3, 4],
+    walk: [1, 8],
+    // cheer's row is empty, so there is no cheer and Clippy falls back
+  });
 });
