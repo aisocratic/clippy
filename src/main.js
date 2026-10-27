@@ -31,6 +31,7 @@ const { PetChat } = require('./pet-chat');
 const { checkDrift, checkCodexDrift, checkOpenclawDrift, installToFiles } = require('../bin/clippy-hooks');
 const { identityFor, petNameFor } = require('./identity');
 const { SIZES, sizeList, allCharacters, characterFor, sizeFor } = require('./characters');
+const { AthenaPets, athenaConfig } = require('./athena');
 const { windowActionFor } = require('./visibility');
 const { SOLO_KEY, sharesWindow, windowKeyFor, successorFor } = require('./buddy-mode');
 const { EDGE_OPTIONS, EDGE_IDS, edgeLineup, edgeHome } = require('./arrange');
@@ -111,6 +112,7 @@ const SWEEP_INTERVAL_MS = 60 * 1000;
 const tracker = new SessionTracker();
 const broker = new DecisionBroker({ hardCapMs: 100_000 });
 let drive = null; // the active Clippy-driven (Agent SDK) session, if any
+let athena = null; // Athena's pets for the sessions it runs (src/athena.js), when configured
 let tray = null;
 let trayTextFallback = false; // the icon failed to render; the 📎 title stands in
 // A card can only hold the hook for a short time. Keep its destination here
@@ -314,12 +316,21 @@ function sendSettings() {
   }
 }
 
-/** Re-cast every buddy — a project was given a buddy of its own. */
+/**
+ * A session's own face: the pet Athena gave its agent when Athena runs it,
+ * else the automatic pick. Never the shared buddy's — that is soloCharacter.
+ */
+function sessionCharacter(name, sessionId, used = []) {
+  return (athena && athena.petFor(sessionId)) || characterFor(settings, name, sessionId, used);
+}
+
+/** Re-cast every buddy — a project was given a buddy of its own, or Athena a pet. */
 function recast() {
   const usedByProject = new Map();
   for (const buddy of buddies.values()) {
     const used = usedByProject.get(buddy.name) || [];
-    buddy.character = characterFor(settings, buddy.name, buddy.sessionId, used);
+    buddy.character =
+      buddies.get(SOLO_KEY) === buddy ? soloCharacter() : sessionCharacter(buddy.name, buddy.sessionId, used);
     used.push(buddy.character);
     usedByProject.set(buddy.name, used);
   }
@@ -483,7 +494,10 @@ function settingsState() {
       agent: s.agent,
       color: identityFor(s.sessionId, s.name).color,
       status: s.status,
-      character: buddyOf(s.sessionId)?.character || characterFor(settings, s.name, s.sessionId),
+      character:
+        (athena && athena.petFor(s.sessionId)) ||
+        buddyOf(s.sessionId)?.character ||
+        characterFor(settings, s.name, s.sessionId),
       // The helpers this session has running, listed under it.
       subagents: (s.subagents || []).map((sub) => ({
         id: sub.id,
@@ -816,8 +830,7 @@ function buddyFor(key, name = '', agent = '', identityKey = key) {
     // buddy is cast against its siblings so two agents in one project differ.
     character: sharesWindow(key)
       ? soloCharacter()
-      : characterFor(
-          settings,
+      : sessionCharacter(
           identity.name,
           key,
           [...buddies.values()]
@@ -4290,6 +4303,23 @@ app.whenReady().then(async () => {
   // per run; the tray menu keeps the same action for later.
   if (hooksAbsent) offerHookInstall();
   setInterval(sweepStaleSessions, SWEEP_INTERVAL_MS).unref?.();
+  // The sessions Athena runs wear the pets it gave them (see src/athena.js).
+  const athenaAt = athenaConfig(app.getPath('userData'));
+  if (athenaAt) {
+    athena = new AthenaPets({
+      config: athenaAt,
+      installed: characterIds,
+      install: (id) => require('../scripts/add-sprite-pack').installPack(id),
+      live: () => tracker.list().map((s) => s.sessionId),
+      onChange: () => {
+        forgetFaces(); // an install is a new member of the cast
+        recast();
+        sendSettings();
+        pushSettingsState();
+      },
+    });
+    athena.start();
+  }
 
   ipcMain.handle('clippy-context', async (e) => {
     const buddy = buddyForSender(e.sender);
@@ -4750,7 +4780,7 @@ app.whenReady().then(async () => {
         // `buddies.get`, not `buddyOf`: the latter falls back to the shared
         // window, which would report the manager's face for every agent and
         // make them all look identical in the one place they must not.
-        character: buddies.get(s.sessionId)?.character || characterFor(settings, s.name, s.sessionId),
+        character: buddies.get(s.sessionId)?.character || sessionCharacter(s.name, s.sessionId),
         color: identityFor(s.sessionId, s.name).color,
         // Typing at an agent needs somewhere to type: a tmux pane we own, or a
         // terminal window we can find.
