@@ -29,16 +29,19 @@
  *   --idle R:F       row and frame count for the calm animation (default 0:6)
  *   --excited R:F    …and for the excited one (default 3:4)
  *   --walk R:F       …the walk, played while the buddy crosses a window
+ *                    (default 1:8:right on an 8x9 sheet)
  *   --point R:F      …standing at a prompt, pointing at it
- *   --sleep R:F      …nothing happening for a while
- *   --cheer R:F      …a turn finished cleanly
+ *   --sleep R:F      …nothing happening for a while (default 6:6 on 8x9)
+ *   --cheer R:F      …a turn finished cleanly (default 4:5 on 8x9)
  *   --fps N          frames per second (default 6)
  *   --facing DIR     which way the art is drawn: left, right (default), or
  *                    center for art that looks straight out of the screen
  *
- * Only idle and excited have defaults; name the others if the pack has rows
- * that suit them. Rows you never name still show up in the settings window, so
- * you can look through a sheet and come back for them.
+ * Idle and excited always have defaults, and an 8x9 sheet — the OpenPets
+ * layout, see OPENPETS_POSES — gets a walk, a sleep and a cheer too; name the
+ * others if the pack has rows that suit them. Rows you never name still show
+ * up in the settings window, so you can look through a sheet and come back for
+ * them.
  *
  * A frame count is a most: the sheet is read and a pose plays only the frames
  * its row actually draws, so a pet with four idle frames does not blink out
@@ -68,7 +71,22 @@ const CATALOG_URL = 'https://openpets.dev/pets/catalog.v3.json';
 // The catalog's own installer caps downloads at 50MB; same bar here.
 const MAX_ZIP_BYTES = 50 * 1024 * 1024;
 
-// The two poses every pack gets without being asked.
+/**
+ * The OpenPets sheet (the Codex pet atlas it grew out of): 8 columns by 9
+ * rows, one state per row —
+ *
+ *   0 idle (6)   1 running-right (8)   2 running-left (8)   3 waving (4)
+ *   4 jumping (5)   5 failed (8)   6 waiting (6)   7 running (6)   8 review (6)
+ *
+ * — mapped onto Clippy's poses the way OpenPets maps its own reactions
+ * (success and celebrating jump). The walk is the right-running row, said so,
+ * because Clippy mirrors a walk to turn it around and must know which way it
+ * runs whatever the rest of the pack faces. Sleep is the turn being over and
+ * Clippy waiting on you, so it is the waiting row: row 5 lies down in some
+ * packs, but it is OpenPets' "failed", and in others it cries.
+ */
+const OPENPETS_POSES = { idle: '0:6', excited: '3:4', walk: '1:8:right', sleep: '6:6', cheer: '4:5' };
+// Any other grid is a sheet we know nothing about: only the two every pack needs.
 const GRID_POSES = { idle: '0:6', excited: '3:4' };
 
 const args = process.argv.slice(2);
@@ -473,9 +491,10 @@ async function installFromFolder(from, opts) {
   // What each row really draws, so a pose never steps onto empty cells: a
   // pet with four idle frames would otherwise vanish for two of every six.
   const drawn = await sheetRows(sheetFile, columns, rows);
+  const defaults = columns === 8 && rows === 9 ? OPENPETS_POSES : GRID_POSES;
   const poses = {};
   for (const name of POSES) {
-    const spec = opts[name] || GRID_POSES[name];
+    const spec = opts[name] || defaults[name];
     if (!spec) continue;
     const p = { file: sheetName, ...pose(spec, name) };
     const count = drawn ? drawn[p.row] : undefined;
@@ -551,4 +570,5 @@ module.exports = {
   installPack,
   pngAlpha,
   drawnFrames,
+  OPENPETS_POSES,
 };

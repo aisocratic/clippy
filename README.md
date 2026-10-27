@@ -657,14 +657,17 @@ Given a pet's page link, a pet id, or a direct `.zip` link it downloads the
 pack into a temp folder first; from there all paths are identical. It reads
 the sheet's size from the image header, works out the frame size from
 `--grid` (default `8x9`), copies the sheet into place and writes the
-`theme.json`. Defaults: `--idle 0:6` and `--excited 3:4`; the other poses take
+`theme.json`. Defaults: `--idle 0:6` and `--excited 3:4`, and on an `8x9`
+sheet — the [OpenPets](https://openpets.dev/gallery) layout — `--walk 1:8:right`,
+`--sleep 6:6` and `--cheer 4:5` as well; the other poses take
 `--walk ROW:FRAMES` and friends. A frame count is a most, not a must: the sheet
 is read, and each pose plays only the frames its row actually draws, so a pet
 with four idle frames plays four instead of blinking out on two empty cells.
 Rows differ between packs — the settings window
 shows every unclaimed row, so you can look through a sheet and come back for the
-good ones. (With the [openpets](https://openpets.dev/gallery) packs: row 0 is a
-sitting idle, row 1 a walk, row 3 a wave, row 5 a sleep.)
+good ones. (An OpenPets sheet's rows are idle, running right, running left,
+waving, jumping, failed, waiting, running and review: the walk is the run to
+the right, the cheer the jump, the sleep the wait.)
 
 **On other people's art.** Check what you're allowed to do with a pack before
 using it, and note that "free to download" is not the same as "free to

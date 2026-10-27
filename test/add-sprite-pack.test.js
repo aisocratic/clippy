@@ -229,7 +229,7 @@ test('a row counts its drawn frames from the left, up to the first empty cell', 
   assert.equal(drawnFrames(gappy, 8, 9)[0], 2);
 });
 
-test('a pose plays only the frames its row draws', async (t) => {
+test('an OpenPets sheet walks, sleeps and cheers, and plays only the frames it draws', async (t) => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'clippy-frames-'));
   const before = process.env.CLIPPY_THEMES_DIR;
   process.env.CLIPPY_THEMES_DIR = path.join(tmp, 'themes');
@@ -245,12 +245,20 @@ test('a pose plays only the frames its row draws', async (t) => {
   fs.writeFileSync(path.join(pack, 'spritesheet.png'), sheet([4, 8, 8, 4, 0, 8, 6, 6, 6]));
   fs.writeFileSync(path.join(pack, 'pet.json'), JSON.stringify({ id: 'nori', spritesheetPath: 'spritesheet.png' }));
 
-  const { theme } = await installPack(pack, { walk: '1:8', cheer: '4:5' });
-  const brief = Object.fromEntries(Object.entries(theme.poses).map(([name, p]) => [name, [p.row, p.frames]]));
+  const { theme } = await installPack(pack);
+  const brief = Object.fromEntries(Object.entries(theme.poses).map(([name, p]) => [name, [p.row, p.frames, p.facing]]));
   assert.deepEqual(brief, {
-    idle: [0, 4], // not 6: two blank frames would flash
-    excited: [3, 4],
-    walk: [1, 8],
+    idle: [0, 4, undefined], // not 6: two blank frames would flash
+    excited: [3, 4, undefined],
+    walk: [1, 8, 'right'], // running-right, whichever way the pack faces
+    sleep: [6, 6, undefined],
     // cheer's row is empty, so there is no cheer and Clippy falls back
   });
+
+  // A pose named by hand is still trimmed to what its row draws, and another
+  // grid gets only the two poses every pack needs.
+  const { theme: named } = await installPack(pack, { id: 'nori-2', cheer: '6:8', grid: '8x9' });
+  assert.deepEqual([named.poses.cheer.row, named.poses.cheer.frames], [6, 6]);
+  const { theme: other } = await installPack(pack, { id: 'nori-3', grid: '4x9' });
+  assert.deepEqual(Object.keys(other.poses), ['idle', 'excited']);
 });
