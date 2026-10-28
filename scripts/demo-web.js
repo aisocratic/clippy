@@ -10,6 +10,14 @@
  * gives you a control panel that fires the same events main would.
  *
  *   npm run demo:web        # then open http://127.0.0.1:43119
+ *   npm run sandbox         # the same server, opened on /states
+ *
+ * Two pages, both on the real renderer:
+ *
+ *   /         the bench — one buddy, every control, the show run, the fake
+ *             terminal to perch on and the sprite workbench
+ *   /states   the states page — a live tester you click every state into, over
+ *             the lifecycle graph of a prompt
  *
  * The scenarios below are built with the real `describeToolCall` /
  * `activityLabel`, and clicking a card asks the real `toHookResponse` what
@@ -29,7 +37,15 @@ const path = require('node:path');
 
 const { describeToolCall, activityLabel, toHookResponse } = require('../src/decisions');
 const { PALETTE } = require('../src/identity');
-const { allCharacters, sizeList } = require('../src/characters');
+const { allCharacters: characters, sizeList, userThemesDir } = require('../src/characters');
+
+// Custom buddies live in userData and are normally addressed by file:// URL,
+// which a page served over http may not load. The bench serves that folder
+// itself under /user-themes/ and hands the pages URLs that point there.
+const allCharacters = () =>
+  characters({
+    urlFor: (_dir, id, file) => `/user-themes/${encodeURIComponent(id)}/${encodeURIComponent(file)}`,
+  });
 const { ACTIONS } = require('../src/actions');
 const { SESSION_WINDOW_MS, WEEK_WINDOW_MS } = require('../src/usage');
 
@@ -68,10 +84,11 @@ function approval(toolName, toolInput, extra = {}) {
 
 /** An ambient activity line, labelled by the real activityLabel(). */
 function activity(toolName, toolInput, { state = 'start', ok = true } = {}) {
+  const label = activityLabel(toolName, toolInput);
   return evt({
     kind: 'activity',
     status: 'working',
-    activity: { tool: toolName, label: activityLabel(toolName, toolInput), state, ok },
+    activity: { tool: toolName, label, state, ok, error: ok ? '' : 'Exit code 1' },
   });
 }
 
@@ -144,12 +161,12 @@ function SHOW_RUN() {
   at(1300, { event: activity('Edit', { file_path: '/repo/src/webhook.js' }) });
   at(1300, { event: activity('Bash', { description: 'run the test suite', command: 'npm test' }) });
   at(1600, {
-    note: 'A failed tool turns the line red — and the buddy starts sweating',
+    note: 'A failed tool turns the activity line red with a ⚠ — nothing pops up',
     event: activity('Bash', { description: 'run the test suite', command: 'npm test' }, { state: 'done', ok: false }),
   });
 
   at(1800, {
-    note: 'Urgent nudge — bouncing buddy, speech bubble, Got it / Snooze',
+    note: 'Urgent nudge — bouncing buddy and a dismissible speech bubble',
     event: evt({ kind: 'attention', urgency: 'urgent', status: 'needs_permission', message: `Claude needs permission in “${NAME}”.` }),
   });
 
@@ -197,7 +214,14 @@ function SHOW_RUN() {
     note: 'Review card — Looks good, or send Claude back with feedback',
     ref: 'stop',
     holdSecs: 20,
-    event: evt({ kind: 'review', status: 'waiting', message: 'Claude finished: “Added retry with backoff to the billing webhook — 42 tests pass.”' }),
+    event: evt({
+      kind: 'review',
+      status: 'waiting',
+      title: 'Claude Finished',
+      prompt: 'Make invoice posting resilient to transient failures and add coverage for retries.',
+      message: 'Claude finished: “Added retry with backoff to the billing webhook — 42 tests pass.”',
+      detail: 'Added retry with exponential backoff to the billing webhook. All 42 tests pass.',
+    }),
   });
   at(6500, { ref: 'stop', event: evt({ kind: 'request-closed', outcome: 'timeout', timedOut: true }) });
 
@@ -306,7 +330,7 @@ const SCENARIOS = [
     id: 'activity-failed',
     group: 'Ambient',
     label: 'Tool failed',
-    hint: 'A failed tool turns the activity line red.',
+    hint: 'A failed tool turns the activity line red with a ⚠ — nothing pops up.',
     steps: [
       {
         event: activity(
@@ -323,7 +347,7 @@ const SCENARIOS = [
     id: 'attention-urgent',
     group: 'Nudges',
     label: 'Needs you (urgent)',
-    hint: 'Bouncing buddy + speech bubble. Got it / Snooze 5m.',
+    hint: 'Bouncing buddy + dismissible speech bubble. Sleep durations live in the right-click menu.',
     steps: [
       {
         event: evt({
@@ -447,7 +471,12 @@ const SCENARIOS = [
         event: evt({
           kind: 'review',
           status: 'waiting',
+          title: 'Claude Finished',
+          prompt: 'Make invoice posting resilient to transient failures and add coverage for retries.',
           message: 'Claude finished: “Added retry with backoff to the billing webhook — 42 tests pass.”',
+          detail:
+            'Added `withRetry()` around postInvoice — 3 attempts with exponential backoff, ' +
+            '200ms base, and 409 treated as success. Both paths are covered and all 42 tests pass.',
         }),
       },
     ],
@@ -678,12 +707,37 @@ function usagePayloads() {
 
   /** A payload is a session and the three windows — allowances only ever come
       from Claude Code's own /usage cache (the `official` block), never settings. */
-  const payload = (session, block, week) => ({
-    name: NAME,
-    now,
-    session,
-    windows: { session: block, week, weekOpus: opusOnly(week) },
-  });
+  const payload = (session, block, week) => {
+    const windows = { session: block, week, weekOpus: opusOnly(week) };
+    return {
+      name: NAME,
+      now,
+      agent: 'claude',
+      session,
+      windows,
+      // The panel is machine-wide: every agent's account, this buddy's first.
+      // Codex writes its own rate limits down, so its rows are the real thing.
+      accounts: [
+        { agent: 'claude', title: 'Claude Code', official: null, windows },
+        {
+          agent: 'codex',
+          title: 'Codex',
+          official: {
+            fetchedAtMs: now - 4 * 60 * 1000,
+            plan: 'pro',
+            limits: [
+              { kind: 'secondary', group: 'session', percent: 12, severity: 'normal', resetsAt: now + 3.1 * HOUR, label: 'session · 5 hours' },
+              { kind: 'primary', group: 'weekly', percent: 37, severity: 'normal', resetsAt: now + 4.4 * 24 * HOUR, label: 'week · all models' },
+            ],
+          },
+          windows: {
+            session: win(SESSION_WINDOW_MS, 1.1 * HOUR, { 'gpt-5-codex': totals(30_000, 9_000, 600_000, 40_000) }),
+            week: win(WEEK_WINDOW_MS, 5 * 24 * HOUR, { 'gpt-5-codex': totals(210_000, 70_000, 5_100_000, 300_000) }, { sessions: 6 }),
+          },
+        },
+      ],
+    };
+  };
 
   const busyWeek = win(
     WEEK_WINDOW_MS,
@@ -789,6 +843,9 @@ const MIME = {
   '.css': 'text/css; charset=utf-8',
   '.gif': 'image/gif',
   '.png': 'image/png',
+  // Sprite-pack sheets ship as WebP (what openpets packs use); without this
+  // they arrive as a byte stream and only load because the browser sniffs them.
+  '.webp': 'image/webp',
   '.svg': 'image/svg+xml',
   '.json': 'application/json; charset=utf-8',
 };
@@ -819,6 +876,9 @@ function sendJson(res, data, code = 200) {
  * matching browser stub. Serving it rather than copying it is the whole point:
  * what you click in the browser is the same markup Electron loads.
  */
+/** `[[hours ago, status], …]` as a session's history: `{ status, at }`, at real times. */
+const hoursAgo = (steps) => steps.map(([hours, status]) => ({ status, at: Date.now() - hours * 3600 * 1000 }));
+
 function servePage(res, page, script, stub) {
   fs.readFile(path.join(RENDERER_DIR, page), 'utf8', (err, html) => {
     if (err) {
@@ -834,32 +894,114 @@ function servePage(res, page, script, stub) {
   });
 }
 
-/** Keep requests inside a directory, whatever ../.. the URL tries. */
-function safeJoin(dir, rel) {
-  const target = path.join(dir, path.normalize(rel).replace(/^(\.\.[/\\])+/, ''));
-  return target.startsWith(dir) ? target : null;
+// Resolved once per directory: /tmp and friends are symlinks on macOS, and the
+// containment check below compares resolved paths against a resolved root.
+const realRoots = new Map();
+function realRoot(dir) {
+  let real = realRoots.get(dir);
+  if (real === undefined) realRoots.set(dir, (real = fs.realpathSync(dir)));
+  return real;
 }
 
+const inside = (root, file) => file === root || file.startsWith(root + path.sep);
+
+/**
+ * Keep requests inside a directory, whatever the URL tries.
+ *
+ * The URL path arrives here already percent-decoded, so `..`, `%2e%2e`, a
+ * leading slash and a NUL all have to be refused outright rather than filed
+ * down into something that still escapes — the old rule stripped a leading
+ * `../` and let everything else through on a `startsWith` that a sibling
+ * directory (`demo-evil/`) would also satisfy. A path that resolves inside the
+ * tree can still be a symlink pointing out of it, so the resolved file is
+ * checked too.
+ */
+function safeJoin(dir, rel) {
+  if (!rel || rel.includes('\0') || path.isAbsolute(rel)) return null;
+  const root = realRoot(dir);
+  const target = path.resolve(root, rel);
+  if (!inside(root, target)) return null;
+  let real;
+  try {
+    real = fs.realpathSync(target);
+  } catch {
+    return target; // nothing there: sendFile answers 404
+  }
+  return inside(root, real) ? real : null;
+}
+
+// The bench binds loopback, which on its own is not enough: any page in any
+// browser can POST to a localhost port, and a hostname the attacker owns can be
+// pointed at 127.0.0.1 (DNS rebinding) so that the Host header looks foreign
+// while the socket is local. Both are refused before a handler sees them.
+const LOOPBACK = new Set(['127.0.0.1', 'localhost', '::1', '[::1]']);
+
+function isLocalRequest(req) {
+  let host;
+  try {
+    host = new URL(`http://${req.headers.host || ''}`).hostname;
+  } catch {
+    return false;
+  }
+  if (!LOOPBACK.has(host)) return false;
+  const origin = req.headers.origin;
+  if (!origin) return true; // a plain navigation carries no Origin
+  try {
+    return LOOPBACK.has(new URL(origin).hostname);
+  } catch {
+    return false; // including the literal "null" a sandboxed frame sends
+  }
+}
+
+const MAX_BODY_BYTES = 1e6;
+
+/**
+ * The JSON body, capped. The excess is read and dropped rather than the socket
+ * being destroyed: destroying it mid-handler leaves the awaiting request with
+ * no response to write to, and the caller is told 413 instead.
+ */
 function readBody(req) {
   return new Promise((resolve) => {
-    let raw = '';
+    const chunks = [];
+    let size = 0;
+    let tooLarge = false;
     req.on('data', (c) => {
-      raw += c;
-      if (raw.length > 1e6) req.destroy();
-    });
-    req.on('end', () => {
-      try {
-        resolve(JSON.parse(raw || '{}'));
-      } catch {
-        resolve({});
+      size += c.length;
+      if (size > MAX_BODY_BYTES) {
+        tooLarge = true;
+        chunks.length = 0;
+        return;
       }
+      chunks.push(c);
     });
+    const done = () => {
+      if (tooLarge) return resolve({ tooLarge: true, body: {} });
+      try {
+        resolve({ tooLarge: false, body: JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}') });
+      } catch {
+        resolve({ tooLarge: false, body: {} });
+      }
+    };
+    req.on('end', done);
+    req.on('aborted', done);
+    req.on('error', done);
   });
 }
 
-const server = http.createServer(async (req, res) => {
+async function handle(req, res) {
+  if (!isLocalRequest(req)) {
+    res.writeHead(403, { 'Content-Type': 'text/plain' });
+    return res.end('forbidden');
+  }
   const url = new URL(req.url, `http://${req.headers.host || '127.0.0.1'}`);
-  const pathname = decodeURIComponent(url.pathname);
+  let pathname;
+  try {
+    pathname = decodeURIComponent(url.pathname);
+  } catch {
+    // A stray `%` is not a path; decoding it throws, and an unhandled throw in
+    // here used to take the whole bench down.
+    return sendJson(res, { error: 'bad path' }, 400);
+  }
 
   if (pathname === '/api/scenarios') {
     return sendJson(res, {
@@ -874,7 +1016,9 @@ const server = http.createServer(async (req, res) => {
 
   // What Claude Code would actually have received for the button you clicked.
   if (pathname === '/api/decision' && req.method === 'POST') {
-    const { event, action, message, toolInput } = await readBody(req);
+    const { tooLarge, body } = await readBody(req);
+    if (tooLarge) return sendJson(res, { error: 'body too large' }, 413);
+    const { event, action, message, toolInput } = body;
     return sendJson(res, {
       response: toHookResponse(String(event || ''), String(action || ''), String(message || ''), {
         toolInput,
@@ -897,17 +1041,40 @@ const server = http.createServer(async (req, res) => {
       size: 'medium',
       characters: allCharacters(),
       sizes: sizeList(),
-      actions: ACTIONS,
       port: 43117,
       windowAccess: false, // so the banner is visible while working on it
       appName: 'Electron',
       appPath: '/path/to/clippy/node_modules/electron/dist/Electron.app',
+      soloCharacter: '',
+      // The one buddy's row, which the settings window always draws above the
+      // sessions — main works its face and name out for real (see settingsState).
+      solo: { character: 'clip', pet: 'Clip', color: '#4fa3d1', showing: NAME },
       sessions: [
-        { sessionId: 'demo-1', name: NAME, color: '#4fa3d1', status: 'working', character: 'clip' },
+        {
+          sessionId: 'demo-1',
+          name: NAME,
+          color: '#4fa3d1',
+          status: 'working',
+          character: 'clip',
+          // A day of it, for the activity strip: worked, waited on you, done.
+          history: hoursAgo([
+            [20, 'working'], [18.5, 'waiting'], [9, 'working'], [8.2, 'needs_permission'],
+            [8, 'working'], [6, 'waiting'], [1.5, 'working'], [1.3, 'needs_permission'], [1.25, 'working'],
+          ]),
+          // A helper it has running, drawn one step in under its row.
+          subagents: [{ id: 'a-1', type: 'Explore', label: 'Explore: Reading webhook.js' }],
+        },
         // A second agent in the *same* folder as demo-1: the case where picking
         // a pet for one row must leave the other row alone.
         { sessionId: 'demo-1b', name: NAME, color: '#d18f4f', status: 'idle', character: 'clod' },
-        { sessionId: 'demo-2', name: 'clippy', color: '#6cbf6c', status: 'waiting', character: 'cat' },
+        {
+          sessionId: 'demo-2',
+          name: 'clippy',
+          color: '#6cbf6c',
+          status: 'waiting',
+          character: 'cat',
+          history: hoursAgo([[3, 'idle'], [2.4, 'working'], [0.5, 'waiting']]),
+        },
       ],
     });
   }
@@ -927,6 +1094,19 @@ const server = http.createServer(async (req, res) => {
     return file ? sendFile(res, file) : sendJson(res, { error: 'bad path' }, 400);
   }
 
+  if (pathname === '/reader') {
+    res.writeHead(302, { Location: '/reader/' });
+    return res.end();
+  }
+  if (pathname === '/reader/') return servePage(res, 'reader.html', 'reader.js', 'reader-stub.js');
+  if (pathname === '/reader/reader-stub.js') {
+    return sendFile(res, path.join(DEMO_DIR, 'reader-stub.js'));
+  }
+  if (pathname.startsWith('/reader/')) {
+    const file = safeJoin(RENDERER_DIR, pathname.slice('/reader/'.length));
+    return file ? sendFile(res, file) : sendJson(res, { error: 'bad path' }, 400);
+  }
+
   if (pathname === '/renderer' ) {
     res.writeHead(302, { Location: '/renderer/' });
     return res.end();
@@ -940,15 +1120,35 @@ const server = http.createServer(async (req, res) => {
     const file = safeJoin(RENDERER_DIR, pathname.slice('/renderer/'.length));
     return file ? sendFile(res, file) : sendJson(res, { error: 'bad path' }, 400);
   }
+  // Sprite packs and drawn buddies, out of the persistent user folder.
+  if (pathname.startsWith('/user-themes/')) {
+    const file = safeJoin(userThemesDir(), pathname.slice('/user-themes/'.length));
+    return file ? sendFile(res, file) : sendJson(res, { error: 'bad path' }, 400);
+  }
 
-  const rel = pathname === '/' ? 'index.html' : pathname === '/gallery' ? 'gallery.html' : pathname.slice(1);
+  const rel =
+    pathname === '/'
+      ? 'index.html'
+      : pathname === '/states'
+      ? 'states.html'
+      : pathname.slice(1);
   const file = safeJoin(DEMO_DIR, rel);
   return file ? sendFile(res, file) : sendJson(res, { error: 'bad path' }, 400);
+}
+
+const server = http.createServer((req, res) => {
+  // handle() is async, so anything it throws would otherwise surface as an
+  // unhandled rejection — which, since Node 15, ends the process.
+  handle(req, res).catch((err) => {
+    console.error(`bench: ${err && err.message ? err.message : err}`);
+    if (!res.headersSent) res.writeHead(500, { 'Content-Type': 'text/plain' });
+    res.end('server error');
+  });
 });
 
-server.listen(PORT, '127.0.0.1', () => {
+if (require.main === module) server.listen(PORT, '127.0.0.1', () => {
   console.log(`📎 Clippy web test bench → http://127.0.0.1:${PORT}`);
-  console.log(`   Sandbox gallery (every state at once) → http://127.0.0.1:${PORT}/gallery`);
+  console.log(`   States (every state, click one to test it) → http://127.0.0.1:${PORT}/states`);
   console.log('   Serving the real src/renderer with a stubbed clippyAPI.');
   console.log('   (End-to-end still means: npm start + npm run mock-session.)');
   // `npm run sandbox` passes --open <path>: pop the page straight into the
@@ -960,3 +1160,7 @@ server.listen(PORT, '127.0.0.1', () => {
     ]);
   }
 });
+
+// Exported so the path and origin rules can be tested without a browser; the
+// listen above only happens when this file is the program being run.
+module.exports = { server, safeJoin, isLocalRequest, DEMO_DIR, RENDERER_DIR };

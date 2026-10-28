@@ -2,7 +2,10 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert');
+const os = require('node:os');
+const path = require('node:path');
 const { SessionTracker } = require('../src/sessions');
+const { windowActionFor } = require('../src/visibility');
 
 const payload = (id, cwd = '/Users/me/projects/my-app') => ({
   session_id: id,
@@ -90,15 +93,16 @@ test('PreToolUse/PostToolUse drive the activity line (meaningful tools only)', (
     success: false,
   });
   assert.equal(fail.activity.ok, false);
-  assert.match(fail.message, /failed/);
+  assert.equal(fail.kind, 'activity');
+  assert.equal(fail.message, '');
 
   // UserPromptSubmit resets the activity; SessionStart clears it.
   assert.equal(t.handle('UserPromptSubmit', null, payload('s1')).activity.label, 'Working…');
 });
 
-test('a failed tool arrives on PostToolUseFailure, not PostToolUse', () => {
-  // Claude Code only fires PostToolUse on success, so this is the event that
-  // actually produces the ⚠ in the activity line.
+test('a failed tool only marks the activity line — it never pops a card', () => {
+  // Claude Code only fires PostToolUse on success, so PostToolUseFailure is
+  // the event that actually produces the ⚠ in the activity line.
   const t = new SessionTracker();
   t.handle('SessionStart', null, payload('s1'));
 
@@ -112,7 +116,8 @@ test('a failed tool arrives on PostToolUseFailure, not PostToolUse', () => {
   assert.equal(failed.activity.state, 'done');
   assert.equal(failed.activity.ok, false);
   assert.equal(failed.activity.error, 'Exit code 1'); // first line only
-  assert.match(failed.message, /Bash failed/);
+  assert.equal(failed.kind, 'activity');
+  assert.equal(failed.message, '');
 
   // Hitting esc isn't a failure — don't cry wolf.
   const stopped = t.handle('PostToolUseFailure', null, {
@@ -124,6 +129,46 @@ test('a failed tool arrives on PostToolUseFailure, not PostToolUse', () => {
   });
   assert.equal(stopped.activity.ok, true);
   assert.equal(stopped.message, '');
+});
+
+test('routine tool failures stay ambient: no popup, and the session is not "waiting on you"', () => {
+  // "bash failed" used to become a held card that popped Clippy up and never
+  // went away on its own, so a busy session stacked one per failed command.
+  // A failed tool is part of a working session — the agent sees the error and
+  // carries on — so every shape a failure arrives in maps to an ambient
+  // 'activity' reaction, which the visibility policy hides.
+  const t = new SessionTracker();
+  t.handle('SessionStart', null, payload('s1'));
+  const codex = { ...payload('cx'), agent: 'codex' };
+  t.handle('SessionStart', null, codex);
+
+  const shapes = [
+    ['PostToolUseFailure', { ...payload('s1'), error: 'Exit code 1\nnpm ERR! Test failed.' }],
+    ['PostToolUse', { ...payload('s1'), success: false }],
+    ['PostToolUse', { ...payload('s1'), tool_response: { is_error: true } }],
+    ['PostToolUse', { ...payload('s1'), tool_response: { isError: true } }],
+    ['PostToolUse', { ...codex, tool_response: { exit_code: 2 } }],
+    ['PostToolUse', { ...codex, tool_response: { metadata: { exit_code: 1 } } }],
+  ];
+  for (const [event, body] of shapes) {
+    const r = t.handle(event, null, { ...body, tool_name: 'Bash', tool_input: { command: 'npm test' } });
+    assert.equal(r.kind, 'activity', event);
+    assert.equal(r.activity.ok, false, event);
+    assert.equal(r.message, '', event);
+    assert.equal(windowActionFor(r.kind), 'hide', event);
+  }
+
+  // Ten failures in a row are still one working session, not ten things to deal with.
+  for (let i = 0; i < 10; i++) {
+    t.handle('PostToolUseFailure', null, {
+      ...payload('s1'),
+      tool_name: 'Bash',
+      tool_input: { command: 'false' },
+      error: 'Exit code 1',
+    });
+  }
+  assert.deepEqual(t.counts(), { total: 2, waiting: 0 });
+  assert.equal(t.statusFor('s1'), 'working');
 });
 
 test('stale sessions are swept, parked ones get a longer leash', () => {
@@ -201,7 +246,7 @@ test('Codex sessions keep their identity and detect non-zero PostToolUse exits',
     tool_response: { exit_code: 1 },
   });
   assert.equal(failed.activity.ok, false);
-  assert.match(failed.message, /failed/);
+  assert.equal(failed.kind, 'activity');
   assert.equal(t.agentFor('cx'), 'codex');
 });
 
@@ -246,4 +291,125 @@ test('handles missing cwd and unknown events gracefully', () => {
   assert.equal(r.kind, 'attention');
   assert.match(r.message, /deadbeef/);
   assert.equal(t.handle('SomethingNew', null, payload('x')), null);
+});
+
+test('only remembers a transcript path that is really an agent transcript', () => {
+  const t = new SessionTracker();
+  const home = os.homedir();
+  const real = path.join(home, '.claude', 'projects', '-Users-me-app', 's1.jsonl');
+
+  t.handle('Stop', null, { session_id: 's1', cwd: '/Users/me/app' });
+  t.setTranscript('s1', real);
+  assert.equal(t.transcriptFor('s1'), real);
+
+  // A forged hook naming something the app has no business reading. Each is
+  // refused outright, and the path we already trust is left alone.
+  for (const forged of [
+    '/etc/passwd',
+    path.join(home, '.ssh', 'id_rsa'),
+    path.join(home, '.ssh', 'id_rsa.jsonl'),
+    path.join(home, '.claude', '..', '.ssh', 'id_rsa.jsonl'),
+    path.join(home, '.claude', 'projects', '..', '..', '.aws', 'credentials.jsonl'),
+    'relative.jsonl',
+    `${real}\0/etc/passwd`,
+    42,
+    null,
+  ]) {
+    t.setTranscript('s1', forged);
+    assert.equal(t.transcriptFor('s1'), real, `accepted ${String(forged)}`);
+  }
+
+  // Codex keeps its rollouts somewhere else entirely, and those are fine.
+  const rollout = path.join(home, '.codex', 'sessions', '2026', '09', '01', 'rollout-x.jsonl');
+  t.setTranscript('s1', rollout);
+  assert.equal(t.transcriptFor('s1'), rollout);
+});
+
+test('an agent name that happens to be an Object property is not an agent', () => {
+  const t = new SessionTracker();
+  const r = t.handle('Stop', null, { session_id: 's1', cwd: '/Users/me/app', agent: 'constructor' });
+  assert.equal(r.agent, 'claude');
+  assert.equal(r.agentName, 'Claude');
+  assert.match(r.message, /^Claude finished/);
+  assert.equal(t.agentFor('s1'), 'claude');
+});
+
+test('terminal and transcript learned for a session nobody tracks do not pile up', () => {
+  const t = new SessionTracker();
+  const real = path.join(os.homedir(), '.claude', 'projects', '-x', 'ghost.jsonl');
+
+  // A hook notes its terminal and transcript before the state machine sees it,
+  // and some hooks are answered without ever reaching the state machine.
+  t.setTerminal('ghost', { program: 'iTerm.app', tty: 'ttys004', pid: 1 });
+  t.setTranscript('ghost', real);
+  assert.ok(t.terminalFor('ghost'));
+  assert.equal(t.transcriptFor('ghost'), real);
+
+  assert.deepEqual(t.sweepStale(), []); // no session to remove...
+  assert.equal(t.terminalFor('ghost'), null); // ...and nothing left behind
+  assert.equal(t.transcriptFor('ghost'), '');
+
+  // A session that is still being tracked keeps both.
+  t.handle('PreToolUse', null, { session_id: 's1', cwd: '/Users/me/app', tool_name: 'Bash' });
+  t.setTerminal('s1', { program: 'iTerm.app', tty: 'ttys005', pid: 2 });
+  t.setTranscript('s1', real);
+  t.sweepStale();
+  assert.ok(t.terminalFor('s1'));
+  assert.equal(t.transcriptFor('s1'), real);
+});
+
+test('a subagent is listed under its session and its work shows on the activity line', () => {
+  const t = new SessionTracker();
+  t.handle('SessionStart', null, payload('s1'));
+
+  // SubagentStart arrives on the parent's session id, with the helper's own
+  // id and type. It is not a session: the count does not move.
+  const started = t.handle('SubagentStart', null, {
+    ...payload('s1'),
+    agent_id: 'a-1',
+    agent_type: 'Explore',
+  });
+  assert.equal(started.kind, 'activity');
+  assert.equal(started.activity.label, 'Delegating to Explore');
+  assert.deepEqual(t.counts(), { total: 1, waiting: 0 });
+  assert.deepEqual(
+    t.list()[0].subagents.map((sub) => [sub.id, sub.type]),
+    [['a-1', 'Explore']]
+  );
+
+  // Its tool calls fire the same hooks, stamped with the subagent — so the
+  // line says who is doing what, and the helper's row says the same.
+  const tool = t.handle('PreToolUse', null, {
+    ...payload('s1'),
+    agent_id: 'a-1',
+    agent_type: 'Explore',
+    tool_name: 'Bash',
+    tool_input: { command: 'npm test', description: 'run the tests' },
+  });
+  assert.match(tool.activity.label, /^Explore: /);
+  assert.equal(tool.activity.agentType, 'Explore');
+  assert.match(t.list()[0].subagents[0].activity.label, /npm test|run the tests/);
+
+  // Gone when it stops; the session carries on.
+  const stopped = t.handle('SubagentStop', null, { ...payload('s1'), agent_id: 'a-1', agent_type: 'Explore' });
+  assert.equal(stopped.kind, 'activity');
+  assert.equal(stopped.activity.label, 'Explore finished');
+  assert.deepEqual(t.list()[0].subagents, []);
+  assert.equal(t.list()[0].status, 'working');
+});
+
+test('a subagent never announced is learned from its first tool call, and one without an id is ignored', () => {
+  const t = new SessionTracker();
+  t.handle('PreToolUse', null, {
+    ...payload('s1'),
+    agent_id: 'a-9',
+    tool_name: 'Edit',
+    tool_input: { file_path: '/repo/a.js' },
+  });
+  assert.deepEqual(
+    t.list()[0].subagents.map((sub) => [sub.id, sub.type]),
+    [['a-9', 'subagent']]
+  );
+  assert.equal(t.handle('SubagentStart', null, payload('s1')), null);
+  assert.equal(t.handle('SubagentStop', null, { ...payload('s1'), agent_id: 42 }), null);
 });

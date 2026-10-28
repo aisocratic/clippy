@@ -57,6 +57,7 @@ test('ssh is told to multiplex, and never to ask for anything', () => {
   assert.ok(args.includes('BatchMode=yes'));
   assert.ok(args.some((a) => a.startsWith('ConnectTimeout=')));
   assert.equal(args.at(-1), 'me@box', 'the host is the last argument, before the command');
+  assert.equal(args.at(-2), '--', 'and it is fenced off from ssh\'s own option parser');
   // A unix socket path is capped near 104 bytes and ssh simply refuses past
   // it, so the socket cannot live under the app's own (long) data directory.
   const controlPath = controlPathFor();
@@ -64,6 +65,18 @@ test('ssh is told to multiplex, and never to ask for anything', () => {
   assert.match(controlPath, /%C$/, 'ssh hashes the connection details itself');
   // Even with a long username and host appended, ssh stays under the cap.
   assert.ok(controlPath.replace('%C', 'a'.repeat(40)).length < 104);
+});
+
+test('a host that looks like an ssh flag can only be a host', () => {
+  // The probe's ssh takes the host as its own argv element, so shell quoting
+  // has nothing to do with it — `-oProxyCommand=…` would simply be an option,
+  // and ProxyCommand runs a command. Everything after `--` is a hostname.
+  const nasty = '-oProxyCommand=touch /tmp/clippy-PROBE-PWNED';
+  const args = sshArgs(nasty, { controlPath: '/tmp/cp/%C' });
+
+  assert.equal(args.at(-1), nasty);
+  assert.equal(args.at(-2), '--');
+  assert.ok(!args.slice(0, -2).includes(nasty), 'never among the options');
 });
 
 test('the control socket directory is private to this user', () => {

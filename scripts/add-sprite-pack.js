@@ -14,11 +14,13 @@
  * A pack is a folder holding a sprite sheet and, optionally, a `pet.json`
  * (`{ id, displayName, spritesheetPath }`) — the shape desktop-pet packs tend
  * to ship. The sheet is a grid: one row per animation, one column per frame.
- * This copies the sheet into `src/renderer/assets/themes/<id>/` and writes the
- * `theme.json` the app reads (see src/characters.js).
+ * This copies the sheet into the app's persistent themes folder —
+ * `~/Library/Application Support/<app>/themes/<id>/`, see `userThemesDir` in
+ * src/characters.js — and writes the `theme.json` the app reads there.
  *
- * Nothing here is committed: that assets folder is gitignored, so packs keep
- * their own licence and this repo keeps shipping only art it drew itself.
+ * Nothing here touches the repo or the app bundle: packs keep their own
+ * licence, this repo keeps shipping only art it drew itself, and an update
+ * (which replaces the whole bundle) never sees them.
  *
  * Flags:
  *   --id NAME        character id (default: pet.json's id, else the folder name)
@@ -27,16 +29,23 @@
  *   --idle R:F       row and frame count for the calm animation (default 0:6)
  *   --excited R:F    …and for the excited one (default 3:4)
  *   --walk R:F       …the walk, played while the buddy crosses a window
+ *                    (default 1:8:right on an 8x9 sheet)
  *   --point R:F      …standing at a prompt, pointing at it
- *   --sleep R:F      …nothing happening for a while
- *   --cheer R:F      …a turn finished cleanly
+ *   --sleep R:F      …nothing happening for a while (default 6:6 on 8x9)
+ *   --cheer R:F      …a turn finished cleanly (default 4:5 on 8x9)
  *   --fps N          frames per second (default 6)
  *   --facing DIR     which way the art is drawn: left, right (default), or
  *                    center for art that looks straight out of the screen
  *
- * Only idle and excited have defaults; name the others if the pack has rows
- * that suit them. Rows you never name still show up in the settings window, so
- * you can look through a sheet and come back for them.
+ * Idle and excited always have defaults, and an 8x9 sheet — the OpenPets
+ * layout, see OPENPETS_POSES — gets a walk, a sleep and a cheer too; name the
+ * others if the pack has rows that suit them. Rows you never name still show
+ * up in the settings window, so you can look through a sheet and come back for
+ * them.
+ *
+ * A frame count is a most: the sheet is read and a pose plays only the frames
+ * its row actually draws, so a pet with four idle frames does not blink out
+ * for two of every six.
  *
  * Any pose flag takes a third field to override the pack's facing for that one
  * animation, because sheets are not consistent with themselves:
@@ -49,8 +58,9 @@ const os = require('node:os');
 const path = require('node:path');
 const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
+const zlib = require('node:zlib');
 const execFileAsync = promisify(execFile);
-const { THEMES_DIR, POSES } = require('../src/characters');
+const { userThemesDir, POSES } = require('../src/characters');
 
 // v3, and paged: the catalog outgrew one file (300 pets in the frozen v2
 // snapshot, 1200+ now), so the URL below is a manifest listing page files and
@@ -60,6 +70,24 @@ const { THEMES_DIR, POSES } = require('../src/characters');
 const CATALOG_URL = 'https://openpets.dev/pets/catalog.v3.json';
 // The catalog's own installer caps downloads at 50MB; same bar here.
 const MAX_ZIP_BYTES = 50 * 1024 * 1024;
+
+/**
+ * The OpenPets sheet (the Codex pet atlas it grew out of): 8 columns by 9
+ * rows, one state per row —
+ *
+ *   0 idle (6)   1 running-right (8)   2 running-left (8)   3 waving (4)
+ *   4 jumping (5)   5 failed (8)   6 waiting (6)   7 running (6)   8 review (6)
+ *
+ * — mapped onto Clippy's poses the way OpenPets maps its own reactions
+ * (success and celebrating jump). The walk is the right-running row, said so,
+ * because Clippy mirrors a walk to turn it around and must know which way it
+ * runs whatever the rest of the pack faces. Sleep is the turn being over and
+ * Clippy waiting on you, so it is the waiting row: row 5 lies down in some
+ * packs, but it is OpenPets' "failed", and in others it cries.
+ */
+const OPENPETS_POSES = { idle: '0:6', excited: '3:4', walk: '1:8:right', sleep: '6:6', cheer: '4:5' };
+// Any other grid is a sheet we know nothing about: only the two every pack needs.
+const GRID_POSES = { idle: '0:6', excited: '3:4' };
 
 const args = process.argv.slice(2);
 const flag = (name, fallback) => {
@@ -120,28 +148,190 @@ function imageSize(file) {
 }
 
 /**
+ * Each pixel's alpha, from a PNG, as one byte per pixel — enough to tell a
+ * drawn frame from an empty one without pulling in an image library. Handles
+ * what sheets are saved as (and what `sips` writes): 8- or 16-bit, any colour
+ * type, not interlaced. Anything else throws, and the caller goes without.
+ *
+ * @param {Buffer} buf  the whole file
+ * @returns {{ width: number, height: number, alpha: Uint8Array }}
+ */
+function pngAlpha(buf) {
+  if (!buf.slice(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) {
+    throw new Error('not a PNG');
+  }
+  let header = null;
+  let transparent = null; // tRNS: palette alphas, or the one colour that is see-through
+  const idat = [];
+  for (let at = 8; at + 8 <= buf.length; ) {
+    const length = buf.readUInt32BE(at);
+    const type = buf.toString('ascii', at + 4, at + 8);
+    const data = buf.subarray(at + 8, at + 8 + length);
+    if (type === 'IHDR') {
+      header = {
+        width: data.readUInt32BE(0),
+        height: data.readUInt32BE(4),
+        depth: data[8],
+        colour: data[9],
+        interlace: data[12],
+      };
+    } else if (type === 'tRNS') transparent = Buffer.from(data);
+    else if (type === 'IDAT') idat.push(data);
+    else if (type === 'IEND') break;
+    at += 12 + length;
+  }
+  if (!header) throw new Error('a PNG without a header');
+  const { width, height, depth, colour, interlace } = header;
+  const channels = { 0: 1, 2: 3, 3: 1, 4: 2, 6: 4 }[colour];
+  if (!channels || interlace || !(depth === 8 || (depth === 16 && colour !== 3))) {
+    throw new Error(`a ${depth}-bit colour-type-${colour}${interlace ? ' interlaced' : ''} PNG`);
+  }
+  // A frame-sized buffer per row of the sheet is fine; a 50MB bomb is not.
+  if (width * height > 64 * 1024 * 1024) throw new Error(`a ${width}x${height} PNG is too big to read`);
+
+  const bpp = (channels * depth) / 8;
+  const stride = width * bpp;
+  const raw = zlib.inflateSync(Buffer.concat(idat));
+  if (raw.length < (stride + 1) * height) throw new Error('a PNG cut short');
+
+  // tRNS keeps a grey or RGB key as 16-bit samples whatever the depth.
+  const key =
+    transparent && (colour === 0 || colour === 2) && transparent.length >= channels * 2
+      ? depth === 16
+        ? transparent.subarray(0, bpp)
+        : Buffer.from(Array.from({ length: channels }, (_, c) => transparent[c * 2 + 1]))
+      : null;
+  const alpha = new Uint8Array(width * height);
+  let prev = Buffer.alloc(stride);
+  let line = Buffer.alloc(stride);
+  for (let y = 0; y < height; y++) {
+    const start = y * (stride + 1);
+    const filter = raw[start];
+    for (let x = 0; x < stride; x++) {
+      const value = raw[start + 1 + x];
+      const left = x >= bpp ? line[x - bpp] : 0;
+      const up = prev[x];
+      const corner = x >= bpp ? prev[x - bpp] : 0;
+      let predicted = 0;
+      if (filter === 1) predicted = left;
+      else if (filter === 2) predicted = up;
+      else if (filter === 3) predicted = (left + up) >> 1;
+      else if (filter === 4) {
+        const p = left + up - corner;
+        const pa = Math.abs(p - left);
+        const pb = Math.abs(p - up);
+        const pc = Math.abs(p - corner);
+        predicted = pa <= pb && pa <= pc ? left : pb <= pc ? up : corner;
+      } else if (filter !== 0) throw new Error(`a PNG row with filter ${filter}`);
+      line[x] = (value + predicted) & 0xff;
+    }
+    for (let x = 0; x < width; x++) {
+      const px = x * bpp;
+      let a = 255;
+      if (colour === 6 || colour === 4) a = line[px + bpp - depth / 8];
+      else if (colour === 3) a = transparent && line[px] < transparent.length ? transparent[line[px]] : 255;
+      // Grey or RGB keyed out by tRNS: that one colour is clear, every other opaque.
+      else if (key && line.subarray(px, px + bpp).equals(key)) a = 0;
+      alpha[y * width + x] = a;
+    }
+    [prev, line] = [line, prev];
+  }
+  return { width, height, alpha };
+}
+
+/**
+ * How many frames each row of a sheet draws: the run of cells from the left
+ * with anything opaque in them, stopping at the first empty one (as the
+ * board's idle strips do). Pure.
+ *
+ * @returns {number[]} one count per row
+ */
+function drawnFrames({ width, height, alpha }, columns, rows) {
+  const cellWidth = Math.floor(width / columns);
+  const cellHeight = Math.floor(height / rows);
+  const drawn = (row, column) => {
+    for (let y = row * cellHeight; y < (row + 1) * cellHeight; y++) {
+      const from = y * width + column * cellWidth;
+      for (let x = from; x < from + cellWidth; x++) if (alpha[x]) return true;
+    }
+    return false;
+  };
+  return Array.from({ length: rows }, (_, row) => {
+    let count = 0;
+    while (count < columns && drawn(row, count)) count++;
+    return count;
+  });
+}
+
+/**
+ * `drawnFrames` for a sheet on disk, or null when it cannot be read — then
+ * every pose keeps the count it was given, as before this looked. A WebP (what
+ * OpenPets ships) is turned into a PNG by `sips`, which ships with macOS like
+ * the `ditto` that unpacked it.
+ */
+async function sheetRows(file, columns, rows) {
+  let tmp = null;
+  try {
+    let png = file;
+    if (!/\.png$/i.test(file)) {
+      tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'clippy-sheet-'));
+      png = path.join(tmp, 'sheet.png');
+      await execFileAsync('sips', ['-s', 'format', 'png', file, '--out', png]);
+    }
+    return drawnFrames(pngAlpha(fs.readFileSync(png)), columns, rows);
+  } catch (err) {
+    console.warn(`⚠ could not count the frames in ${path.basename(file)} (${err.message}) — keeping the counts given`);
+    return null;
+  } finally {
+    if (tmp) fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
+/**
+ * A URL we are willing to pull an archive from. Packs are third-party archives
+ * that get unpacked and copied into the app's own asset folder, so the download
+ * has to be authenticated by TLS (plain http is somebody else's zip) and come
+ * from the catalog this script actually knows. The catalog's own zips live on
+ * zip.openpets.dev, hence the subdomain match — and the catalog is remote JSON,
+ * so the URLs it hands back go through here too, not just the ones typed in.
+ */
+function packUrl(value) {
+  let url;
+  try {
+    url = new URL(String(value));
+  } catch {
+    throw new Error(`not a usable pack URL: ${value}`);
+  }
+  if (url.protocol !== 'https:') {
+    throw new Error(`sprite packs are only downloaded over https, got ${url.protocol}//`);
+  }
+  if (!/(^|\.)openpets\.dev$/i.test(url.hostname)) {
+    throw new Error(`only openpets.dev URLs (or direct .zip links on it) are understood, got ${url.hostname}`);
+  }
+  return url.href;
+}
+
+/**
  * Which zip a URL or bare pet id means, given the openpets catalog. Pure so
  * it can be tested without the network: a direct .zip URL is itself; a pet
  * page URL carries its slug in /pets/<slug>/; anything else is tried as an id.
  */
 function zipUrlFor(arg, pets) {
   if (/^https?:\/\//i.test(arg)) {
-    const url = new URL(arg);
-    if (url.pathname.endsWith('.zip')) return arg;
-    if (!/(^|\.)openpets\.dev$/i.test(url.hostname)) {
-      throw new Error(`only openpets.dev URLs (or direct .zip links) are understood, got ${url.hostname}`);
-    }
+    const href = packUrl(arg);
+    if (new URL(href).pathname.endsWith('.zip')) return href;
+    const url = new URL(href);
     const slug = (url.pathname.match(/\/pets\/([^/]+)/) || [])[1];
     const wanted = slug || url.pathname.split('/').filter(Boolean).pop() || '';
     const pet = pets.find(
       (p) => p.id === wanted || String(p.zip || '').includes(`/pets/${wanted}/`)
     );
     if (!pet || !pet.zip) throw new Error(`no pet matching “${wanted}” in the openpets catalog`);
-    return pet.zip;
+    return packUrl(pet.zip);
   }
   const pet = pets.find((p) => p.id === arg || String(p.zip || '').includes(`/pets/${arg}/`));
   if (!pet || !pet.zip) throw new Error(`no pet named “${arg}” in the openpets catalog`);
-  return pet.zip;
+  return packUrl(pet.zip);
 }
 
 /**
@@ -164,20 +354,72 @@ async function catalogPets(manifest, getJson) {
   return loaded.flatMap((page) => (Array.isArray(page?.pets) ? page.pets : []));
 }
 
-/** Fetch a URL-or-id pack into a temp folder and hand back that folder. */
-async function fetchPack(arg) {
-  const getJson = async (url) => {
-    const res = await fetch(url, { headers: { 'User-Agent': 'clippy-for-claude' } });
-    if (!res.ok) throw new Error(`openpets catalog answered ${res.status}`);
-    return res.json();
-  };
-  const zipUrl = zipUrlFor(arg, await catalogPets(await getJson(CATALOG_URL), getJson));
+/**
+ * The response body with the cap applied *while* it arrives rather than after.
+ * arrayBuffer() buffers whatever the server chooses to send before anyone gets
+ * to check its size, so a hostile or broken host could hand us gigabytes and
+ * the 50MB test would only run once the memory was already gone.
+ */
+async function readCapped(res, limit) {
+  const declared = Number(res.headers.get('content-length'));
+  if (declared > limit) throw new Error(`zip is ${declared} bytes — over the 50MB cap`);
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of res.body) {
+    size += chunk.length;
+    if (size > limit) throw new Error(`zip is over the 50MB cap`);
+    chunks.push(Buffer.from(chunk));
+  }
+  return Buffer.concat(chunks);
+}
+
+/**
+ * A zip can carry symlinks, and ditto restores them faithfully: a pack whose
+ * "sheet.webp" is really a link to something in the home directory would be
+ * copied into the app's asset folder as if it were art. No sprite pack needs
+ * links, so one anywhere in the tree fails the install.
+ */
+function assertNoLinks(dir) {
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (entry.isSymbolicLink()) {
+      throw new Error(`the pack contains a symlink (${entry.name}) — refusing to install it`);
+    }
+    if (entry.isDirectory()) assertNoLinks(path.join(dir, entry.name));
+  }
+}
+
+/** One catalog file, from openpets.dev and nowhere else. */
+async function catalogJson(url) {
+  const res = await fetch(packUrl(url), {
+    headers: { 'User-Agent': 'clippy-for-claude' },
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!res.ok) throw new Error(`openpets catalog answered ${res.status}`);
+  return res.json();
+}
+
+/**
+ * Every pet in the openpets.dev catalog, fetched now: fourteen-odd files. The
+ * settings window keeps its own copy of this (src/pet-catalog.js) and hands
+ * it to installPack, so searching and then installing is one download.
+ */
+async function loadCatalog() {
+  return catalogPets(await catalogJson(CATALOG_URL), catalogJson);
+}
+
+/**
+ * Fetch a URL-or-id pack into a temp folder. Returns the folder holding the
+ * pack and the temp root the caller has to delete afterwards. A direct .zip
+ * link needs no catalog; anything else is looked up in `pets()`.
+ */
+async function fetchPack(arg, pets = loadCatalog) {
+  const direct = /^https?:\/\//i.test(arg) && new URL(packUrl(arg)).pathname.endsWith('.zip');
+  const zipUrl = zipUrlFor(arg, direct ? [] : await pets());
 
   console.log(`downloading ${zipUrl}`);
   const zipRes = await fetch(zipUrl, { headers: { 'User-Agent': 'clippy-for-claude' } });
   if (!zipRes.ok) throw new Error(`download answered ${zipRes.status}`);
-  const buf = Buffer.from(await zipRes.arrayBuffer());
-  if (buf.length > MAX_ZIP_BYTES) throw new Error(`zip is ${buf.length} bytes — over the 50MB cap`);
+  const buf = await readCapped(zipRes, MAX_ZIP_BYTES);
   if (buf.slice(0, 2).toString('ascii') !== 'PK') throw new Error('that is not a zip file');
 
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'clippy-pack-'));
@@ -189,20 +431,36 @@ async function fetchPack(arg) {
   // Awaited, not sync: the settings window's "add a pet" runs this on the
   // Electron main process, which must not freeze while a 50MB zip unpacks.
   await execFileAsync('ditto', ['-x', '-k', zipFile, out]);
-  return out;
+  assertNoLinks(out);
+  return { dir: out, tmp };
 }
 
 /**
  * The whole install, callable from anywhere — the CLI below, or the settings
  * window's "add a pet" box (via main's IPC handler). `src` is a folder, a pet
  * page URL, a direct .zip link, or a bare pet id; `opts` carries the same
- * values the CLI flags do, keyed by flag name.
+ * values the CLI flags do, keyed by flag name. `pets` is where the catalog
+ * comes from when `src` has to be looked up in it: a fresh download unless
+ * the caller already holds a copy.
  */
-async function installPack(src, opts = {}) {
+async function installPack(src, opts = {}, { pets } = {}) {
   // A URL or a name that isn't a folder here: fetch it from openpets.dev.
-  // Packs zip up either flat or inside a folder of their own name.
   const fetched = /^https?:\/\//i.test(src) || !fs.existsSync(path.resolve(src));
-  let dir = fetched ? await fetchPack(src) : path.resolve(src);
+  if (!fetched) return installFromFolder(path.resolve(src), opts);
+  const { dir, tmp } = await fetchPack(src, pets);
+  try {
+    return await installFromFolder(dir, opts);
+  } finally {
+    // Otherwise every install leaves the zip and its unpacked copy — up to
+    // 100MB a go — sitting in the temp directory for the OS to deal with.
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
+/** The install proper, from a folder on disk. Packs zip up either flat or
+ *  inside a folder of their own name, so look one level down for the pet.json. */
+async function installFromFolder(from, opts) {
+  let dir = from;
   if (!fs.existsSync(path.join(dir, 'pet.json'))) {
     const nested = fs
       .readdirSync(dir, { withFileTypes: true })
@@ -227,9 +485,13 @@ async function installPack(src, opts = {}) {
       ''
   );
   const sheetFile = path.join(dir, sheetName);
-  if (!sheetName || !fs.existsSync(sheetFile)) throw new Error(`no sprite sheet in ${dir}`);
+  // lstat, not exists: the sheet has to be a real file in the pack, never a
+  // link the archive planted pointing at something else on this machine.
+  if (!sheetName || !fs.lstatSync(sheetFile, { throwIfNoEntry: false })?.isFile()) {
+    throw new Error(`no sprite sheet in ${dir}`);
+  }
 
-  // The id becomes a folder name under THEMES_DIR, so it must be a plain name:
+  // The id becomes a folder name under the themes folder, so it must be plain:
   // no separators (sanitized away) and never just dots.
   const id = String(opts.id || meta.id || path.basename(dir)).replace(/[^\w.-]/g, '-');
   if (!id || /^\.+$/.test(id)) throw new Error(`"${id}" is not a usable character id`);
@@ -244,10 +506,23 @@ async function installPack(src, opts = {}) {
     );
   }
 
+  // What each row really draws, so a pose never steps onto empty cells: a
+  // pet with four idle frames would otherwise vanish for two of every six.
+  const drawn = await sheetRows(sheetFile, columns, rows);
+  const defaults = columns === 8 && rows === 9 ? OPENPETS_POSES : GRID_POSES;
   const poses = {};
   for (const name of POSES) {
-    const spec = opts[name] || (name === 'idle' ? '0:6' : name === 'excited' ? '3:4' : null);
-    if (spec) poses[name] = { file: sheetName, ...pose(spec, name) };
+    const spec = opts[name] || defaults[name];
+    if (!spec) continue;
+    const p = { file: sheetName, ...pose(spec, name) };
+    const count = drawn ? drawn[p.row] : undefined;
+    if (count === 0 && name !== 'idle') {
+      // An empty row is no animation: the pose falls back to excited or idle.
+      console.warn(`⚠ row ${p.row} draws nothing — no ${name} for this pack`);
+      continue;
+    }
+    if (count > 0 && count < p.frames) p.frames = count;
+    poses[name] = p;
   }
 
   const theme = {
@@ -263,7 +538,9 @@ async function installPack(src, opts = {}) {
     poses,
   };
 
-  const out = path.join(THEMES_DIR, id);
+  // Worked out now, not at load: tests and the bench point CLIPPY_THEMES_DIR
+  // elsewhere, and userData is only known once the app is up.
+  const out = path.join(userThemesDir(), id);
   fs.mkdirSync(out, { recursive: true });
   fs.copyFileSync(sheetFile, path.join(out, sheetName));
   fs.writeFileSync(path.join(out, 'theme.json'), `${JSON.stringify(theme, null, 2)}\n`);
@@ -291,7 +568,7 @@ async function main() {
   for (const [name, p] of Object.entries(theme.poses)) {
     console.log(`  ${name.padEnd(8)} row ${p.row} (${p.frames} frames)`);
   }
-  console.log(`  ${path.relative(process.cwd(), out)}`);
+  console.log(`  ${out}`);
   console.log('Restart the app (or reload the test bench) to pick it up.');
 }
 
@@ -302,4 +579,15 @@ if (require.main === module) {
   });
 }
 
-module.exports = { imageSize, zipUrlFor, catalogPets, installPack };
+module.exports = {
+  imageSize,
+  packUrl,
+  zipUrlFor,
+  catalogPets,
+  assertNoLinks,
+  installPack,
+  loadCatalog,
+  pngAlpha,
+  drawnFrames,
+  OPENPETS_POSES,
+};

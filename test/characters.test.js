@@ -5,6 +5,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { pathToFileURL } = require('node:url');
 const {
   CHARACTERS,
   SIZES,
@@ -110,9 +111,36 @@ test('a dropped-in sprite sheet becomes a character', () => {
   assert.equal(theme.id, 'my-cat');
   assert.equal(theme.label, '🐈 My cat');
   assert.equal(theme.sheet.fps, 8);
-  // Paths are handed to the renderer, so they're relative to the renderer.
-  assert.equal(theme.sheet.poses.idle.file, 'assets/themes/my-cat/idle.png');
+  // Paths are handed to the renderer as absolute file:// URLs: the folder lives
+  // in userData now, nowhere near index.html.
+  assert.equal(theme.sheet.poses.idle.file, pathToFileURL(path.join(dir, 'my-cat', 'idle.png')).href);
   assert.equal(theme.sheet.poses.excited.frames, 6);
+  // The web bench serves the folder over http and addresses it its own way.
+  const [served] = customThemes(dir, (_d, id, file) => `/user-themes/${id}/${file}`);
+  assert.equal(served.sheet.poses.excited.file, '/user-themes/my-cat/run.png');
+});
+
+test('a theme.json cannot point the renderer outside its own folder', () => {
+  const dir = tmpThemes({
+    sneaky: {
+      'theme.json': JSON.stringify({
+        frameWidth: 32,
+        frameHeight: 32,
+        idle: { file: 'my sheet ✨.png', frames: 2 },
+        excited: { file: '../../etc/passwd', frames: 2 },
+        walk: { file: '/etc/passwd', frames: 2 },
+      }),
+    },
+  });
+  const [pack] = customThemes(dir);
+  const home = pathToFileURL(path.join(dir, 'sneaky')).href;
+  assert.equal(pack.sheet.poses.walk, undefined, 'an absolute path is not a pose');
+  assert.deepEqual(pack.sheet.poses.excited, pack.sheet.poses.idle, 'nor is a climb out of the folder');
+  for (const pose of Object.values(pack.sheet.poses)) {
+    assert.ok(pose.file.startsWith(`${home}/`), `${pose.file} leaves the pack folder`);
+  }
+  // Odd but honest names are percent-encoded, so they survive a CSS url("…").
+  assert.equal(pack.sheet.poses.idle.file, `${home}/my%20sheet%20%E2%9C%A8.png`);
 });
 
 test('a pack says which way its art is drawn, and right is the default', () => {
@@ -308,4 +336,60 @@ test('sheet sizes are read straight out of the image header', () => {
 
   fs.writeFileSync(path.join(dir, 'a.gif'), 'GIF89a');
   assert.throws(() => imageSize(path.join(dir, 'a.gif')), /PNG and WebP/);
+});
+
+test('a pack cannot point its sprite sheet outside the themes folder', () => {
+  // theme.json is whatever a downloaded pack shipped, and its `file` is pasted
+  // into a CSS url("...") in the renderer. A traversal would read a file
+  // elsewhere on the disk; a quote would close the url() and let the rest of
+  // the name be CSS. Either way the pose is not a pose.
+  const pose = (file) => ({ frameWidth: 32, frameHeight: 32, idle: { file, frames: 4 } });
+  const dir = tmpThemes({
+    escape: { 'theme.json': JSON.stringify(pose('../../../../etc/passwd')) },
+    encoded: { 'theme.json': JSON.stringify(pose('%2e%2e%2fidle.png')) },
+    quoted: { 'theme.json': JSON.stringify(pose('idle.png");}body{display:none}')) },
+    dots: { 'theme.json': JSON.stringify(pose('..')) },
+    // Spaces and accents are ordinary in a pack, and must still work.
+    fine: { 'theme.json': JSON.stringify(pose('my sheet ✨.webp')) },
+  });
+
+  assert.deepEqual(
+    customThemes(dir).map((t) => t.id),
+    ['fine']
+  );
+  assert.equal(
+    customThemes(dir)[0].sheet.poses.idle.file,
+    pathToFileURL(path.join(dir, 'fine', 'my sheet ✨.webp')).href
+  );
+});
+
+test('a themes folder is scanned once and again only when it changes', () => {
+  // customThemes is read per buddy and per session on every settings push, and
+  // each scan is a readdir plus a read-and-parse of every theme.json — all of
+  // it synchronous, on the main process.
+  const theme = (label) =>
+    JSON.stringify({ label, frameWidth: 32, frameHeight: 32, idle: { file: 'idle.png', frames: 2 } });
+  const dir = tmpThemes({ one: { 'theme.json': theme('One') } });
+
+  assert.deepEqual(customThemes(dir).map((t) => t.label), ['One']);
+
+  // Rewriting a theme.json in place moves *that* folder's mtime, not this
+  // one's, so the cached scan stands. That is the proof it is cached, and the
+  // one change a pack author has to restart the app to see.
+  fs.writeFileSync(path.join(dir, 'one', 'theme.json'), theme('Renamed'));
+  assert.deepEqual(customThemes(dir).map((t) => t.label), ['One']);
+
+  // Adding or removing a pack is a mkdir or an rmdir here, which moves the
+  // folder's own mtime — the one change that has to be noticed.
+  fs.mkdirSync(path.join(dir, 'two'));
+  fs.writeFileSync(path.join(dir, 'two', 'theme.json'), theme('Two'));
+  assert.deepEqual(
+    customThemes(dir).map((t) => t.id).sort(),
+    ['one', 'two']
+  );
+
+  // And a different folder is never answered from another one's scan.
+  assert.deepEqual(customThemes(tmpThemes({ other: { 'theme.json': theme('Other') } })).map((t) => t.id), [
+    'other',
+  ]);
 });

@@ -11,6 +11,8 @@ const {
   installOpenclawHooks,
   installToFiles,
   settingsPathFor,
+  readSettings,
+  writeSettings,
   uninstallHooks,
   uninstallOpenclawHooks,
   listInstalled,
@@ -357,6 +359,51 @@ test('installToFiles writes both agents\' files in-process and is idempotent', (
   const again = JSON.parse(fs.readFileSync(pathFor('claude'), 'utf8'));
   assert.equal(listInstalled(again).length, SPECS.length);
   assert.equal(again.theme, 'dark');
+});
+
+test('the settings file is replaced atomically, through a symlink, and kept private', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clippy-hooks-atomic-'));
+  const settingsPath = path.join(dir, 'home', '.claude', 'settings.json');
+
+  // A brand new file: written in one step, nothing left half-done beside it,
+  // and readable only by its owner — these are the user's own hook commands.
+  writeSettings(settingsPath, installHooks({ model: 'opus' }, 43117));
+  assert.equal(readSettings(settingsPath).model, 'opus');
+  assert.equal(fs.statSync(settingsPath).mode & 0o777, 0o600);
+  assert.deepEqual(fs.readdirSync(path.dirname(settingsPath)), ['settings.json']);
+
+  // An existing file keeps the mode it already had…
+  fs.chmodSync(settingsPath, 0o644);
+  writeSettings(settingsPath, { theme: 'dark' });
+  assert.equal(fs.statSync(settingsPath).mode & 0o777, 0o644);
+  assert.deepEqual(readSettings(settingsPath), { theme: 'dark' });
+
+  // …and a settings.json symlinked into a dotfiles repo still points there
+  // afterwards: the rename lands on the resolved file, not on the link.
+  const real = path.join(dir, 'dotfiles', 'settings.json');
+  fs.mkdirSync(path.dirname(real), { recursive: true });
+  fs.writeFileSync(real, '{}\n');
+  fs.rmSync(settingsPath);
+  fs.symlinkSync(real, settingsPath);
+  writeSettings(settingsPath, { theme: 'light' });
+  assert.ok(fs.lstatSync(settingsPath).isSymbolicLink(), 'the symlink survives the write');
+  assert.deepEqual(JSON.parse(fs.readFileSync(real, 'utf8')), { theme: 'light' });
+  assert.deepEqual(fs.readdirSync(path.dirname(real)), ['settings.json']);
+
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('settings that parse but are not an object are refused, not overwritten', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clippy-hooks-shape-'));
+  // `[]` and `"hi"` are valid JSON. Hanging hooks off them and stringifying
+  // back would silently throw away whatever the file held.
+  for (const raw of ['[]', '"hi"', 'null', '42']) {
+    const file = path.join(dir, 'settings.json');
+    fs.writeFileSync(file, raw);
+    assert.throws(() => readSettings(file), /not valid JSON/, raw);
+    assert.equal(fs.readFileSync(file, 'utf8'), raw, `${raw} left untouched`);
+  }
+  fs.rmSync(dir, { recursive: true, force: true });
 });
 
 test('installToFiles reports a broken config without clobbering it or the other agent', () => {

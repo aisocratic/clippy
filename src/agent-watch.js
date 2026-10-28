@@ -131,11 +131,15 @@ function startAgentWatch({ reader, onTurns, onStatus, remote = false, timers = {
       unchanged = 0;
       lastChangeAt = now();
       failures = 0;
+      // The backoff matters as much as the tier here: a session that dropped
+      // its connection and came back was sitting on an interval up to eight
+      // times its tier's, and clearing that without restarting left the poke
+      // waiting out the *old* sleep before it took effect.
+      const wasBackedOff = backoff > 1;
       backoff = 1;
-      if (tier !== 'active') {
-        tier = 'active';
-        restart();
-      }
+      if (tier !== 'active') tier = 'active';
+      else if (!wasBackedOff) return;
+      restart();
     },
     /** Nobody can see this buddy, so nothing it says is urgent. */
     setVisible(next) {

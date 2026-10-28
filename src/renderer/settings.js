@@ -20,9 +20,24 @@ const STATUS_TEXT = {
 
 // One flat object, exactly as main sends it: the settings themselves plus the
 // rosters and catalogue the page is drawn from.
-let state = { characters: [], sizes: [], actions: [], sessions: [] };
+let state = { characters: [], sizes: [], sessions: [] };
 const sheetTimers = [];
 const previewPose = new Map();
+// Each activity strip on the page and the history it draws, so the strips can
+// be redrawn as time passes without rebuilding the rows around them.
+const strips = new Map();
+
+/**
+ * Sprite previews are stepped by an interval each, and every render builds new
+ * elements for them — so the old timers have to go, or they carry on stepping
+ * nodes that are no longer on the page. One call at the top of render() covers
+ * the cast, the sessions and the solo row together; the clearing used to live
+ * at two call sites instead, and the third — every click on a size or a sound,
+ * which goes through set() — left another set of intervals running.
+ */
+function clearSheetTimers() {
+  while (sheetTimers.length) clearInterval(sheetTimers.pop());
+}
 
 /* ---------- Buddies ---------- */
 
@@ -34,6 +49,10 @@ function poseArt(character, pose, height = 64) {
   if (character.vector) {
     const colour = (state.sessions[0] || {}).color || '#9aa3ad';
     const svg = window.ClippyVectors.create(character.vector, pose.name, colour);
+    // A character naming a drawing this build does not have gets nothing rather
+    // than taking the whole page down with it — the same guard the buddy
+    // window uses for the same call.
+    if (!svg) return document.createElement('span');
     svg.style.height = `${height}px`;
     svg.style.width = `${Math.round(height * 0.8)}px`;
     return svg;
@@ -55,7 +74,8 @@ function poseArt(character, pose, height = 64) {
   el.className = 'sheet';
   el.style.width = `${w}px`;
   el.style.height = `${h}px`;
-  el.style.backgroundImage = `url("${pose.file}")`;
+  // Escaped even though main vets sheet filenames: a quote would end the url().
+  el.style.backgroundImage = `url("${CSS.escape(pose.file)}")`;
   el.style.backgroundSize = `${w * columns}px ${h * rows}px`;
   el.style.backgroundRepeat = 'no-repeat';
 
@@ -119,22 +139,25 @@ function posesOf(character) {
 function renderCast() {
   const host = document.getElementById('cast');
   host.replaceChildren();
-  const sessions = state.sessions || [];
-  const onDuty = new Set(sessions.map((s) => s.character));
+  // The face Clippy wears: the one picked here, or main's default for it.
+  const wearing = state.soloCharacter || (state.solo && state.solo.character) || '';
 
-  document.getElementById('cast-note').textContent =
-    'Click a buddy to see its next animation. Choose which session wears it under Sessions.';
+  const wearingLabel = (state.characters.find((c) => c.id === wearing) || {}).label;
+  document.getElementById('cast-note').textContent = wearingLabel
+    ? `Clippy is wearing ${wearingLabel}. Click another buddy to switch; ▶ plays its next animation.`
+    : 'Click a buddy and Clippy wears it. ▶ plays its next animation.';
 
   for (const character of state.characters) {
     const row = document.createElement('div');
-    row.className = `cast-row${onDuty.has(character.id) ? ' on' : ''}`;
+    row.className = `cast-row${character.id === wearing ? ' on' : ''}`;
 
     const who = document.createElement('button');
     who.className = 'cast-who';
     const poses = posesOf(character);
     const poseIndex = (previewPose.get(character.id) || 0) % poses.length;
     const pose = poses[poseIndex];
-    who.title = `Show ${character.label}'s next animation`;
+    who.title = `Clippy wears ${character.label}`;
+    who.setAttribute('aria-pressed', String(character.id === wearing));
 
     const art = document.createElement('span');
     art.className = 'cast-art';
@@ -146,13 +169,29 @@ function renderCast() {
     poseName.className = 'cast-pose-name';
     poseName.textContent = pose.label;
     who.append(art, name, poseName);
-    who.addEventListener('click', () => {
+    who.addEventListener('click', () => set('soloCharacter', character.id));
+
+    // Every buddy has nine animations; this steps through them without
+    // choosing. The whole page re-renders, not only the cast: clearing the
+    // timers stops the session rows' sprites too, and they only come back
+    // when their art is rebuilt.
+    const next = document.createElement('button');
+    next.className = 'cast-next';
+    next.textContent = '▶';
+    next.title = `Play ${character.label}'s next animation`;
+    next.setAttribute('aria-label', `Play ${character.label}'s next animation`);
+    next.addEventListener('click', () => {
       previewPose.set(character.id, (poseIndex + 1) % poses.length);
-      while (sheetTimers.length) clearInterval(sheetTimers.pop());
-      renderCast();
+      render();
     });
 
-    row.appendChild(who);
+    row.append(who, next);
+    if (character.id === wearing) {
+      const badge = document.createElement('span');
+      badge.className = 'cast-wearing';
+      badge.textContent = '✓ Clippy wears this';
+      row.appendChild(badge);
+    }
     if (character.removable) {
       const remove = document.createElement('button');
       remove.className = 'remove-buddy';
@@ -187,47 +226,13 @@ function renderSizes() {
   }
 }
 
-// What each choice actually does, said in the panel rather than guessed at.
-const BUDDY_MODES = [
-  {
-    id: 'each',
-    label: 'One each',
-    note:
-      'A buddy per session, side by side — every agent has its own face, colour and ' +
-      'spot on screen. Best when you want to see at a glance how many are running.',
-  },
-  {
-    id: 'one',
-    label: 'One for all',
-    note:
-      'A single buddy that speaks for whichever agent needs you, wearing that ' +
-      "agent's name, colour and face while it does. Best when several agents are " +
-      'running and you would rather not have a desk full of paperclips.',
-  },
-];
-
-function renderBuddyMode() {
-  const host = document.getElementById('buddy-mode');
-  const note = document.getElementById('buddy-mode-note');
-  const current = state.buddyMode === 'one' ? 'one' : 'each';
-  host.replaceChildren();
-  for (const mode of BUDDY_MODES) {
-    const btn = document.createElement('button');
-    btn.className = mode.id === current ? 'on' : '';
-    btn.textContent = mode.label;
-    btn.addEventListener('click', () => set('buddyMode', mode.id));
-    host.appendChild(btn);
-  }
-  note.textContent = BUDDY_MODES.find((mode) => mode.id === current).note;
-}
-
 /**
- * The row for the buddy that stands in for every agent.
+ * Clippy's own row: the one buddy that stands in for every agent.
  *
- * Built from the same pieces as a session row — dot, name, art, a picker —
- * because it is the same kind of thing: a buddy you can look at and re-cast.
- * What it is *not* is a session, so it wears the highlight and says what it is
- * doing rather than which agent it is.
+ * It wears the highlight and says which agent it is speaking for right now.
+ * Its face and size are chosen under Buddies, because Clippy never changes
+ * with the session. The sessions are listed under it, smaller and indented,
+ * as the agents connected to it.
  */
 function soloRow() {
   const solo = state.solo || {};
@@ -240,8 +245,8 @@ function soloRow() {
 
   const show = document.createElement('button');
   show.className = 'session-name';
-  show.textContent = `${solo.pet || 'One buddy'} · every agent`;
-  show.title = 'Bring the one buddy to the front';
+  show.textContent = 'Clippy';
+  show.title = 'Bring Clippy to the front';
   show.addEventListener('click', () => window.clippySettings.showBuddy('solo'));
 
   const status = document.createElement('span');
@@ -253,133 +258,20 @@ function soloRow() {
   const character = state.characters.find((c) => c.id === solo.character);
   if (character) art.appendChild(poseArt(character, posesOf(character)[0], 28));
 
-  // A dropdown, not a row of every character: the cast grows every time a
-  // sprite pack is installed, and a segmented control grew with it.
-  const pick = document.createElement('select');
-  pick.className = 'session-pick';
-  pick.title = 'Which buddy stands in for every agent';
-  const auto = document.createElement('option');
-  auto.value = '';
-  auto.textContent = `Auto (${labelFor(solo.character)})`;
-  pick.appendChild(auto);
-  for (const option of state.characters) {
-    const opt = document.createElement('option');
-    opt.value = option.id;
-    opt.textContent = option.label;
-    pick.appendChild(opt);
-  }
-  pick.value = state.soloCharacter || '';
-  pick.addEventListener('change', () => set('soloCharacter', pick.value));
+  // Which face and how big are chosen under Buddies, the one place for both;
+  // this row only shows the result.
+  const look = document.createElement('a');
+  look.className = 'session-look';
+  look.href = '#buddies';
+  look.textContent = `${labelFor(solo.character)} · ${SIZE_LABEL[state.size] || state.size}`;
+  look.title = 'Change under Buddies';
 
-  const sizePick = document.createElement('select');
-  sizePick.className = 'session-pick session-size';
-  sizePick.title = 'How big the main buddy is drawn';
-  const autoSize = document.createElement('option');
-  autoSize.value = '';
-  autoSize.textContent = `Default (${SIZE_LABEL[state.size] || state.size})`;
-  sizePick.appendChild(autoSize);
-  for (const size of state.sizes) {
-    const option = document.createElement('option');
-    option.value = size.id;
-    option.textContent = SIZE_LABEL[size.id] || size.id;
-    sizePick.appendChild(option);
-  }
-  sizePick.value = solo.size || '';
-  sizePick.addEventListener('change', () => set('soloSize', sizePick.value));
-
-  row.append(dot, show, status, art, pick, sizePick);
+  row.append(dot, show, status, art, look);
   return row;
 }
 
 function renderSound() {
   document.getElementById('appearance-sound').value = state.appearanceSound || '';
-}
-
-/* ---------- Clippy's Features ---------- */
-
-function renderActions() {
-  const host = document.getElementById('action-list');
-  host.replaceChildren();
-
-  for (const action of state.actions) {
-    const card = document.createElement('div');
-    card.className = 'action';
-
-    const head = document.createElement('div');
-    head.className = 'action-head';
-    const icon = document.createElement('span');
-    icon.className = 'action-icon';
-    icon.textContent = action.icon;
-    const title = document.createElement('span');
-    title.className = 'action-title';
-    title.textContent = action.title;
-    head.append(icon, title);
-
-    if (action.hook) {
-      const tag = document.createElement('span');
-      tag.className = 'tag';
-      tag.textContent = action.hook;
-      tag.title = 'the lifecycle hook that triggers this';
-      head.appendChild(tag);
-    }
-    if (action.appliesTo) {
-      const tag = document.createElement('span');
-      tag.className = 'tag';
-      tag.textContent = action.appliesTo;
-      tag.title = 'supported agents';
-      head.appendChild(tag);
-    }
-    // Say plainly when this one is switched off, and where the switch is: the
-    // catalogue would otherwise promise behaviour that can't happen.
-    if (action.setting && !state[action.setting]) {
-      const off = document.createElement('span');
-      off.className = 'tag off';
-      off.textContent = 'off';
-      off.title = 'turned off in the 📎 menu bar → Quick settings';
-      head.appendChild(off);
-    }
-
-    const dl = document.createElement('dl');
-    for (const [term, value] of [['When', action.when], ['You see', action.shows]]) {
-      if (!value) continue;
-      const dt = document.createElement('dt');
-      dt.textContent = term;
-      const dd = document.createElement('dd');
-      dd.textContent = value;
-      dl.append(dt, dd);
-    }
-
-    card.append(head, dl);
-
-    if (action.choices) {
-      const choices = document.createElement('div');
-      choices.className = 'choices';
-      for (const choice of action.choices) {
-        const row = document.createElement('div');
-        row.className = 'choice';
-        const label = document.createElement('span');
-        label.className = 'choice-label';
-        label.textContent = choice.label;
-        const effect = document.createElement('span');
-        effect.className = 'choice-effect';
-        effect.textContent = `— ${choice.effect}`;
-        row.append(label, effect);
-        // A choice with no json answers no hook (the review card's buttons) —
-        // showing "{}" there would claim a response that never happens.
-        if (choice.json) {
-          const json = document.createElement('code');
-          json.className = `choice-json${choice.json === '{}' ? ' empty' : ''}`;
-          json.textContent =
-            choice.json === '{}' ? '{}  · no opinion, the agent carries on as normal' : choice.json;
-          row.append(json);
-        }
-        choices.appendChild(row);
-      }
-      card.appendChild(choices);
-    }
-
-    host.appendChild(card);
-  }
 }
 
 /* ---------- Sessions ---------- */
@@ -438,28 +330,75 @@ function renderAccess() {
   host.append(title, body, path, actions, after);
 }
 
+/**
+ * A session's last 24 hours (see activity-strip.js): a span for each stretch
+ * it spent working, waiting on you, or done, on a line that ends at now.
+ * Colour is never the only carrier: every span and the strip have a title.
+ */
+function activityStrip(history) {
+  const strip = document.createElement('span');
+  strip.className = 'activity-strip';
+  strip.setAttribute('role', 'img');
+  strips.set(strip, history || []);
+  drawStrip(strip, history || [], Date.now());
+  return strip;
+}
+
+const clock = (at) => new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+function drawStrip(strip, history, now) {
+  const spans = ClippyStrip.stripSpans(history, now);
+  const told = ClippyStrip.describeStrip(spans);
+  const summary = told ? `Last 24 hours: ${told}` : 'Nothing in the last 24 hours';
+  strip.title = summary;
+  strip.setAttribute('aria-label', summary);
+  strip.replaceChildren(
+    ...spans.map((span) => {
+      const bar = document.createElement('span');
+      bar.className = `strip-span strip-${span.state}`;
+      const { left, width } = ClippyStrip.stripPlace(span, now);
+      bar.style.left = `${left}%`;
+      bar.style.width = `${width}%`;
+      bar.title =
+        `${ClippyStrip.STRIP_LABELS[span.state]} · ${clock(span.from)}–${span.open ? 'now' : clock(span.to)}` +
+        ` (${ClippyStrip.stripDuration(span.to - span.from)})`;
+      return bar;
+    })
+  );
+}
+
+// Now moves even when nothing reports in: slide every strip along once a minute.
+setInterval(() => {
+  const now = Date.now();
+  for (const [strip, history] of strips) {
+    if (strip.isConnected) drawStrip(strip, history, now);
+    else strips.delete(strip);
+  }
+}, 60 * 1000);
+
 function renderSessions() {
   const host = document.getElementById('session-list');
   host.replaceChildren();
+  strips.clear();
 
-  // One buddy for all of them: it goes at the top, because it is the one that
-  // answers for every row under it.
-  if (state.buddyMode === 'one') host.appendChild(soloRow());
+  // Clippy at the top; every agent connected to it underneath.
+  host.appendChild(soloRow());
 
   if (!state.sessions.length) {
     const empty = document.createElement('div');
     empty.className = 'empty-note';
-    empty.textContent =
-      state.buddyMode === 'one'
-        ? 'No sessions yet. Start Claude Code or Codex and the buddy above speaks for it.'
-        : 'No sessions yet. Start Claude Code or Codex in a project and its buddy appears here.';
+    empty.textContent = 'No agents yet. Start Claude Code or Codex and Clippy speaks for it.';
     host.appendChild(empty);
     return;
   }
 
+  const agents = document.createElement('div');
+  agents.className = 'agents';
   for (const session of state.sessions) {
+    // An agent row says who and how it is doing, and nothing about looks:
+    // Clippy never changes with the session, so there is nothing to pick here.
     const row = document.createElement('div');
-    row.className = 'session';
+    row.className = 'session agent-session';
 
     const dot = document.createElement('span');
     dot.className = 'dot';
@@ -467,8 +406,8 @@ function renderSessions() {
 
     const show = document.createElement('button');
     show.className = 'session-name';
-    show.textContent = `${labelFor(session.character)} · ${session.name}`;
-    show.title = `Bring ${labelFor(session.character)} to the front`;
+    show.textContent = session.name;
+    show.title = 'Bring Clippy to the front for this agent';
     show.addEventListener('click', () => window.clippySettings.showBuddy(session.sessionId));
 
     const status = document.createElement('span');
@@ -476,63 +415,28 @@ function renderSessions() {
     const agentName = { claude: 'Claude', codex: 'Codex', openclaw: 'OpenClaw' }[session.agent] || 'Claude';
     status.textContent = `${agentName} · ${STATUS_TEXT[session.status] || session.status || ''}`;
 
-    // This one buddy's own. The choice is kept against the session (so the
-    // folder's other agents keep theirs) and against the project (so the repo
-    // still looks the same tomorrow) — see assignCharacter in src/main.js.
-    const assigned =
-      (state.characterBySession || {})[session.sessionId] ||
-      (state.characterByProject || {})[session.name] ||
-      '';
-    const pick = document.createElement('select');
-    pick.className = 'session-pick';
-    pick.title = 'Which buddy this session gets';
-    const auto = document.createElement('option');
-    auto.value = '';
-    auto.textContent = `Auto (${labelFor(session.character)})`;
-    pick.appendChild(auto);
-    for (const character of state.characters) {
-      const option = document.createElement('option');
-      option.value = character.id;
-      option.textContent = character.label;
-      pick.appendChild(option);
+    row.append(dot, show, status, activityStrip(session.history));
+    agents.appendChild(row);
+
+    // The subagents it has running, one step further in: a helper of this
+    // agent, with what it is doing. They come and go with the task.
+    for (const sub of session.subagents || []) {
+      const subRow = document.createElement('div');
+      subRow.className = 'session agent-session subagent-session';
+      const subDot = document.createElement('span');
+      subDot.className = 'dot';
+      subDot.style.background = session.color || '#9aa3ad';
+      const subName = document.createElement('span');
+      subName.className = 'session-name';
+      subName.textContent = sub.type;
+      const subStatus = document.createElement('span');
+      subStatus.className = 'session-status';
+      subStatus.textContent = sub.label || 'working…';
+      subRow.append(subDot, subName, subStatus);
+      agents.appendChild(subRow);
     }
-    pick.value = assigned;
-    pick.addEventListener('change', () =>
-      window.clippySettings.assign(session.sessionId, pick.value)
-    );
-
-    // …and how big it is drawn, kept the same way. A repo you watch out of the
-    // corner of your eye can be XS while the one you're in is large.
-    const assignedSize =
-      (state.sizeBySession || {})[session.sessionId] ||
-      (state.sizeByProject || {})[session.name] ||
-      '';
-    const sizePick = document.createElement('select');
-    sizePick.className = 'session-pick session-size';
-    sizePick.title = 'How big this session’s buddy is drawn';
-    const autoSize = document.createElement('option');
-    autoSize.value = '';
-    autoSize.textContent = `Default (${SIZE_LABEL[state.size] || state.size})`;
-    sizePick.appendChild(autoSize);
-    for (const size of state.sizes) {
-      const option = document.createElement('option');
-      option.value = size.id;
-      option.textContent = SIZE_LABEL[size.id] || size.id;
-      sizePick.appendChild(option);
-    }
-    sizePick.value = assignedSize;
-    sizePick.addEventListener('change', () =>
-      window.clippySettings.assignSize(session.sessionId, sizePick.value)
-    );
-
-    const art = document.createElement('span');
-    art.className = 'session-art';
-    const character = state.characters.find((c) => c.id === (assigned || session.character));
-    if (character) art.appendChild(poseArt(character, posesOf(character)[0], 28));
-
-    row.append(dot, show, status, art, pick, sizePick);
-    host.appendChild(row);
   }
+  host.appendChild(agents);
 }
 
 /* ---------- Wiring ---------- */
@@ -549,12 +453,11 @@ function set(key, value) {
 }
 
 function render() {
+  clearSheetTimers();
   renderAccess();
   renderSound();
-  renderBuddyMode();
   renderSizes();
   renderCast();
-  renderActions();
   renderSessions();
 
   const text = document.getElementById('server-text');
@@ -571,8 +474,6 @@ for (const link of document.querySelectorAll('a[href^="https://"]')) {
 }
 
 window.clippySettings.onState((next) => {
-  // Sprite animations are re-created on every render; drop the old timers.
-  while (sheetTimers.length) clearInterval(sheetTimers.pop());
   state = { ...state, ...next };
   render();
   syncRailSelection();
@@ -658,13 +559,44 @@ document.getElementById('btn-new-agent').addEventListener('click', () => {
     status.textContent = text;
   };
 
-  const install = async () => {
-    const url = input.value.trim();
-    if (!url) return;
+  // The OpenPets catalog, searched by main (this window fetches nothing): a
+  // page of tiles at a time, as on the board's pet picker. A tile installs
+  // its pet exactly as a pasted link does.
+  const search = document.getElementById('pet-search');
+  const results = document.getElementById('pet-results');
+  const pager = document.getElementById('pet-pager');
+  const count = document.getElementById('pet-count');
+  const prev = document.getElementById('pet-prev');
+  const next = document.getElementById('pet-next');
+  const SEARCH_DEBOUNCE_MS = 250;
+  // Thumbnails main is still downloading: ask again shortly, a few times.
+  const THUMB_RETRY_MS = 2000;
+  const THUMB_RETRIES = 3;
+  let query = '';
+  let page = 0;
+  let asked = 0; // the newest search; an older answer arriving late is dropped
+  let retry = null;
+  let typing = null;
+  let installing = false;
+
+  const lockTiles = () => {
+    for (const tile of results.querySelectorAll('.pet-tile')) {
+      tile.disabled = installing || tile.classList.contains('installed');
+    }
+  };
+
+  const install = async (src, tile) => {
+    if (!src || installing) return;
+    installing = true;
     input.disabled = button.disabled = true;
+    lockTiles();
+    tile?.classList.add('saving');
     say('Fetching the pack…');
-    const res = await window.clippySettings.installPet(url);
+    const res = await window.clippySettings.installPet(src);
+    installing = false;
     input.disabled = button.disabled = false;
+    tile?.classList.remove('saving');
+    lockTiles();
     if (res && res.ok) {
       say(`${res.label} joined the cast.`, 'good');
       input.value = '';
@@ -674,9 +606,89 @@ document.getElementById('btn-new-agent').addEventListener('click', () => {
     }
   };
 
-  button.addEventListener('click', install);
+  const note = (text) => {
+    const p = document.createElement('p');
+    p.className = 'pet-results-note';
+    p.textContent = text;
+    return p;
+  };
+
+  const petTile = (pet) => {
+    const tile = document.createElement('button');
+    tile.className = 'pet-tile';
+    tile.classList.toggle('installed', pet.installed);
+    tile.title = pet.installed ? `${pet.name} is in the cast` : `Install ${pet.name}`;
+    let art;
+    if (pet.thumb) {
+      art = document.createElement('img');
+      art.src = pet.thumb;
+      art.alt = '';
+      art.loading = 'lazy';
+    } else {
+      art = document.createElement('span'); // still on its way
+    }
+    art.className = 'pet-thumb';
+    const label = document.createElement('span');
+    label.className = 'pet-name';
+    label.textContent = pet.installed ? `✓ ${pet.name}` : pet.name;
+    tile.append(art, label);
+    tile.addEventListener('click', () => install(pet.id, tile));
+    return tile;
+  };
+
+  async function find(attempt = 0) {
+    clearTimeout(retry);
+    const ticket = ++asked;
+    if (!attempt && !results.querySelector('.pet-tile')) {
+      results.replaceChildren(note('Looking through the catalog…'));
+    }
+    const res = await window.clippySettings.searchPets(query, page);
+    if (ticket !== asked) return;
+    if (!res || !res.ok) {
+      results.replaceChildren(note((res && res.error) || 'The catalog could not be loaded.'));
+      pager.hidden = true;
+      return;
+    }
+    page = res.page;
+    const pages = Math.max(1, Math.ceil(res.total / res.pageSize));
+    results.replaceChildren(...(res.total ? res.pets.map(petTile) : [note(`No pet matches “${query}”.`)]));
+    lockTiles();
+    pager.hidden = !res.total;
+    count.textContent = `${res.total.toLocaleString()} pets · page ${res.page + 1} of ${pages}`;
+    prev.disabled = res.page === 0;
+    next.disabled = res.page + 1 >= pages;
+    if (attempt < THUMB_RETRIES && res.pets.some((pet) => !pet.thumb)) {
+      retry = setTimeout(() => find(attempt + 1), THUMB_RETRY_MS);
+    }
+  }
+
+  search.addEventListener('input', () => {
+    clearTimeout(typing);
+    typing = setTimeout(() => {
+      query = search.value.trim();
+      page = 0;
+      find();
+    }, SEARCH_DEBOUNCE_MS);
+  });
+  prev.addEventListener('click', () => {
+    page -= 1;
+    results.scrollTop = 0;
+    find();
+  });
+  next.addEventListener('click', () => {
+    page += 1;
+    results.scrollTop = 0;
+    find();
+  });
+  dialog.addEventListener('close', () => {
+    clearTimeout(retry);
+    clearTimeout(typing);
+    asked += 1; // nothing still in flight paints a closed dialog
+  });
+
+  button.addEventListener('click', () => install(input.value.trim()));
   input.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') install();
+    if (e.key === 'Enter') install(input.value.trim());
   });
 
   function paintCanvas() {
@@ -728,6 +740,7 @@ document.getElementById('btn-new-agent').addEventListener('click', () => {
   document.getElementById('btn-add-buddy').addEventListener('click', () => {
     showOptions();
     dialog.showModal();
+    find();
   });
   document.getElementById('close-buddy-dialog').addEventListener('click', () => dialog.close());
   document.getElementById('start-drawing').addEventListener('click', showDrawing);

@@ -54,6 +54,8 @@ contextBridge.exposeInMainWorld('clippyAPI', {
   // What a session Clippy started has been saying, for the panel that
   // shows more than the last line of it.
   feed: () => ipcRenderer.invoke('clippy-feed'),
+  // The Hide button (and the card's ✕): puts Clippy away and drops a perch or
+  // pin with it. Nothing else in the renderer hides the window.
   hide: () => ipcRenderer.send('clippy-hide'),
   quit: () => ipcRenderer.send('clippy-quit'),
 });

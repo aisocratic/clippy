@@ -8,7 +8,6 @@
  * GitHub Actions macOS runner as well as the release Mac.
  */
 
-const assert = require('node:assert');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -37,8 +36,21 @@ function assertTagMatchesPackageVersion(tag, version = packageVersion()) {
   }
 }
 
+/** Hashed a megabyte at a time: a release DMG is hundreds of megabytes, and
+ *  readFileSync would hold every one of them in memory to hash it once. */
 function sha256File(file) {
-  return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+  const hash = crypto.createHash('sha256');
+  const fd = fs.openSync(file, 'r');
+  try {
+    const buf = Buffer.allocUnsafe(1024 * 1024);
+    let read;
+    while ((read = fs.readSync(fd, buf, 0, buf.length, null)) > 0) {
+      hash.update(buf.subarray(0, read));
+    }
+  } finally {
+    fs.closeSync(fd);
+  }
+  return hash.digest('hex');
 }
 
 function assertChecksum(dmgFile, checksumFile = `${dmgFile}.sha256`) {
@@ -48,8 +60,14 @@ function assertChecksum(dmgFile, checksumFile = `${dmgFile}.sha256`) {
   if (match[2] !== path.basename(dmgFile)) {
     throw new Error(`checksum file names ${match[2]}, expected ${path.basename(dmgFile)}`);
   }
-  const actual = sha256File(dmgFile);
-  if (match[1] !== actual) throw new Error(`checksum mismatch for ${path.basename(dmgFile)}`);
+  // Both sides are exactly 32 bytes — the regex above pins one, sha256 the
+  // other — so the compare is length-safe, and timingSafeEqual keeps the
+  // comparison itself from being a signal.
+  const expected = Buffer.from(match[1], 'hex');
+  const actual = Buffer.from(sha256File(dmgFile), 'hex');
+  if (!crypto.timingSafeEqual(expected, actual)) {
+    throw new Error(`checksum mismatch for ${path.basename(dmgFile)}`);
+  }
 }
 
 function assertBuildVersion(appBundle, expectedVersion) {
@@ -104,6 +122,24 @@ function mountedVolumeFor(dmgFile) {
   return volume;
 }
 
+/**
+ * Unmount, and keep trying. A volume some indexer still has open would leave
+ * the release Mac (or the runner) with a mounted image after every failure —
+ * and, worse, throwing from the `finally` below would replace whichever check
+ * actually failed with a detach error nobody asked about.
+ */
+function detachVolume(volume, run = (args) => command('hdiutil', args), log = console) {
+  for (const args of [['detach', volume], ['detach', '-force', volume]]) {
+    try {
+      run(args);
+      return true;
+    } catch (err) {
+      if (args.includes('-force')) log.error(`warning: could not unmount ${volume}: ${err.message}`);
+    }
+  }
+  return false;
+}
+
 function verifyRelease({
   dmgFile = path.join(ROOT, 'dist', `${PRODUCT}.dmg`),
   checksumFile = `${dmgFile}.sha256`,
@@ -131,7 +167,7 @@ function verifyRelease({
     // This is the Gatekeeper assessment that matters after drag-to-Applications.
     command('spctl', ['--assess', '--type', 'execute', '--verbose=4', appBundle]);
   } finally {
-    if (volume) command('hdiutil', ['detach', volume]);
+    if (volume) detachVolume(volume);
   }
 
   return { dmgFile, checksumFile, tag };
@@ -149,6 +185,7 @@ module.exports = {
   assertChecksum,
   assertBuildVersion,
   assertTagMatchesPackageVersion,
+  detachVolume,
   packageVersion,
   sha256File,
   verifyRelease,

@@ -46,7 +46,9 @@ test('the button list carries what the window draws', () => {
   }
 });
 
-test('the gallery retargets a story to its own buddy and stretches the hold', () => {
+// "Show all at once" in the app sandbox, not the web states page: that one
+// plays its own scenario table into a single frame.
+test('the app sandbox gallery retargets a story to its own buddy and stretches the hold', () => {
   const now = 1_700_000_000_000;
   const [card] = eventsFor('approval', now, {
     sessionId: 'dev:approval',

@@ -37,6 +37,9 @@ function loadDemoApi() {
   const window = {
     parent: { postMessage() {} },
     addEventListener() {},
+    // The stub posts at its parent by origin rather than to '*', so the fake
+    // window needs the one every real one has.
+    location: { origin: 'http://127.0.0.1:43119', search: '' },
   };
   const document = {
     readyState: 'complete',
@@ -49,6 +52,49 @@ function loadDemoApi() {
   vm.runInNewContext(source, { window, document, MouseEvent: class MouseEvent {} });
   return window.clippyAPI;
 }
+
+function loadProductionReaderApi() {
+  let api;
+  const electron = {
+    contextBridge: {
+      exposeInMainWorld(name, exposed) {
+        assert.equal(name, 'readerAPI');
+        api = exposed;
+      },
+    },
+    ipcRenderer: { on() {}, send() {} },
+  };
+  const source = fs.readFileSync(path.join(ROOT, 'src', 'preload-reader.js'), 'utf8');
+  vm.runInNewContext(source, {
+    require(name) {
+      assert.equal(name, 'electron');
+      return electron;
+    },
+  });
+  return api;
+}
+
+function loadDemoReaderApi() {
+  const window = { location: { search: '?flow=complete' } };
+  const source = fs.readFileSync(path.join(ROOT, 'demo', 'reader-stub.js'), 'utf8');
+  vm.runInNewContext(source, { window, URLSearchParams, setTimeout() {} });
+  return window.readerAPI;
+}
+
+test('the reading window has one bridge, and main answers all of it', () => {
+  // Three sides drift apart quietly: the browser stub is only ever exercised by
+  // eye, and a channel the preload sends that main never listens for is a
+  // button that does nothing.
+  assert.deepEqual(Object.keys(loadDemoReaderApi()).sort(), Object.keys(loadProductionReaderApi()).sort());
+
+  const preload = fs.readFileSync(path.join(ROOT, 'src', 'preload-reader.js'), 'utf8');
+  const main = fs.readFileSync(path.join(ROOT, 'src', 'main.js'), 'utf8');
+  const sent = [...preload.matchAll(/ipcRenderer\.send\('([^']+)'/g)].map((match) => match[1]);
+  assert.ok(sent.length);
+  for (const channel of sent) {
+    assert.match(main, new RegExp(`ipcMain\\.on\\('${channel}'`), channel);
+  }
+});
 
 test('the production preload and browser demo expose the same renderer API', () => {
   const productionMethods = Object.keys(loadProductionApi()).sort();
@@ -116,7 +162,7 @@ test('a buddy can show what the session Clippy started has been saying', () => {
   assert.match(html, /id="menu-feed"/);
   // The panel has to be in PANELS, or syncMode never measures it and the
   // window stays buddy-sized around it.
-  assert.match(buddy, /const PANELS = \[[^\]]*'feed'/);
+  assert.match(buddy, /const PANELS = \[[^\]]*feedEl/);
   // Reachable in one click from the action bar, not only by knowing to
   // right-click. (This used to assert `CONTROL_HOSTS` contained 'feed' — the
   // row was re-parented into whichever panel was open, and the feed was one of
@@ -155,4 +201,27 @@ test('new agents default to a persistent chat workspace without hiding project a
   assert.match(main, /ensureChatWorkspace\(os\.homedir\(\)\)/);
   assert.match(main, /label: `Chat with \$\{label\}`/);
   assert.match(main, /remember: false/);
+});
+
+test('the settings bridge, its browser stub and main agree', () => {
+  let api;
+  const electron = {
+    contextBridge: { exposeInMainWorld: (_name, exposed) => (api = exposed) },
+    ipcRenderer: { on() {}, send() {}, invoke() {} },
+  };
+  const preload = fs.readFileSync(path.join(ROOT, 'src', 'preload-settings.js'), 'utf8');
+  vm.runInNewContext(preload, { require: () => electron });
+  const window = {};
+  vm.runInNewContext(fs.readFileSync(path.join(ROOT, 'demo', 'settings-stub.js'), 'utf8'), { window });
+  // The stub leaves out what only the desktop app has a use for; it never
+  // invents a method the real window lacks.
+  const extra = Object.keys(window.clippySettings).filter((key) => !(key in api));
+  assert.deepEqual(extra, []);
+  assert.ok('searchPets' in window.clippySettings);
+
+  // Every channel the window invokes is one main answers.
+  const main = fs.readFileSync(path.join(ROOT, 'src', 'main.js'), 'utf8');
+  const invoked = [...preload.matchAll(/ipcRenderer\.invoke\('([^']+)'/g)].map((match) => match[1]);
+  assert.ok(invoked.includes('clippy-settings-search-pets'));
+  for (const channel of invoked) assert.match(main, new RegExp(`ipcMain\\.handle\\('${channel}'`), channel);
 });

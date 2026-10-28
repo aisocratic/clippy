@@ -102,6 +102,47 @@ test('the dev watcher forwards shutdown and closes its filesystem watchers', asy
   }
 });
 
+test('the dev watcher cleans up when spawning throws outright', async () => {
+  const previousExitCode = process.exitCode;
+  const signalListeners = {
+    SIGINT: process.listenerCount('SIGINT'),
+    SIGTERM: process.listenerCount('SIGTERM'),
+  };
+  const watched = [];
+  const watch = () => {
+    const watcher = new EventEmitter();
+    watcher.closed = false;
+    watcher.close = () => {
+      watcher.closed = true;
+    };
+    watched.push(watcher);
+    return watcher;
+  };
+
+  try {
+    // `require('electron')` throws when the dependency isn't installed. That
+    // used to escape startDevWatcher with the watchers open and the signal
+    // handlers attached, so the process hung instead of saying what was wrong.
+    startDevWatcher({
+      root: '/tmp/clippy-dev-throw-test',
+      watch,
+      spawnElectron: () => {
+        throw new Error('Cannot find module "electron"');
+      },
+      electronPath: '/tmp/missing-electron',
+      logger: quiet,
+    });
+
+    assert.ok(watched.length > 0);
+    assert.ok(watched.every((watcher) => watcher.closed));
+    assert.equal(process.exitCode, 1);
+    assert.equal(process.listenerCount('SIGINT'), signalListeners.SIGINT);
+    assert.equal(process.listenerCount('SIGTERM'), signalListeners.SIGTERM);
+  } finally {
+    process.exitCode = previousExitCode;
+  }
+});
+
 test('the dev watcher cleans up when Electron cannot spawn', async () => {
   const previousExitCode = process.exitCode;
   const watched = [];
