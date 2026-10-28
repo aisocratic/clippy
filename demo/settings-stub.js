@@ -28,6 +28,7 @@
       push();
     },
     showBuddy: (sessionId) => console.log('would show the buddy for', sessionId),
+    searchPets: async () => ({ ok: false, error: 'Searching the OpenPets catalog is available in the desktop app.' }),
     installPet: async () => ({ ok: false, error: 'Pack installation is available in the desktop app.' }),
     createPet: async ({ label, pixels }) => {
       const name = String(label || '').trim();

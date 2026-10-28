@@ -509,13 +509,44 @@ document.getElementById('btn-new-agent').addEventListener('click', () => {
     status.textContent = text;
   };
 
-  const install = async () => {
-    const url = input.value.trim();
-    if (!url) return;
+  // The OpenPets catalog, searched by main (this window fetches nothing): a
+  // page of tiles at a time, as on the board's pet picker. A tile installs
+  // its pet exactly as a pasted link does.
+  const search = document.getElementById('pet-search');
+  const results = document.getElementById('pet-results');
+  const pager = document.getElementById('pet-pager');
+  const count = document.getElementById('pet-count');
+  const prev = document.getElementById('pet-prev');
+  const next = document.getElementById('pet-next');
+  const SEARCH_DEBOUNCE_MS = 250;
+  // Thumbnails main is still downloading: ask again shortly, a few times.
+  const THUMB_RETRY_MS = 2000;
+  const THUMB_RETRIES = 3;
+  let query = '';
+  let page = 0;
+  let asked = 0; // the newest search; an older answer arriving late is dropped
+  let retry = null;
+  let typing = null;
+  let installing = false;
+
+  const lockTiles = () => {
+    for (const tile of results.querySelectorAll('.pet-tile')) {
+      tile.disabled = installing || tile.classList.contains('installed');
+    }
+  };
+
+  const install = async (src, tile) => {
+    if (!src || installing) return;
+    installing = true;
     input.disabled = button.disabled = true;
+    lockTiles();
+    tile?.classList.add('saving');
     say('Fetching the pack…');
-    const res = await window.clippySettings.installPet(url);
+    const res = await window.clippySettings.installPet(src);
+    installing = false;
     input.disabled = button.disabled = false;
+    tile?.classList.remove('saving');
+    lockTiles();
     if (res && res.ok) {
       say(`${res.label} joined the cast.`, 'good');
       input.value = '';
@@ -525,9 +556,89 @@ document.getElementById('btn-new-agent').addEventListener('click', () => {
     }
   };
 
-  button.addEventListener('click', install);
+  const note = (text) => {
+    const p = document.createElement('p');
+    p.className = 'pet-results-note';
+    p.textContent = text;
+    return p;
+  };
+
+  const petTile = (pet) => {
+    const tile = document.createElement('button');
+    tile.className = 'pet-tile';
+    tile.classList.toggle('installed', pet.installed);
+    tile.title = pet.installed ? `${pet.name} is in the cast` : `Install ${pet.name}`;
+    let art;
+    if (pet.thumb) {
+      art = document.createElement('img');
+      art.src = pet.thumb;
+      art.alt = '';
+      art.loading = 'lazy';
+    } else {
+      art = document.createElement('span'); // still on its way
+    }
+    art.className = 'pet-thumb';
+    const label = document.createElement('span');
+    label.className = 'pet-name';
+    label.textContent = pet.installed ? `✓ ${pet.name}` : pet.name;
+    tile.append(art, label);
+    tile.addEventListener('click', () => install(pet.id, tile));
+    return tile;
+  };
+
+  async function find(attempt = 0) {
+    clearTimeout(retry);
+    const ticket = ++asked;
+    if (!attempt && !results.querySelector('.pet-tile')) {
+      results.replaceChildren(note('Looking through the catalog…'));
+    }
+    const res = await window.clippySettings.searchPets(query, page);
+    if (ticket !== asked) return;
+    if (!res || !res.ok) {
+      results.replaceChildren(note((res && res.error) || 'The catalog could not be loaded.'));
+      pager.hidden = true;
+      return;
+    }
+    page = res.page;
+    const pages = Math.max(1, Math.ceil(res.total / res.pageSize));
+    results.replaceChildren(...(res.total ? res.pets.map(petTile) : [note(`No pet matches “${query}”.`)]));
+    lockTiles();
+    pager.hidden = !res.total;
+    count.textContent = `${res.total.toLocaleString()} pets · page ${res.page + 1} of ${pages}`;
+    prev.disabled = res.page === 0;
+    next.disabled = res.page + 1 >= pages;
+    if (attempt < THUMB_RETRIES && res.pets.some((pet) => !pet.thumb)) {
+      retry = setTimeout(() => find(attempt + 1), THUMB_RETRY_MS);
+    }
+  }
+
+  search.addEventListener('input', () => {
+    clearTimeout(typing);
+    typing = setTimeout(() => {
+      query = search.value.trim();
+      page = 0;
+      find();
+    }, SEARCH_DEBOUNCE_MS);
+  });
+  prev.addEventListener('click', () => {
+    page -= 1;
+    results.scrollTop = 0;
+    find();
+  });
+  next.addEventListener('click', () => {
+    page += 1;
+    results.scrollTop = 0;
+    find();
+  });
+  dialog.addEventListener('close', () => {
+    clearTimeout(retry);
+    clearTimeout(typing);
+    asked += 1; // nothing still in flight paints a closed dialog
+  });
+
+  button.addEventListener('click', () => install(input.value.trim()));
   input.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') install();
+    if (e.key === 'Enter') install(input.value.trim());
   });
 
   function paintCanvas() {
@@ -579,6 +690,7 @@ document.getElementById('btn-new-agent').addEventListener('click', () => {
   document.getElementById('btn-add-buddy').addEventListener('click', () => {
     showOptions();
     dialog.showModal();
+    find();
   });
   document.getElementById('close-buddy-dialog').addEventListener('click', () => dialog.close());
   document.getElementById('start-drawing').addEventListener('click', showDrawing);

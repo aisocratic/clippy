@@ -622,6 +622,101 @@ select:disabled {
   margin-top: 6px;
 }
 
+/* The catalog search: a field, a page of tiles, and the pager under them. */
+.pet-search {
+  width: 100%;
+  margin-top: 8px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1.5px solid var(--line);
+  background: #ffffff;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+}
+
+.pet-results {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 6px;
+  max-height: 252px;
+  min-height: 60px;
+  margin-top: 8px;
+  overflow-y: auto;
+}
+
+.pet-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  padding: 5px 4px 4px;
+  border: 1.5px solid var(--line);
+  border-radius: 9px;
+  background: #ffffff;
+  color: var(--text);
+  font: inherit;
+}
+
+.pet-tile:hover:not(:disabled) { border-color: var(--ink); background: #fffdf8; }
+.pet-tile:disabled { cursor: default; }
+.pet-tile.installed { background: var(--surface); border-style: dashed; }
+.pet-tile.installed .pet-name { color: var(--ok); }
+.pet-tile:disabled:not(.installed):not(.saving) { opacity: 0.55; }
+.pet-tile.saving { border-color: var(--ink); animation: pet-saving 0.9s ease-in-out infinite alternate; }
+
+@keyframes pet-saving {
+  to { background: var(--yellow); }
+}
+
+.pet-thumb {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: contain;
+  border-radius: 6px;
+}
+
+span.pet-thumb { background: var(--surface-2); }
+
+.pet-name {
+  width: 100%;
+  overflow: hidden;
+  font-size: 10.5px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--muted);
+}
+
+.pet-results-note {
+  grid-column: 1 / -1;
+  padding: 14px 2px;
+}
+
+.pet-pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.pet-pager[hidden] { display: none; }
+.pet-pages { display: flex; gap: 4px; }
+
+.pet-pages button {
+  padding: 1px 10px;
+  border: 1.5px solid var(--line);
+  border-radius: 7px;
+  background: #ffffff;
+  font: inherit;
+  font-size: 13px;
+}
+
+.pet-pages button:disabled { color: var(--faint); cursor: default; }
+
 #pet-status.good { color: var(--ok); }
 #pet-status.bad { color: var(--no); }
 

@@ -550,13 +550,17 @@ Feedback, one page at a time.
   straight into its session. This is the one place Clippy's look is set: the
   size picker, and the cast — click a character and Clippy wears it (the
   paperclip until you do); ▶ on a card plays its next animation.
-  There's a link to [openpets.dev/gallery](https://openpets.dev/gallery) for
-  more — paste a pet's page link into the **Add a pet** box right there (or into
-  `npm run add-sprite-pack -- <pet url>` in a terminal) and it downloads,
-  installs, and joins the cast on the spot.
+  **Add a buddy** searches the [OpenPets](https://openpets.dev/gallery) catalog
+  by name, a page of thumbnails at a time: click one and it downloads,
+  installs, and joins the cast on the spot. A pet's page link pasted into the
+  same box (or into `npm run add-sprite-pack -- <pet url>` in a terminal) does
+  the same.
 - **Updates** — which copy you're running (checkout vs packaged app, version,
   commit), and a button that compares it with the tip of `main` on GitHub.
-  Like the pet downloads above, it's a deliberate, user-initiated request.
+  Like the pet search and downloads above, it's a deliberate, user-initiated
+  request: the catalog is fetched when you open **Add a buddy**, kept for an
+  hour, and its thumbnails are saved next to the settings rather than loaded
+  by the window.
   Along with **Feedback** below, these are the only times Clippy talks to
   anything but localhost — and never on its own.
 - **Feedback** — a thumb and a box, going privately to the people who make

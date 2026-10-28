@@ -202,3 +202,26 @@ test('new agents default to a persistent chat workspace without hiding project a
   assert.match(main, /label: `Chat with \$\{label\}`/);
   assert.match(main, /remember: false/);
 });
+
+test('the settings bridge, its browser stub and main agree', () => {
+  let api;
+  const electron = {
+    contextBridge: { exposeInMainWorld: (_name, exposed) => (api = exposed) },
+    ipcRenderer: { on() {}, send() {}, invoke() {} },
+  };
+  const preload = fs.readFileSync(path.join(ROOT, 'src', 'preload-settings.js'), 'utf8');
+  vm.runInNewContext(preload, { require: () => electron });
+  const window = {};
+  vm.runInNewContext(fs.readFileSync(path.join(ROOT, 'demo', 'settings-stub.js'), 'utf8'), { window });
+  // The stub leaves out what only the desktop app has a use for; it never
+  // invents a method the real window lacks.
+  const extra = Object.keys(window.clippySettings).filter((key) => !(key in api));
+  assert.deepEqual(extra, []);
+  assert.ok('searchPets' in window.clippySettings);
+
+  // Every channel the window invokes is one main answers.
+  const main = fs.readFileSync(path.join(ROOT, 'src', 'main.js'), 'utf8');
+  const invoked = [...preload.matchAll(/ipcRenderer\.invoke\('([^']+)'/g)].map((match) => match[1]);
+  assert.ok(invoked.includes('clippy-settings-search-pets'));
+  for (const channel of invoked) assert.match(main, new RegExp(`ipcMain\\.handle\\('${channel}'`), channel);
+});

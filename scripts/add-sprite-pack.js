@@ -388,17 +388,33 @@ function assertNoLinks(dir) {
   }
 }
 
+/** One catalog file, from openpets.dev and nowhere else. */
+async function catalogJson(url) {
+  const res = await fetch(packUrl(url), {
+    headers: { 'User-Agent': 'clippy-for-claude' },
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!res.ok) throw new Error(`openpets catalog answered ${res.status}`);
+  return res.json();
+}
+
+/**
+ * Every pet in the openpets.dev catalog, fetched now: fourteen-odd files. The
+ * settings window keeps its own copy of this (src/pet-catalog.js) and hands
+ * it to installPack, so searching and then installing is one download.
+ */
+async function loadCatalog() {
+  return catalogPets(await catalogJson(CATALOG_URL), catalogJson);
+}
+
 /**
  * Fetch a URL-or-id pack into a temp folder. Returns the folder holding the
- * pack and the temp root the caller has to delete afterwards.
+ * pack and the temp root the caller has to delete afterwards. A direct .zip
+ * link needs no catalog; anything else is looked up in `pets()`.
  */
-async function fetchPack(arg) {
-  const getJson = async (url) => {
-    const res = await fetch(packUrl(url), { headers: { 'User-Agent': 'clippy-for-claude' } });
-    if (!res.ok) throw new Error(`openpets catalog answered ${res.status}`);
-    return res.json();
-  };
-  const zipUrl = zipUrlFor(arg, await catalogPets(await getJson(CATALOG_URL), getJson));
+async function fetchPack(arg, pets = loadCatalog) {
+  const direct = /^https?:\/\//i.test(arg) && new URL(packUrl(arg)).pathname.endsWith('.zip');
+  const zipUrl = zipUrlFor(arg, direct ? [] : await pets());
 
   console.log(`downloading ${zipUrl}`);
   const zipRes = await fetch(zipUrl, { headers: { 'User-Agent': 'clippy-for-claude' } });
@@ -423,13 +439,15 @@ async function fetchPack(arg) {
  * The whole install, callable from anywhere — the CLI below, or the settings
  * window's "add a pet" box (via main's IPC handler). `src` is a folder, a pet
  * page URL, a direct .zip link, or a bare pet id; `opts` carries the same
- * values the CLI flags do, keyed by flag name.
+ * values the CLI flags do, keyed by flag name. `pets` is where the catalog
+ * comes from when `src` has to be looked up in it: a fresh download unless
+ * the caller already holds a copy.
  */
-async function installPack(src, opts = {}) {
+async function installPack(src, opts = {}, { pets } = {}) {
   // A URL or a name that isn't a folder here: fetch it from openpets.dev.
   const fetched = /^https?:\/\//i.test(src) || !fs.existsSync(path.resolve(src));
   if (!fetched) return installFromFolder(path.resolve(src), opts);
-  const { dir, tmp } = await fetchPack(src);
+  const { dir, tmp } = await fetchPack(src, pets);
   try {
     return await installFromFolder(dir, opts);
   } finally {
@@ -568,6 +586,7 @@ module.exports = {
   catalogPets,
   assertNoLinks,
   installPack,
+  loadCatalog,
   pngAlpha,
   drawnFrames,
   OPENPETS_POSES,

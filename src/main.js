@@ -32,6 +32,7 @@ const { checkDrift, checkCodexDrift, checkOpenclawDrift, installToFiles } = requ
 const { identityFor, petNameFor } = require('./identity');
 const { SIZES, sizeList, allCharacters, characterFor, sizeFor } = require('./characters');
 const { AthenaPets, athenaConfig } = require('./athena');
+const { PetCatalog, PET_ID } = require('./pet-catalog');
 const { windowActionFor } = require('./visibility');
 const { SOLO_KEY, sharesWindow, windowKeyFor, successorFor } = require('./buddy-mode');
 const { EDGE_OPTIONS, EDGE_IDS, edgeLineup, edgeHome } = require('./arrange');
@@ -200,6 +201,32 @@ const MANAGED = [
 let castCache = null;
 const cast = () => (castCache ||= allCharacters());
 const characterIds = () => cast().map((c) => c.id);
+
+// The OpenPets catalog, fetched when Settings first searches it or a pet is
+// installed, and shared by both (src/pet-catalog.js). Made on first use:
+// userData is only known once the app is up.
+let petCatalog = null;
+function pets() {
+  if (!petCatalog) {
+    const { loadCatalog } = require('../scripts/add-sprite-pack');
+    petCatalog = new PetCatalog({
+      load: loadCatalog,
+      thumbsDir: path.join(app.getPath('userData'), 'pet-thumbs'),
+    });
+  }
+  return petCatalog;
+}
+
+/**
+ * Install an OpenPets pet by its catalog id, under that id — so the cast,
+ * Athena and the search all agree on what it is called. Always through its
+ * zip URL: a bare name handed to installPack is tried as a folder first, and
+ * nothing that reaches here gets to name a folder on this Mac.
+ */
+async function installCatalogPet(id) {
+  const { installPack } = require('../scripts/add-sprite-pack');
+  return installPack(await pets().zipFor(id), { id });
+}
 
 /** Read the folder again, and pick the shared buddy's face again with it. */
 const forgetFaces = () => {
@@ -4309,7 +4336,7 @@ app.whenReady().then(async () => {
     athena = new AthenaPets({
       config: athenaAt,
       installed: characterIds,
-      install: (id) => require('../scripts/add-sprite-pack').installPack(id),
+      install: installCatalogPet,
       live: () => tracker.list().map((s) => s.sessionId),
       onChange: () => {
         forgetFaces(); // an install is a new member of the cast
@@ -4552,17 +4579,25 @@ app.whenReady().then(async () => {
   });
   ipcMain.on('clippy-settings-new-agent', () => openNewAgentWindow());
   ipcMain.on('clippy-open-settings', () => openSettingsWindow());
+  ipcMain.handle('clippy-settings-search-pets', async (_e, query, page) => {
+    try {
+      return { ok: true, ...(await pets().search(String(query || ''), Number(page) || 0, { installed: characterIds() })) };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
   ipcMain.handle('clippy-settings-install-pet', async (_e, url) => {
-    // The "add a pet" box takes a pasted link only — local folders stay a CLI
-    // affair, so this window never reads arbitrary paths off the disk. https
-    // only: a pack downloaded in the clear is sprite files, a theme.json and a
-    // path prefix, all of them written into the app's own assets folder by
-    // whoever happens to be between here and the server.
+    // A pasted https link, or a catalog id picked in the search — never a
+    // local folder: that stays a CLI affair. A pack downloaded in the clear is
+    // files written into the app's folder by whoever is on the wire.
     const src = String(url || '').trim();
-    if (!/^https:\/\//i.test(src)) return { ok: false, error: 'paste the pet’s page link (https://…)' };
+    const picked = PET_ID.test(src);
+    if (!picked && !/^https:\/\//i.test(src)) return { ok: false, error: 'paste the pet’s page link (https://…)' };
     try {
       const { installPack } = require('../scripts/add-sprite-pack');
-      const { id, theme } = await installPack(src);
+      const { id, theme } = picked
+        ? await installCatalogPet(src)
+        : await installPack(src, {}, { pets: () => pets().raw() });
       forgetFaces(); // a new pack is a new member of the cast
       pushSettingsState(); // the cast re-reads the themes folder, so this repaints it
       return { ok: true, id, label: theme.label };

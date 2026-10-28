@@ -19,8 +19,12 @@ contextBridge.exposeInMainWorld('clippySettings', {
   // Compare this build with GitHub, then download and install a verified DMG update.
   checkUpdates: () => ipcRenderer.invoke('clippy-settings-check-updates'),
   installUpdate: () => ipcRenderer.invoke('clippy-settings-install-update'),
-  // Paste a pet's page link and main downloads and installs the pack.
-  installPet: (url) => ipcRenderer.invoke('clippy-settings-install-pet', url),
+  // A page of the OpenPets catalog matching a search, with thumbnails main has
+  // saved locally: this window never fetches anything itself.
+  searchPets: (query, page) => ipcRenderer.invoke('clippy-settings-search-pets', query, page),
+  // A pasted pet page link, or a catalog id from the search: main downloads
+  // and installs the pack.
+  installPet: (linkOrId) => ipcRenderer.invoke('clippy-settings-install-pet', linkOrId),
   // Drawn buddies use the same local theme format as installed sprite packs.
   createPet: (drawing) => ipcRenderer.invoke('clippy-settings-create-pet', drawing),
   removePet: (character) => ipcRenderer.invoke('clippy-settings-remove-pet', character),

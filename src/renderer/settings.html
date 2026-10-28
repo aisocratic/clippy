@@ -171,7 +171,18 @@
     <div id="add-options">
       <section class="add-option">
         <h3>Install a pet</h3>
-        <p>Paste a pet page from <a id="pack-link" href="https://openpets.dev/gallery">openpets.dev ↗</a>.</p>
+        <p>Search the <a id="pack-link" href="https://openpets.dev/gallery">OpenPets ↗</a> catalog
+           and click a pet to install it, or paste a pet’s page link below.</p>
+        <input id="pet-search" class="pet-search" type="search" placeholder="Search pets"
+          spellcheck="false" autocomplete="off" aria-label="Search pets">
+        <div id="pet-results" class="pet-results" aria-live="polite"></div>
+        <div id="pet-pager" class="pet-pager" hidden>
+          <span id="pet-count"></span>
+          <span class="pet-pages">
+            <button id="pet-prev" aria-label="Previous page">‹</button>
+            <button id="pet-next" aria-label="Next page">›</button>
+          </span>
+        </div>
         <div class="add-pet">
           <input id="pet-url" type="url" placeholder="https://openpets.dev/pets/…"
             spellcheck="false" aria-label="Pet page URL">
