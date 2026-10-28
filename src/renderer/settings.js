@@ -23,6 +23,9 @@ const STATUS_TEXT = {
 let state = { characters: [], sizes: [], sessions: [] };
 const sheetTimers = [];
 const previewPose = new Map();
+// Each activity strip on the page and the history it draws, so the strips can
+// be redrawn as time passes without rebuilding the rows around them.
+const strips = new Map();
 
 /**
  * Sprite previews are stepped by an interval each, and every render builds new
@@ -327,9 +330,56 @@ function renderAccess() {
   host.append(title, body, path, actions, after);
 }
 
+/**
+ * A session's last 24 hours (see activity-strip.js): a span for each stretch
+ * it spent working, waiting on you, or done, on a line that ends at now.
+ * Colour is never the only carrier: every span and the strip have a title.
+ */
+function activityStrip(history) {
+  const strip = document.createElement('span');
+  strip.className = 'activity-strip';
+  strip.setAttribute('role', 'img');
+  strips.set(strip, history || []);
+  drawStrip(strip, history || [], Date.now());
+  return strip;
+}
+
+const clock = (at) => new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+function drawStrip(strip, history, now) {
+  const spans = ClippyStrip.stripSpans(history, now);
+  const told = ClippyStrip.describeStrip(spans);
+  const summary = told ? `Last 24 hours: ${told}` : 'Nothing in the last 24 hours';
+  strip.title = summary;
+  strip.setAttribute('aria-label', summary);
+  strip.replaceChildren(
+    ...spans.map((span) => {
+      const bar = document.createElement('span');
+      bar.className = `strip-span strip-${span.state}`;
+      const { left, width } = ClippyStrip.stripPlace(span, now);
+      bar.style.left = `${left}%`;
+      bar.style.width = `${width}%`;
+      bar.title =
+        `${ClippyStrip.STRIP_LABELS[span.state]} · ${clock(span.from)}–${span.open ? 'now' : clock(span.to)}` +
+        ` (${ClippyStrip.stripDuration(span.to - span.from)})`;
+      return bar;
+    })
+  );
+}
+
+// Now moves even when nothing reports in: slide every strip along once a minute.
+setInterval(() => {
+  const now = Date.now();
+  for (const [strip, history] of strips) {
+    if (strip.isConnected) drawStrip(strip, history, now);
+    else strips.delete(strip);
+  }
+}, 60 * 1000);
+
 function renderSessions() {
   const host = document.getElementById('session-list');
   host.replaceChildren();
+  strips.clear();
 
   // Clippy at the top; every agent connected to it underneath.
   host.appendChild(soloRow());
@@ -365,7 +415,7 @@ function renderSessions() {
     const agentName = { claude: 'Claude', codex: 'Codex', openclaw: 'OpenClaw' }[session.agent] || 'Claude';
     status.textContent = `${agentName} · ${STATUS_TEXT[session.status] || session.status || ''}`;
 
-    row.append(dot, show, status);
+    row.append(dot, show, status, activityStrip(session.history));
     agents.appendChild(row);
 
     // The subagents it has running, one step further in: a helper of this

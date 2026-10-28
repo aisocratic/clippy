@@ -76,3 +76,12 @@ test('every Clippy* global clippy.js reads is defined by an earlier script', () 
     }
   }
 });
+
+test('the settings window’s scripts parse as one shared scope, and it has the strip', () => {
+  const html = read('settings.html');
+  const names = [...html.matchAll(/<script src="([^"]+)"><\/script>/g)].map((m) => m[1]);
+  assert.equal(names.at(-1), 'settings.js');
+  assert.ok(names.indexOf('activity-strip.js') >= 0 && names.indexOf('activity-strip.js') < names.indexOf('settings.js'));
+  const joined = names.map((name) => `// ---- ${name}\n${read(name)}`).join('\n;\n');
+  assert.doesNotThrow(() => new vm.Script(joined, { filename: 'settings-scripts.js' }));
+});

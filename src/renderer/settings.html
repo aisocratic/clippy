@@ -36,6 +36,10 @@
         <p>Clippy is the one buddy on your desk, and it speaks for whichever agent needs
            you. The agents connected to it are listed underneath, with any helpers they
            have running. Click one to bring Clippy to the front for it.</p>
+        <p class="strip-key">Each agent's strip is its last 24 hours, now at the right:
+           <span><span class="strip-swatch strip-working"></span>working</span>
+           <span><span class="strip-swatch strip-waiting"></span>waiting on you</span>
+           <span><span class="strip-swatch strip-done"></span>done, your turn</span></p>
       </header>
       <div id="access" class="access hidden"></div>
 
@@ -216,6 +220,7 @@
 
   <script src="sounds.js"></script>
   <script src="vector-buddies.js"></script>
+  <script src="activity-strip.js"></script>
   <script src="settings.js"></script>
 </body>
 </html>

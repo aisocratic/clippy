@@ -876,6 +876,9 @@ function sendJson(res, data, code = 200) {
  * matching browser stub. Serving it rather than copying it is the whole point:
  * what you click in the browser is the same markup Electron loads.
  */
+/** `[[hours ago, status], …]` as a session's history: `{ status, at }`, at real times. */
+const hoursAgo = (steps) => steps.map(([hours, status]) => ({ status, at: Date.now() - hours * 3600 * 1000 }));
+
 function servePage(res, page, script, stub) {
   fs.readFile(path.join(RENDERER_DIR, page), 'utf8', (err, html) => {
     if (err) {
@@ -1053,13 +1056,25 @@ async function handle(req, res) {
           color: '#4fa3d1',
           status: 'working',
           character: 'clip',
+          // A day of it, for the activity strip: worked, waited on you, done.
+          history: hoursAgo([
+            [20, 'working'], [18.5, 'waiting'], [9, 'working'], [8.2, 'needs_permission'],
+            [8, 'working'], [6, 'waiting'], [1.5, 'working'], [1.3, 'needs_permission'], [1.25, 'working'],
+          ]),
           // A helper it has running, drawn one step in under its row.
           subagents: [{ id: 'a-1', type: 'Explore', label: 'Explore: Reading webhook.js' }],
         },
         // A second agent in the *same* folder as demo-1: the case where picking
         // a pet for one row must leave the other row alone.
         { sessionId: 'demo-1b', name: NAME, color: '#d18f4f', status: 'idle', character: 'clod' },
-        { sessionId: 'demo-2', name: 'clippy', color: '#6cbf6c', status: 'waiting', character: 'cat' },
+        {
+          sessionId: 'demo-2',
+          name: 'clippy',
+          color: '#6cbf6c',
+          status: 'waiting',
+          character: 'cat',
+          history: hoursAgo([[3, 'idle'], [2.4, 'working'], [0.5, 'waiting']]),
+        },
       ],
     });
   }

@@ -26,6 +26,28 @@ const IDLE = 'idle';
 const STALE_ACTIVE_MS = 30 * 60 * 1000;
 const STALE_PARKED_MS = 6 * 60 * 60 * 1000;
 
+// How far back a session's status history goes: the 24 hours its activity
+// strip in Settings draws. A session that flaps for a whole day is still a few
+// hundred entries; the cap is for one that somehow does not.
+const HISTORY_MS = 24 * 60 * 60 * 1000;
+const HISTORY_MAX = 2000;
+
+/**
+ * Remember a status as of `now`, in a session's history: an entry only when
+ * the status changes, and nothing older than the window except the one entry
+ * that says what the session was doing when the window opened.
+ *
+ * @param {{status: string, at: number}[]} history  changed in place
+ */
+function noteStatus(history, status, now = Date.now(), windowMs = HISTORY_MS) {
+  if (!history.length || history[history.length - 1].status !== status) history.push({ status, at: now });
+  let drop = 0;
+  while (drop + 1 < history.length && history[drop + 1].at <= now - windowMs) drop++;
+  drop = Math.max(drop, history.length - HISTORY_MAX);
+  if (drop > 0) history.splice(0, drop);
+  return history;
+}
+
 const firstLine = (s) => String(s ?? '').split('\n')[0].slice(0, 200);
 const modelId = (value) =>
   typeof value === 'string'
@@ -65,6 +87,8 @@ class SessionTracker {
         // activity, startedAt }. They share the session (and the buddy); what
         // they do is shown as this session's activity, labelled with the type.
         subagents: new Map(),
+        // { status, at } at every change of status, for the activity strip.
+        history: [],
         updatedAt: 0,
       };
       this.sessions.set(id, s);
@@ -141,6 +165,15 @@ class SessionTracker {
    * @returns {object|null}     Reaction for the UI, or null if nothing to do
    */
   handle(eventName, kind, payload = {}) {
+    const reaction = this._react(eventName, kind, payload);
+    // Whatever the event did to the status goes in the session's history;
+    // a session that just ended has none left to keep.
+    const s = this.sessions.get(payload.session_id || 'unknown');
+    if (s) noteStatus(s.history, s.status);
+    return reaction;
+  }
+
+  _react(eventName, kind, payload) {
     const s = this._upsert(payload);
 
     switch (eventName) {
@@ -286,6 +319,7 @@ class SessionTracker {
     if (s) {
       s.status = status;
       s.updatedAt = Date.now();
+      noteStatus(s.history, status, s.updatedAt);
     }
   }
 
@@ -386,6 +420,7 @@ class SessionTracker {
     return [...this.sessions.values()].map((s) => ({
       ...s,
       subagents: [...s.subagents.values()],
+      history: s.history.slice(),
       terminal: this.terminals.get(s.sessionId) || null,
     }));
   }
@@ -409,4 +444,6 @@ module.exports = {
   IDLE,
   STALE_ACTIVE_MS,
   STALE_PARKED_MS,
+  HISTORY_MS,
+  noteStatus,
 };

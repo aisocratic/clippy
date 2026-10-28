@@ -537,7 +537,10 @@ Feedback, one page at a time.
 
 - **Sessions** — Clippy's own row at the top, saying which agent it is speaking
   for and what it wears, and under it every agent connected to it: project
-  name, which agent, what it is doing. Clippy never changes with the session, so
+  name, which agent, what it is doing, and a strip of its last 24 hours: when
+  it was working, waiting on you, or done and it was your turn, with now at the
+  right edge (hover a stretch for its times). The strip is what this Clippy saw
+  while it was running. Clippy never changes with the session, so
   the agent rows have nothing to pick; click one and Clippy comes to the front
   for it.
 - **Sounds** — the only noise Clippy makes: a short cue when a hidden buddy

@@ -525,6 +525,8 @@ function settingsState() {
         (athena && athena.petFor(s.sessionId)) ||
         buddyOf(s.sessionId)?.character ||
         characterFor(settings, s.name, s.sessionId),
+      // Its status changes over the last 24 hours, for the activity strip.
+      history: s.history || [],
       // The helpers this session has running, listed under it.
       subagents: (s.subagents || []).map((sub) => ({
         id: sub.id,
